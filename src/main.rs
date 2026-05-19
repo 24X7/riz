@@ -1,12 +1,20 @@
 mod cache;
 mod config;
+mod deploy;
 mod gateway;
+mod hotreload;
 mod metrics;
 mod process;
 mod router;
+mod server;
 mod state;
+mod tui;
 
+use std::net::SocketAddr;
+use std::sync::Arc;
 use clap::{Parser, Subcommand};
+use tracing::info;
+use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
 #[command(name = "osbox", about = "Self-hosted AWS Lambda host")]
@@ -42,12 +50,62 @@ enum Commands {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&cli.log_level))
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new(&cli.log_level))
         )
         .init();
-    println!("osbox starting (config: {})", cli.config);
-    Ok(())
+
+    let config = config::Config::from_file(&cli.config)?;
+
+    match &cli.command {
+        Some(Commands::Validate) => {
+            println!("Config OK: {} routes", config.routes.len());
+            return Ok(());
+        }
+        Some(Commands::Routes) => {
+            for route in &config.routes {
+                println!("{} {} -> {:?} ({})",
+                    route.method, route.path,
+                    route.handler, route.runtime.as_str());
+            }
+            return Ok(());
+        }
+        _ => {}
+    }
+
+    let port = cli.port.unwrap_or(config.server.port);
+    let host: std::net::IpAddr = config.server.host.parse()?;
+    let addr = SocketAddr::new(host, port);
+
+    let registry = process::runtime::RuntimeRegistry::new()?;
+    let cache = cache::CacheLayer::new(&config.cache);
+    let metrics = metrics::MetricsEmitter::new(&config.datadog);
+    let router = router::Router::new(config.routes.clone());
+    let process_manager = process::ProcessManager::new();
+
+    process_manager.spawn_all(&config.routes, &registry).await?;
+
+    let app_state = Arc::new(state::AppState {
+        config: tokio::sync::RwLock::new(config.clone()),
+        router: tokio::sync::RwLock::new(router),
+        process_manager,
+        cache,
+        metrics,
+        runtime_registry: registry,
+        route_stats: tokio::sync::RwLock::new(Default::default()),
+        log_buffer: tokio::sync::Mutex::new(Default::default()),
+    });
+
+    // Hot-reload watcher
+    let watch_state = app_state.clone();
+    let watch_config_path = cli.config.clone();
+    tokio::spawn(async move {
+        hotreload::watch_config(watch_config_path, watch_state).await;
+    });
+
+    info!("osbox starting on {addr}");
+    server::run(app_state, addr).await
 }
