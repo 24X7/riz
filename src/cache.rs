@@ -92,6 +92,7 @@ impl CacheLayer {
 
     /// Flush pending write operations so that `entry_count` is accurate.
     /// Moka's entry count is eventually consistent; call this before asserting counts in tests.
+    #[allow(dead_code)]
     pub async fn sync(&self) {
         self.inner.run_pending_tasks().await;
     }

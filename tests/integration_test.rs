@@ -52,9 +52,15 @@ concurrency = 1
         axum::serve(listener, app).await.unwrap();
     });
 
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    let url = format!("http://{bound_addr}/echo");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        if reqwest::get(&url).await.is_ok() { break; }
+        assert!(tokio::time::Instant::now() < deadline, "server did not start within 10s");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 
-    let resp = reqwest::get(format!("http://{bound_addr}/echo")).await.unwrap();
+    let resp = reqwest::get(&url).await.unwrap();
     assert_eq!(resp.status(), 200);
 
     let body: serde_json::Value = resp.json().await.unwrap();
@@ -109,10 +115,18 @@ concurrency = 1
         axum::serve(listener, app).await.unwrap();
     });
 
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    let url = format!("http://{bound_addr}/cached");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        if reqwest::get(&url).await.is_ok() { break; }
+        assert!(tokio::time::Instant::now() < deadline, "server did not start within 10s");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 
-    reqwest::get(format!("http://{bound_addr}/cached")).await.unwrap();
-    reqwest::get(format!("http://{bound_addr}/cached")).await.unwrap();
+    let r1 = reqwest::get(&url).await.unwrap();
+    assert_eq!(r1.status(), 200);
+    let r2 = reqwest::get(&url).await.unwrap();
+    assert_eq!(r2.status(), 200);
 
     // Flush moka's pending write ops so entry_count is accurate
     state_for_check.cache.sync().await;
