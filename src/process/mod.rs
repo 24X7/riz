@@ -26,7 +26,7 @@ struct ProcessHandle {
 
 struct RoutePool {
     route: RouteConfig,
-    handles: Mutex<Vec<ProcessHandle>>,
+    handles: RwLock<Vec<Arc<Mutex<ProcessHandle>>>>,
     semaphore: Arc<Semaphore>,
     restart_count: AtomicU32,
     consecutive_crashes: AtomicU32,
@@ -62,19 +62,19 @@ impl ProcessManager {
             let key = crate::router::Router::route_key(&route.method, &route.path);
             let pool = Arc::new(RoutePool {
                 route: route.clone(),
-                handles: Mutex::new(Vec::new()),
+                handles: RwLock::new(Vec::new()),
                 semaphore: Arc::new(Semaphore::new(route.concurrency)),
                 restart_count: AtomicU32::new(0),
                 consecutive_crashes: AtomicU32::new(0),
                 healthy: AtomicBool::new(true),
             });
-            let mut handles = pool.handles.lock().await;
+            let mut handle_vec = pool.handles.write().await;
             for _ in 0..route.concurrency {
                 let handle = spawn_process(route, registry).await
                     .with_context(|| format!("failed to spawn lambda for {key}"))?;
-                handles.push(handle);
+                handle_vec.push(Arc::new(Mutex::new(handle)));
             }
-            drop(handles);
+            drop(handle_vec);
             pools.insert(key, pool);
         }
         Ok(())
@@ -96,10 +96,27 @@ impl ProcessManager {
             return Ok(GatewayResponse::error(503, "lambda unhealthy"));
         }
 
+        // Acquire permit: guarantees at least one handle is free
         let _permit = pool.semaphore.acquire().await?;
-        let mut handles = pool.handles.lock().await;
-        let handle = handles.iter_mut().next()
-            .ok_or_else(|| anyhow::anyhow!("no process handles available"))?;
+
+        // Find a free handle (try_lock always succeeds when semaphore is correct)
+        let free_arc = {
+            let handles = pool.handles.read().await;
+            let mut found: Option<Arc<Mutex<ProcessHandle>>> = None;
+            for handle_mutex in handles.iter() {
+                if handle_mutex.try_lock().is_ok() {
+                    found = Some(handle_mutex.clone());
+                    break;
+                }
+            }
+            found
+        };
+
+        let arc = match free_arc {
+            Some(a) => a,
+            None => return Ok(GatewayResponse::error(503, "no free process handle")),
+        };
+        let mut handle = arc.lock().await;
 
         let payload = serde_json::to_string(request)? + "\n";
         let result = timeout(Duration::from_millis(timeout_ms), async {
@@ -145,16 +162,26 @@ impl ProcessManager {
             .clone();
         drop(pools);
 
-        let mut handles = pool.handles.lock().await;
-        handles.clear(); // Drop kills child processes
+        let concurrency = pool.route.concurrency as u32;
+
+        // Drain the semaphore: wait for all in-flight requests to complete
+        let _drain = pool.semaphore.acquire_many(concurrency).await?;
+
+        // Now safe to swap handles — no requests are in flight
+        let mut handles = pool.handles.write().await;
+        handles.clear();
+
         let mut first_pid = 0;
         for _ in 0..new_route.concurrency {
             let h = spawn_process(&new_route, registry).await?;
             if first_pid == 0 { first_pid = h.pid; }
-            handles.push(h);
+            handles.push(Arc::new(Mutex::new(h)));
         }
+
         pool.healthy.store(true, Ordering::Relaxed);
         pool.consecutive_crashes.store(0, Ordering::Relaxed);
+
+        // _drain is released here (drop) — new requests can flow in
         Ok(first_pid)
     }
 
@@ -162,10 +189,12 @@ impl ProcessManager {
         let pools = self.pools.read().await;
         let mut stats = Vec::new();
         for (key, pool) in pools.iter() {
-            let handles = pool.handles.lock().await;
+            let handles = pool.handles.read().await;
             stats.push(PoolStats {
                 route_key: key.clone(),
-                pids: handles.iter().map(|h| h.pid).collect(),
+                pids: handles.iter()
+                    .filter_map(|h| h.try_lock().ok().map(|g| g.pid))
+                    .collect(),
                 restart_count: pool.restart_count.load(Ordering::Relaxed),
                 healthy: pool.healthy.load(Ordering::Relaxed),
                 concurrency: pool.route.concurrency,
