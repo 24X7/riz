@@ -47,7 +47,8 @@ rl.on("line", async (line) => {
 
   try {
     const result = await handler(event, context);
-    process.stdout.write(JSON.stringify(result) + "\n");
+    const safeResult = result ?? { statusCode: 204, body: "" };
+    process.stdout.write(JSON.stringify(safeResult) + "\n");
   } catch (err) {
     process.stdout.write(
       JSON.stringify({
