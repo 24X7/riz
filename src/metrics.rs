@@ -52,7 +52,7 @@ impl MetricsEmitter {
             let status_tag = format!("status:{status}");
             let env_tag = format!("env:{}", self.env);
 
-            let mut b = c.time_with_tags("osbox.request.duration", duration_ms as u64);
+            let mut b = c.time_with_tags("osbox.request.duration", duration_ms.round() as u64);
             tag!(b, &route_tag);
             tag!(b, &method_tag);
             tag!(b, &status_tag);
@@ -61,6 +61,7 @@ impl MetricsEmitter {
 
             let mut b = c.incr_with_tags("osbox.request.count");
             tag!(b, &route_tag);
+            tag!(b, &method_tag);
             tag!(b, &status_tag);
             tag!(b, &env_tag);
             b.send();

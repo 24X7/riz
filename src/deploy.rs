@@ -40,6 +40,7 @@ pub async fn deploy_handler(
     let config = state.config.read().await;
     let deploy_cfg = config.deploy.clone();
     let aws_region = config.aws.region.clone();
+    let expected_key = config.effective_deploy_key();
     drop(config);
 
     // IP allowlist check (empty = allow all)
@@ -55,8 +56,6 @@ pub async fn deploy_handler(
         }
     }
 
-    // Bearer token auth
-    let expected_key = state.config.read().await.effective_deploy_key();
     if let Some(expected) = expected_key {
         let provided = headers
             .get("authorization")
@@ -66,6 +65,11 @@ pub async fn deploy_handler(
             return (StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: "unauthorized".into() }))
                 .into_response();
         }
+    }
+
+    // Validate lambda name is a safe identifier
+    if body.lambda.contains('/') || body.lambda.contains('.') {
+        return (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "invalid lambda name".into() })).into_response();
     }
 
     // Find matching route by lambda name (matches path segment)
@@ -94,7 +98,14 @@ pub async fn deploy_handler(
     }
 
     // Point handler at unpacked staging dir
-    let handler_name = route.handler.file_name().unwrap_or_default().to_os_string();
+    let handler_name = match route.handler.file_name() {
+        Some(name) => name.to_os_string(),
+        None => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse {
+                error: format!("route handler has no filename: {:?}", route.handler),
+            })).into_response();
+        }
+    };
     route.handler = staging_dir.join(&handler_name);
 
     // Hot-swap the process pool
@@ -146,6 +157,9 @@ async fn download_and_unpack_s3(
     let bytes = resp.body.collect().await
         .map_err(|e| anyhow::anyhow!("S3 body read failed: {e}"))?.into_bytes();
 
+    if dest.exists() {
+        std::fs::remove_dir_all(dest)?;
+    }
     std::fs::create_dir_all(dest)?;
     let cursor = std::io::Cursor::new(bytes);
     let mut archive = zip::ZipArchive::new(cursor)
@@ -153,7 +167,13 @@ async fn download_and_unpack_s3(
 
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
-        let outpath = dest.join(file.name());
+        let outpath = match file.enclosed_name() {
+            Some(name) => dest.join(name),
+            None => {
+                tracing::warn!("skipping unsafe zip entry: {:?}", file.name());
+                continue;
+            }
+        };
         if file.is_dir() {
             std::fs::create_dir_all(&outpath)?;
         } else {

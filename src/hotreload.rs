@@ -15,7 +15,7 @@ pub async fn watch_config(config_path: String, state: Arc<AppState>) {
     let mut watcher = match notify::recommended_watcher(move |res: notify::Result<Event>| {
         if let Ok(event) = res {
             if matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
-                let _ = tx.blocking_send(());
+                let _ = tx.try_send(());
             }
         }
     }) {
