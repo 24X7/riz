@@ -13,46 +13,45 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use crate::state::AppState;
 use self::app::App;
 
-pub fn run_tui(state: Arc<AppState>) -> anyhow::Result<()> {
+pub fn run_tui(state: Arc<AppState>, handle: tokio::runtime::Handle) -> anyhow::Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
 
-    let result = run_loop(&mut terminal, state);
+    // Everything after enable_raw_mode must clean up raw mode on any error
+    let result: anyhow::Result<()> = (|| {
+        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+        let backend = CrosstermBackend::new(stdout);
+        let mut terminal = Terminal::new(backend)?;
+        let r = run_loop(&mut terminal, state, handle);
+        execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
+        terminal.show_cursor()?;
+        r
+    })();
 
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
-    terminal.show_cursor()?;
-
     result
 }
 
 fn run_loop<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     state: Arc<AppState>,
+    handle: tokio::runtime::Handle,
 ) -> anyhow::Result<()> {
     let mut app = App::default();
     let tick = Duration::from_millis(100);
 
     loop {
-        {
-            let rt = tokio::runtime::Handle::try_current();
-            if let Ok(handle) = rt {
-                handle.block_on(async {
-                    let route_stats = state.route_stats.read().await;
-                    app.route_stats = route_stats
-                        .iter()
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect();
-                    app.pool_stats = state.process_manager.pool_stats().await;
-                    app.cache_entry_count = state.cache.entry_count();
-                    let log_buf = state.log_buffer.lock().await;
-                    app.log_entries = log_buf.clone();
-                });
-            }
-        }
+        handle.block_on(async {
+            let route_stats = state.route_stats.read().await;
+            app.route_stats = route_stats
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            app.pool_stats = state.process_manager.pool_stats().await;
+            app.cache_entry_count = state.cache.entry_count();
+            let log_buf = state.log_buffer.lock().await;
+            app.log_entries = log_buf.clone();
+        });
 
         terminal.draw(|f| widgets::render(f, &app))?;
 

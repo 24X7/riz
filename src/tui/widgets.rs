@@ -116,7 +116,7 @@ fn render_cache(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_logs(frame: &mut Frame, app: &App, area: Rect) {
-    let lines: Vec<Line> = app.log_entries.iter().rev().take(area.height as usize).map(|entry| {
+    let lines: Vec<Line> = app.log_entries.iter().rev().take(area.height.saturating_sub(2) as usize).map(|entry| {
         use std::time::UNIX_EPOCH;
         let secs = entry.timestamp.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
         let color = match entry.level.as_str() {

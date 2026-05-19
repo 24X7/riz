@@ -99,11 +99,12 @@ async fn main() -> anyhow::Result<()> {
         log_buffer: tokio::sync::Mutex::new(Default::default()),
     });
 
-    let tui_enabled = !cli.no_tui && atty::is(atty::Stream::Stdout);
+    let tui_enabled = !cli.no_tui && std::io::IsTerminal::is_terminal(&std::io::stdout());
     if tui_enabled {
         let tui_state = app_state.clone();
+        let tui_handle = tokio::runtime::Handle::current();
         std::thread::spawn(move || {
-            if let Err(e) = tui::run_tui(tui_state) {
+            if let Err(e) = tui::run_tui(tui_state, tui_handle) {
                 eprintln!("TUI error: {e}");
             }
         });
