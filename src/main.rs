@@ -99,6 +99,16 @@ async fn main() -> anyhow::Result<()> {
         log_buffer: tokio::sync::Mutex::new(Default::default()),
     });
 
+    let tui_enabled = !cli.no_tui && atty::is(atty::Stream::Stdout);
+    if tui_enabled {
+        let tui_state = app_state.clone();
+        std::thread::spawn(move || {
+            if let Err(e) = tui::run_tui(tui_state) {
+                eprintln!("TUI error: {e}");
+            }
+        });
+    }
+
     // Hot-reload watcher
     let watch_state = app_state.clone();
     let watch_config_path = cli.config.clone();
