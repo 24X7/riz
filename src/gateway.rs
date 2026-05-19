@@ -11,6 +11,8 @@ pub struct GatewayRequest {
     pub headers: HashMap<String, String>,
     pub request_context: RequestContext,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub path_parameters: Option<HashMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub body: Option<String>,
     pub is_base64_encoded: bool,
 }
@@ -95,6 +97,7 @@ mod tests {
                 request_id: "abc".into(),
                 time_epoch: 1000,
             },
+            path_parameters: None,
             body: None,
             is_base64_encoded: false,
         };

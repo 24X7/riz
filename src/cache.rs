@@ -77,9 +77,11 @@ impl CacheLayer {
             .filter(|(k, _)| k.starts_with(prefix))
             .map(|(k, _)| k.as_ref().clone())
             .collect();
-        let count = keys.len();
+        let mut count = 0;
         for key in &keys {
-            self.inner.remove(key).await;
+            if self.inner.remove(key).await.is_some() {
+                count += 1;
+            }
         }
         count
     }
