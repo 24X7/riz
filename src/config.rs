@@ -31,7 +31,7 @@ impl Default for ServerConfig {
     fn default() -> Self { Self { port: default_port(), host: default_host() } }
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct CacheConfig {
     #[serde(default)]
     pub default_ttl_secs: u64,
@@ -40,6 +40,15 @@ pub struct CacheConfig {
 }
 
 fn default_cache_size() -> u64 { 128 }
+
+impl Default for CacheConfig {
+    fn default() -> Self {
+        Self {
+            default_ttl_secs: 0,
+            max_size_mb: default_cache_size(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct DatadogConfig {
@@ -122,11 +131,12 @@ impl RuntimeKind {
 }
 
 impl Config {
-    pub fn from_file(path: &str) -> anyhow::Result<Self> {
+    pub fn from_file(path: impl AsRef<std::path::Path>) -> anyhow::Result<Self> {
+        let path = path.as_ref();
         let text = std::fs::read_to_string(path)
-            .map_err(|e| anyhow::anyhow!("cannot read {path}: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", path.display()))?;
         let config: Config = toml::from_str(&text)
-            .map_err(|e| anyhow::anyhow!("invalid config in {path}: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("invalid config in {}: {e}", path.display()))?;
         Ok(config)
     }
 
@@ -183,5 +193,33 @@ concurrency = 2
         std::env::set_var("OSBOX_DEPLOY_KEY", "envkey");
         assert_eq!(config.effective_deploy_key(), Some("envkey".into()));
         std::env::remove_var("OSBOX_DEPLOY_KEY");
+    }
+
+    #[test]
+    fn deploy_key_falls_back_to_file() {
+        let toml_with_key = r#"
+[server]
+port = 3000
+
+[deploy]
+deploy_key = "filekey"
+"#;
+        let config: Config = toml::from_str(toml_with_key).unwrap();
+        std::env::remove_var("OSBOX_DEPLOY_KEY"); // ensure env is clean
+        assert_eq!(config.effective_deploy_key(), Some("filekey".into()));
+    }
+
+    #[test]
+    fn deploy_key_none_when_both_absent() {
+        let config: Config = toml::from_str(SAMPLE).unwrap(); // SAMPLE has no deploy_key
+        std::env::remove_var("OSBOX_DEPLOY_KEY");
+        assert_eq!(config.effective_deploy_key(), None);
+    }
+
+    #[test]
+    fn cache_config_default_has_correct_max_size() {
+        let default = CacheConfig::default();
+        assert_eq!(default.max_size_mb, 128);
+        assert_eq!(default.default_ttl_secs, 0);
     }
 }
