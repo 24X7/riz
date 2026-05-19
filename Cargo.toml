@@ -34,5 +34,6 @@ opt-level = 3
 lto = "thin"
 
 [dev-dependencies]
+reqwest = { version = "0.12", features = ["json"] }
 tempfile = "3"
 tokio-test = "0.4"
