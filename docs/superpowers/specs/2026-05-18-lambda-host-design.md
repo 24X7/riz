@@ -226,6 +226,7 @@ Commands:
   start     Start the host (default if no command given)
   validate  Validate osbox.toml without starting
   routes    Print resolved route table
+  deploy    Trigger a deploy manually (calls local deploy API)
 
 Options:
   -c, --config <FILE>    Config file [default: ./osbox.toml]
@@ -236,11 +237,72 @@ Options:
 
 ---
 
+## Lambda Deployment
+
+Lambdas are deployed via a two-step flow: artifact upload to S3, then a deploy API trigger. The host never polls S3 — the API call is the sole trigger.
+
+### Flow
+
+1. CI/CD builds and zips the lambda (`signin-v2.zip`)
+2. CI/CD uploads zip to a configured S3 bucket/key
+3. CI/CD calls `POST /deploy` with the lambda name and S3 path
+4. Host downloads and unpacks the zip to a staging directory
+5. Host drains in-flight requests to the old process (configurable drain timeout, default 10s)
+6. Host swaps to the new process, SIGTERMs the old one (SIGKILL after drain timeout)
+7. Deploy API returns 200 once the new process is healthy
+
+### Deploy API
+
+```
+POST /deploy
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "lambda": "signin",
+  "s3_bucket": "my-deploys",
+  "s3_key": "lambdas/signin-v2.zip"
+}
+```
+
+Response:
+```json
+{"status": "ok", "lambda": "signin", "pid": 12345}
+```
+
+On failure (download error, process won't start, health check timeout): returns 500 with error detail, old process remains active.
+
+### Security
+
+- **Bearer token** — required on all `/deploy` requests. Defined in `osbox.toml` under `[deploy]` or overridden via `OSBOX_DEPLOY_KEY` env var. Env var takes precedence.
+- **IP allowlist** — optional list of CIDR ranges in `[deploy]` config. Requests from unlisted IPs are rejected with 403 before token validation.
+- HTTPS is the responsibility of a reverse proxy (nginx, caddy) in front of osbox. The deploy endpoint binds to the same port as the main server.
+
+```toml
+[deploy]
+# deploy_key = "..."        # prefer OSBOX_DEPLOY_KEY env var
+allowed_cidrs = ["10.0.0.0/8", "172.16.0.0/12"]  # optional
+
+[aws]
+region = "us-east-1"
+# Credentials via standard AWS env vars or instance profile
+```
+
+### Zip Structure
+
+The zip must contain the handler entry point at its root or a known path matching the route's `handler` field. No required directory structure beyond that — whatever the handler config points to.
+
+### Rollback
+
+Rollback is a redeploy of the previous artifact. No automatic rollback — the operator re-triggers deploy with the prior S3 key.
+
+---
+
 ## Phased Delivery
 
 | Phase | Scope |
 |-------|-------|
-| **1** | Rust host binary, axum HTTP server, TOML config + hot-reload, router, process manager (Bun/Node runtime), TTL cache + invalidation API, Ratatui TUI, Datadog integration, Clap CLI |
+| **1** | Rust host binary, axum HTTP server, TOML config + hot-reload, router, process manager (Bun/Node runtime), TTL cache + invalidation API, deploy API (S3 + bearer token + IP allowlist), Ratatui TUI, Datadog integration, Clap CLI |
 | **2** | Rust lambda runtime + adapter crate |
 | **3** | Python lambda runtime + adapter package |
 
