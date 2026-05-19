@@ -21,8 +21,10 @@ impl RuntimeRegistry {
     pub fn get(&self, kind: &RuntimeKind) -> &dyn LambdaRuntime {
         match kind {
             RuntimeKind::Bun => &self.bun,
-            RuntimeKind::Rust => &self.bun,   // Phase 2
-            RuntimeKind::Python => &self.bun, // Phase 3
+            RuntimeKind::Rust | RuntimeKind::Python => {
+                tracing::warn!("runtime {:?} not implemented in Phase 1 — falling back to Bun", kind);
+                &self.bun
+            }
         }
     }
 }

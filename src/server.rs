@@ -104,14 +104,36 @@ async fn dispatch_lambda(
     let result = state.process_manager.invoke(&route_key, &gw_request, route.timeout_ms).await;
     let latency = start.elapsed().as_secs_f64() * 1000.0;
 
+    let default_ttl = {
+        let cfg = state.config.read().await;
+        cfg.cache.default_ttl_secs
+    };
+
     match result {
         Ok(gw_resp) => {
             let healthy = gw_resp.status_code < 500;
             state.metrics.record_request(&route_key, &method, gw_resp.status_code, latency);
-            state.metrics.record_cache_miss(&route_key);
+
+            // Emit specific metrics for lambda-side errors
+            match gw_resp.status_code {
+                502 => state.metrics.record_lambda_crash(&route_key, route.runtime.as_str()),
+                504 => state.metrics.record_lambda_timeout(&route_key),
+                _ => {}
+            }
+            state.metrics.record_lambda_healthy(&route_key, healthy);
+
+            // Cache miss metric only for successful cache-eligible requests
+            if gw_resp.status_code < 400 {
+                state.metrics.record_cache_miss(&route_key);
+            }
+
             state.record_request(&route_key, false, latency, healthy).await;
 
-            let ttl = route.cache_ttl_secs.unwrap_or(0);
+            if gw_resp.status_code >= 500 {
+                state.push_log("WARN", format!("lambda {} returned {}", route_key, gw_resp.status_code)).await;
+            }
+
+            let ttl = route.cache_ttl_secs.unwrap_or(default_ttl);
             if ttl > 0 && gw_resp.status_code < 400 {
                 state.cache.set(cache_key, gw_resp.clone(), ttl).await;
             }
@@ -121,7 +143,9 @@ async fn dispatch_lambda(
         Err(e) => {
             error!("dispatch error for {route_key}: {e}");
             state.metrics.record_lambda_crash(&route_key, route.runtime.as_str());
+            state.metrics.record_lambda_healthy(&route_key, false);
             state.record_request(&route_key, false, latency, false).await;
+            state.push_log("ERROR", format!("dispatch error {route_key}: {e}")).await;
             gateway_to_axum(&GatewayResponse::error(502, "internal error"))
         }
     }

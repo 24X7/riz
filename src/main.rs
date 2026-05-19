@@ -80,11 +80,15 @@ async fn main() -> anyhow::Result<()> {
     let host: std::net::IpAddr = config.server.host.parse()?;
     let addr = SocketAddr::new(host, port);
 
-    let registry = process::runtime::RuntimeRegistry::new()?;
+    let registry = std::sync::Arc::new(process::runtime::RuntimeRegistry::new()?);
     let cache = cache::CacheLayer::new(&config.cache);
     let metrics = metrics::MetricsEmitter::new(&config.datadog);
     let router = router::Router::new(config.routes.clone());
     let process_manager = process::ProcessManager::new();
+
+    if config.effective_deploy_key().is_none() {
+        tracing::warn!("SECURITY: no deploy key configured — POST /deploy is unauthenticated");
+    }
 
     process_manager.spawn_all(&config.routes, &registry).await?;
 

@@ -31,6 +31,7 @@ struct RoutePool {
     restart_count: AtomicU32,
     consecutive_crashes: AtomicU32,
     healthy: AtomicBool,
+    runtime_registry: Arc<RuntimeRegistry>,
 }
 
 const CRASH_THRESHOLD: u32 = 5;
@@ -55,7 +56,7 @@ impl ProcessManager {
     pub async fn spawn_all(
         &self,
         routes: &[RouteConfig],
-        registry: &RuntimeRegistry,
+        registry: &Arc<RuntimeRegistry>,
     ) -> anyhow::Result<()> {
         let mut pools = self.pools.write().await;
         for route in routes {
@@ -67,6 +68,7 @@ impl ProcessManager {
                 restart_count: AtomicU32::new(0),
                 consecutive_crashes: AtomicU32::new(0),
                 healthy: AtomicBool::new(true),
+                runtime_registry: registry.clone(),
             });
             let mut handle_vec = pool.handles.write().await;
             for _ in 0..route.concurrency {
@@ -140,11 +142,31 @@ impl ProcessManager {
                     pool.healthy.store(false, Ordering::Relaxed);
                     error!("route {route_key} marked unhealthy after {crashes} crashes");
                 }
-                warn!("lambda crash on {route_key}: {e}");
+                warn!("lambda crash on {route_key}: {e} — restarting");
+                let _ = handle._child.kill().await;
+                match spawn_process(&pool.route, &pool.runtime_registry).await {
+                    Ok(new_handle) => {
+                        *handle = new_handle;
+                        pool.consecutive_crashes.store(0, Ordering::Relaxed);
+                    }
+                    Err(spawn_err) => {
+                        error!("failed to respawn {route_key}: {spawn_err}");
+                    }
+                }
                 Ok(GatewayResponse::error(502, "lambda error"))
             }
             Err(_) => {
-                warn!("lambda timeout on {route_key} after {timeout_ms}ms");
+                warn!("lambda timeout on {route_key} after {timeout_ms}ms — killing and restarting");
+                let _ = handle._child.kill().await;
+                match spawn_process(&pool.route, &pool.runtime_registry).await {
+                    Ok(new_handle) => {
+                        *handle = new_handle;
+                    }
+                    Err(spawn_err) => {
+                        error!("failed to respawn after timeout {route_key}: {spawn_err}");
+                    }
+                }
+                pool.restart_count.fetch_add(1, Ordering::Relaxed);
                 Ok(GatewayResponse::error(504, "lambda timeout"))
             }
         }

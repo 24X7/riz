@@ -1,4 +1,5 @@
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::sync::{Mutex, RwLock};
 use crate::cache::CacheLayer;
@@ -14,7 +15,7 @@ pub struct AppState {
     pub process_manager: ProcessManager,
     pub cache: CacheLayer,
     pub metrics: MetricsEmitter,
-    pub runtime_registry: RuntimeRegistry,
+    pub runtime_registry: Arc<RuntimeRegistry>,
     pub route_stats: RwLock<HashMap<String, RouteStats>>,
     pub log_buffer: Mutex<VecDeque<LogEntry>>,
 }
