@@ -1,3 +1,4 @@
+mod cache;
 mod config;
 mod gateway;
 mod router;
