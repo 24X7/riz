@@ -1,5 +1,6 @@
 mod config;
 mod gateway;
+mod router;
 
 use clap::{Parser, Subcommand};
 
