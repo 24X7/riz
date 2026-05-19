@@ -120,7 +120,7 @@ async fn dispatch_lambda(
         }
         Err(e) => {
             error!("dispatch error for {route_key}: {e}");
-            state.metrics.record_lambda_crash(&route_key, "bun");
+            state.metrics.record_lambda_crash(&route_key, route.runtime.as_str());
             state.record_request(&route_key, false, latency, false).await;
             gateway_to_axum(&GatewayResponse::error(502, "internal error"))
         }
