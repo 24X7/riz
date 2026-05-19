@@ -1,8 +1,10 @@
 mod cache;
 mod config;
 mod gateway;
+mod metrics;
 mod process;
 mod router;
+mod state;
 
 use clap::{Parser, Subcommand};
 
