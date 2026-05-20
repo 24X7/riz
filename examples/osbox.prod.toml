@@ -1,0 +1,45 @@
+[server]
+port = 3000
+host = "0.0.0.0"
+
+[cache]
+default_ttl_secs = 0
+max_size_mb = 128
+
+[datadog]
+enabled = false
+statsd_host = "127.0.0.1:8125"
+service = "osbox"
+env = "production"
+
+[deploy]
+# deploy_key = "changeme"   # prefer OSBOX_DEPLOY_KEY env var
+allowed_cidrs = []
+
+[aws]
+region = "us-east-1"
+
+[[routes]]
+path = "/ping"
+method = "GET"
+runtime = "bun"
+handler = "./examples/lambdas/ping/index.ts"
+timeout_ms = 5000
+concurrency = 2
+
+[[routes]]
+path = "/accounts/:id"
+method = "GET"
+runtime = "bun"
+handler = "./examples/lambdas/accounts/index.ts"
+cache_ttl_secs = 30
+timeout_ms = 5000
+concurrency = 2
+
+[[routes]]
+path = "/events"
+method = "POST"
+runtime = "bun"
+handler = "./examples/lambdas/events/index.ts"
+timeout_ms = 5000
+concurrency = 2

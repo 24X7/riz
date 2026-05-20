@@ -1,0 +1,34 @@
+[server]
+port = 3000
+host = "127.0.0.1"
+
+[cache]
+default_ttl_secs = 0
+max_size_mb = 128
+
+[datadog]
+enabled = false
+
+[[routes]]
+path = "/ping"
+method = "GET"
+runtime = "bun"
+handler = "./examples/lambdas/ping/index.ts"
+timeout_ms = 1000
+concurrency = 1
+
+[[routes]]
+path = "/accounts/:id"
+method = "GET"
+runtime = "bun"
+handler = "./examples/lambdas/accounts/index.ts"
+timeout_ms = 1000
+concurrency = 1
+
+[[routes]]
+path = "/events"
+method = "POST"
+runtime = "bun"
+handler = "./examples/lambdas/events/index.ts"
+timeout_ms = 1000
+concurrency = 1
