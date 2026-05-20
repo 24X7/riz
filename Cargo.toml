@@ -22,7 +22,7 @@ aws-sdk-s3 = "1"
 aws-config = "1"
 zip = "2"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 anyhow = "1"
 uuid = { version = "1", features = ["v4"] }
 cadence = "1"

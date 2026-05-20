@@ -19,8 +19,9 @@ use tracing_subscriber::EnvFilter;
 #[derive(Parser)]
 #[command(name = "osbox", about = "Self-hosted AWS Lambda host")]
 struct Cli {
-    #[arg(short, long, default_value = "osbox.toml")]
-    config: String,
+    /// Config file. Defaults to osbox.dev.toml in --dev mode, osbox.toml otherwise.
+    #[arg(short, long)]
+    config: Option<String>,
 
     #[arg(short, long)]
     port: Option<u16>,
@@ -28,8 +29,13 @@ struct Cli {
     #[arg(long)]
     no_tui: bool,
 
-    #[arg(long, default_value = "info")]
-    log_level: String,
+    /// Log level. Defaults to debug in --dev mode, info otherwise.
+    #[arg(long)]
+    log_level: Option<String>,
+
+    /// Developer mode: colorized logs, debug level, TUI always on, defaults to osbox.dev.toml.
+    #[arg(long)]
+    dev: bool,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -47,18 +53,38 @@ enum Commands {
     },
 }
 
+fn effective_config_path(dev: bool, explicit: Option<&str>) -> String {
+    explicit.map(|s| s.to_string()).unwrap_or_else(|| {
+        if dev { "osbox.dev.toml".into() } else { "osbox.toml".into() }
+    })
+}
+
+fn effective_log_level<'a>(dev: bool, explicit: Option<&'a str>) -> &'a str {
+    explicit.unwrap_or(if dev { "debug" } else { "info" })
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new(&cli.log_level))
-        )
-        .init();
+    let config_path = effective_config_path(cli.dev, cli.config.as_deref());
+    let log_level = effective_log_level(cli.dev, cli.log_level.as_deref());
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(log_level));
 
-    let config = config::Config::from_file(&cli.config)?;
+    if cli.dev {
+        tracing_subscriber::fmt()
+            .pretty()
+            .with_env_filter(filter)
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .json()
+            .with_env_filter(filter)
+            .init();
+    }
+
+    let config = config::Config::from_file(&config_path)?;
 
     match &cli.command {
         Some(Commands::Validate) => {
@@ -80,7 +106,7 @@ async fn main() -> anyhow::Result<()> {
     let host: std::net::IpAddr = config.server.host.parse()?;
     let addr = SocketAddr::new(host, port);
 
-    let registry = std::sync::Arc::new(process::runtime::RuntimeRegistry::new()?);
+    let registry = Arc::new(process::runtime::RuntimeRegistry::new()?);
     let cache = cache::CacheLayer::new(&config.cache);
     let metrics = metrics::MetricsEmitter::new(&config.datadog);
     let router = router::Router::new(config.routes.clone());
@@ -103,7 +129,14 @@ async fn main() -> anyhow::Result<()> {
         log_buffer: tokio::sync::Mutex::new(Default::default()),
     });
 
-    let tui_enabled = !cli.no_tui && std::io::IsTerminal::is_terminal(&std::io::stdout());
+    // Dev mode forces TUI on regardless of --no-tui and atty check.
+    // Prod mode: TUI only if stdout is a TTY and --no-tui not set.
+    let tui_enabled = if cli.dev {
+        true
+    } else {
+        !cli.no_tui && std::io::IsTerminal::is_terminal(&std::io::stdout())
+    };
+
     if tui_enabled {
         let tui_state = app_state.clone();
         let tui_handle = tokio::runtime::Handle::current();
@@ -114,13 +147,56 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // Hot-reload watcher
     let watch_state = app_state.clone();
-    let watch_config_path = cli.config.clone();
+    let watch_config_path = config_path.clone();
     tokio::spawn(async move {
         hotreload::watch_config(watch_config_path, watch_state).await;
     });
 
-    info!("osbox starting on {addr}");
+    if cli.dev {
+        info!("osbox starting in [dev] mode on {addr}");
+    } else {
+        info!(mode = "production", addr = %addr, "osbox starting");
+    }
+
     server::run(app_state, addr).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dev_flag_parsed() {
+        let cli = Cli::try_parse_from(["osbox", "--dev"]).unwrap();
+        assert!(cli.dev);
+        assert!(cli.config.is_none());
+        assert!(cli.log_level.is_none());
+    }
+
+    #[test]
+    fn no_dev_flag_by_default() {
+        let cli = Cli::try_parse_from(["osbox"]).unwrap();
+        assert!(!cli.dev);
+    }
+
+    #[test]
+    fn explicit_config_overrides_dev_default() {
+        let cli = Cli::try_parse_from(["osbox", "--dev", "--config", "custom.toml"]).unwrap();
+        assert_eq!(cli.config.as_deref(), Some("custom.toml"));
+        assert_eq!(effective_config_path(cli.dev, cli.config.as_deref()), "custom.toml");
+    }
+
+    #[test]
+    fn config_defaults_by_mode() {
+        assert_eq!(effective_config_path(true, None), "osbox.dev.toml");
+        assert_eq!(effective_config_path(false, None), "osbox.toml");
+    }
+
+    #[test]
+    fn log_level_defaults_by_mode() {
+        assert_eq!(effective_log_level(true, None), "debug");
+        assert_eq!(effective_log_level(false, None), "info");
+        assert_eq!(effective_log_level(true, Some("warn")), "warn");
+    }
 }
