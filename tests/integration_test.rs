@@ -24,7 +24,7 @@ concurrency = 1
 
     let config: osbox::config::Config = toml::from_str(&config_toml).unwrap();
 
-    let registry = osbox::process::runtime::RuntimeRegistry::new().unwrap();
+    let registry = Arc::new(osbox::process::runtime::RuntimeRegistry::new().unwrap());
     let cache = osbox::cache::CacheLayer::new(&config.cache);
     let metrics = osbox::metrics::MetricsEmitter::new(&config.datadog);
     let router = osbox::router::Router::new(config.routes.clone());
@@ -87,7 +87,7 @@ concurrency = 1
 "#, handler = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/echo-lambda/index.ts"));
 
     let config: osbox::config::Config = toml::from_str(&config_toml).unwrap();
-    let registry = osbox::process::runtime::RuntimeRegistry::new().unwrap();
+    let registry = Arc::new(osbox::process::runtime::RuntimeRegistry::new().unwrap());
     let cache = osbox::cache::CacheLayer::new(&config.cache);
     let metrics = osbox::metrics::MetricsEmitter::new(&config.datadog);
     let router = osbox::router::Router::new(config.routes.clone());

@@ -55,7 +55,7 @@ enum Commands {
 
 fn effective_config_path(dev: bool, explicit: Option<&str>) -> String {
     explicit.map(|s| s.to_string()).unwrap_or_else(|| {
-        if dev { "osbox.dev.toml".into() } else { "osbox.toml".into() }
+        if dev { "examples/osbox.dev.toml".into() } else { "osbox.toml".into() }
     })
 }
 
@@ -189,7 +189,7 @@ mod tests {
 
     #[test]
     fn config_defaults_by_mode() {
-        assert_eq!(effective_config_path(true, None), "osbox.dev.toml");
+        assert_eq!(effective_config_path(true, None), "examples/osbox.dev.toml");
         assert_eq!(effective_config_path(false, None), "osbox.toml");
     }
 
