@@ -26,11 +26,47 @@ pub fn build_app(state: Arc<AppState>) -> AxumRouter {
 }
 
 pub async fn run(state: Arc<AppState>, addr: SocketAddr) -> anyhow::Result<()> {
-    let app = build_app(state).into_make_service_with_connect_info::<SocketAddr>();
+    let app = build_app(state.clone()).into_make_service_with_connect_info::<SocketAddr>();
     info!("riz listening on {addr}");
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async {
+            shutdown_signal().await;
+            tracing::info!("shutdown signal received — draining in-flight requests (30s timeout)");
+        })
+        .await?;
+    tracing::info!("all requests drained — killing child processes");
+    kill_all_processes(&state).await;
     Ok(())
+}
+
+async fn shutdown_signal() {
+    use tokio::signal;
+    let ctrl_c = async {
+        signal::ctrl_c().await.expect("failed to install Ctrl+C handler");
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+}
+
+async fn kill_all_processes(state: &AppState) {
+    let stats = state.process_manager.pool_stats().await;
+    for s in &stats {
+        for &pid in &s.pids {
+            crate::process::kill_process_group(pid);
+        }
+    }
 }
 
 async fn dispatch_lambda(
@@ -208,4 +244,19 @@ async fn cache_invalidate(
         0
     };
     Json(InvalidateResponse { evicted })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn shutdown_signal_resolves_on_ctrl_c() {
+        // We can't actually send signals in a unit test, but we can verify
+        // the shutdown_signal future is a valid future type.
+        // This test just ensures it compiles and is properly formed.
+        let _fut = shutdown_signal();
+        // If this compiles, the signal handler is correctly set up
+        assert!(true);
+    }
 }

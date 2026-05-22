@@ -334,7 +334,7 @@ async fn handle_process_failure(
 }
 
 #[cfg(unix)]
-fn kill_process_group(pid: u32) {
+pub(crate) fn kill_process_group(pid: u32) {
     if pid == 0 { return; }
     let _ = nix::sys::signal::killpg(
         nix::unistd::Pid::from_raw(pid as i32),
@@ -343,7 +343,7 @@ fn kill_process_group(pid: u32) {
 }
 
 #[cfg(not(unix))]
-fn kill_process_group(_pid: u32) {}
+pub(crate) fn kill_process_group(_pid: u32) {}
 
 fn spawn_liveness_watcher(
     pid: u32,
