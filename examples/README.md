@@ -1,11 +1,11 @@
-# osbox Examples
+# riz Examples
 
 Three example Bun lambda handlers demonstrating the core input/output patterns.
 
 ## Prerequisites
 
 - [bun](https://bun.sh) installed and on `PATH`
-- osbox binary built: `cargo build --release` (or `cargo build` for dev)
+- riz binary built: `cargo build --release` (or `cargo build` for dev)
 
 ## Dev Mode
 
@@ -15,7 +15,7 @@ Colorized logs, debug level, TUI dashboard always on, hot-reload of config:
 cargo run -- --dev
 ```
 
-Loads `examples/osbox.dev.toml` by default. All three routes are available:
+Loads `examples/riz.dev.toml` by default. All three routes are available:
 
 ```bash
 # Health check — no input
@@ -32,7 +32,7 @@ curl -X POST http://localhost:3000/events \
 
 ### Hot-Reload
 
-While `osbox --dev` is running, edit `examples/osbox.dev.toml` — change a timeout,
+While `riz --dev` is running, edit `examples/riz.dev.toml` — change a timeout,
 add a route, or remove one. The TUI Routes tab updates within ~200ms without
 restarting the host.
 
@@ -41,11 +41,11 @@ restarting the host.
 JSON-structured stdout logs, no TUI, caching enabled on `GET /accounts/:id`:
 
 ```bash
-cargo run -- --config examples/osbox.prod.toml
+cargo run -- --config examples/riz.prod.toml
 ```
 
 Same curl commands work. The second request to `/accounts/:id` is served from
-cache — watch the Cache tab hit count increment if you run with `--config examples/osbox.prod.toml`
+cache — watch the Cache tab hit count increment if you run with `--config examples/riz.prod.toml`
 and a terminal (atty detected).
 
 ## Cache Invalidation
@@ -72,6 +72,6 @@ export const handler = async (event: any, _ctx: any) => {
 };
 ```
 
-osbox routes requests to these handlers via stdin/stdout — no SDK changes needed.
-The `handler` field in `osbox.toml` points directly to the `.ts` file; naming is
+riz routes requests to these handlers via stdin/stdout — no SDK changes needed.
+The `handler` field in `riz.toml` points directly to the `.ts` file; naming is
 entirely up to you.

@@ -52,14 +52,14 @@ impl MetricsEmitter {
             let status_tag = format!("status:{status}");
             let env_tag = format!("env:{}", self.env);
 
-            let mut b = c.time_with_tags("osbox.request.duration", duration_ms.round() as u64);
+            let mut b = c.time_with_tags("riz.request.duration", duration_ms.round() as u64);
             tag!(b, &route_tag);
             tag!(b, &method_tag);
             tag!(b, &status_tag);
             tag!(b, &env_tag);
             b.send();
 
-            let mut b = c.incr_with_tags("osbox.request.count");
+            let mut b = c.incr_with_tags("riz.request.count");
             tag!(b, &route_tag);
             tag!(b, &method_tag);
             tag!(b, &status_tag);
@@ -71,7 +71,7 @@ impl MetricsEmitter {
     pub fn record_cache_hit(&self, route: &str) {
         if let Some(c) = &self.client {
             let route_tag = format!("route:{}", sanitize(route));
-            let mut b = c.incr_with_tags("osbox.cache.hit");
+            let mut b = c.incr_with_tags("riz.cache.hit");
             tag!(b, &route_tag);
             b.send();
         }
@@ -80,7 +80,7 @@ impl MetricsEmitter {
     pub fn record_cache_miss(&self, route: &str) {
         if let Some(c) = &self.client {
             let route_tag = format!("route:{}", sanitize(route));
-            let mut b = c.incr_with_tags("osbox.cache.miss");
+            let mut b = c.incr_with_tags("riz.cache.miss");
             tag!(b, &route_tag);
             b.send();
         }
@@ -90,7 +90,7 @@ impl MetricsEmitter {
         if let Some(c) = &self.client {
             let route_tag = format!("route:{}", sanitize(route));
             let runtime_tag = format!("runtime:{runtime}");
-            let mut b = c.incr_with_tags("osbox.lambda.crash");
+            let mut b = c.incr_with_tags("riz.lambda.crash");
             tag!(b, &route_tag);
             tag!(b, &runtime_tag);
             b.send();
@@ -100,7 +100,7 @@ impl MetricsEmitter {
     pub fn record_lambda_timeout(&self, route: &str) {
         if let Some(c) = &self.client {
             let route_tag = format!("route:{}", sanitize(route));
-            let mut b = c.incr_with_tags("osbox.lambda.timeout");
+            let mut b = c.incr_with_tags("riz.lambda.timeout");
             tag!(b, &route_tag);
             b.send();
         }
@@ -109,7 +109,7 @@ impl MetricsEmitter {
     pub fn record_lambda_healthy(&self, route: &str, healthy: bool) {
         if let Some(c) = &self.client {
             let route_tag = format!("route:{}", sanitize(route));
-            let mut b = c.gauge_with_tags("osbox.lambda.healthy", if healthy { 1u64 } else { 0u64 });
+            let mut b = c.gauge_with_tags("riz.lambda.healthy", if healthy { 1u64 } else { 0u64 });
             tag!(b, &route_tag);
             b.send();
         }

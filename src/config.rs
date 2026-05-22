@@ -63,7 +63,7 @@ pub struct DatadogConfig {
 }
 
 fn default_statsd() -> String { "127.0.0.1:8125".into() }
-fn default_service() -> String { "osbox".into() }
+fn default_service() -> String { "riz".into() }
 fn default_env() -> String { "production".into() }
 
 impl Default for DatadogConfig {
@@ -141,7 +141,7 @@ impl Config {
     }
 
     pub fn effective_deploy_key(&self) -> Option<String> {
-        std::env::var("OSBOX_DEPLOY_KEY").ok().or_else(|| self.deploy.deploy_key.clone())
+        std::env::var("RIZ_DEPLOY_KEY").ok().or_else(|| self.deploy.deploy_key.clone())
     }
 }
 
@@ -190,9 +190,9 @@ concurrency = 2
     #[test]
     fn deploy_key_env_wins() {
         let config: Config = toml::from_str(SAMPLE).unwrap();
-        std::env::set_var("OSBOX_DEPLOY_KEY", "envkey");
+        std::env::set_var("RIZ_DEPLOY_KEY", "envkey");
         assert_eq!(config.effective_deploy_key(), Some("envkey".into()));
-        std::env::remove_var("OSBOX_DEPLOY_KEY");
+        std::env::remove_var("RIZ_DEPLOY_KEY");
     }
 
     #[test]
@@ -205,14 +205,14 @@ port = 3000
 deploy_key = "filekey"
 "#;
         let config: Config = toml::from_str(toml_with_key).unwrap();
-        std::env::remove_var("OSBOX_DEPLOY_KEY"); // ensure env is clean
+        std::env::remove_var("RIZ_DEPLOY_KEY"); // ensure env is clean
         assert_eq!(config.effective_deploy_key(), Some("filekey".into()));
     }
 
     #[test]
     fn deploy_key_none_when_both_absent() {
         let config: Config = toml::from_str(SAMPLE).unwrap(); // SAMPLE has no deploy_key
-        std::env::remove_var("OSBOX_DEPLOY_KEY");
+        std::env::remove_var("RIZ_DEPLOY_KEY");
         assert_eq!(config.effective_deploy_key(), None);
     }
 

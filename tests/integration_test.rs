@@ -1,4 +1,4 @@
-//! Integration test: starts osbox with a real Bun echo lambda and fires HTTP requests.
+//! Integration test: starts riz with a real Bun echo lambda and fires HTTP requests.
 //! Requires `bun` to be installed on PATH.
 
 use std::net::SocketAddr;
@@ -22,17 +22,17 @@ timeout_ms = 5000
 concurrency = 1
 "#, handler = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/echo-lambda/index.ts"));
 
-    let config: osbox::config::Config = toml::from_str(&config_toml).unwrap();
+    let config: riz::config::Config = toml::from_str(&config_toml).unwrap();
 
-    let registry = Arc::new(osbox::process::runtime::RuntimeRegistry::new().unwrap());
-    let cache = osbox::cache::CacheLayer::new(&config.cache);
-    let metrics = osbox::metrics::MetricsEmitter::new(&config.datadog);
-    let router = osbox::router::Router::new(config.routes.clone());
-    let process_manager = osbox::process::ProcessManager::new();
-    let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<osbox::state::LogEntry>();
+    let registry = Arc::new(riz::process::runtime::RuntimeRegistry::new().unwrap());
+    let cache = riz::cache::CacheLayer::new(&config.cache);
+    let metrics = riz::metrics::MetricsEmitter::new(&config.datadog);
+    let router = riz::router::Router::new(config.routes.clone());
+    let process_manager = riz::process::ProcessManager::new();
+    let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<riz::state::LogEntry>();
     process_manager.spawn_all(&config.routes, &registry, log_tx.clone()).await.unwrap();
 
-    let app_state = Arc::new(osbox::state::AppState {
+    let app_state = Arc::new(riz::state::AppState {
         config: tokio::sync::RwLock::new(config),
         router: tokio::sync::RwLock::new(router),
         process_manager,
@@ -49,7 +49,7 @@ concurrency = 1
     let bound_addr: SocketAddr = listener.local_addr().unwrap();
 
     tokio::spawn(async move {
-        let app = osbox::server::build_app(app_state)
+        let app = riz::server::build_app(app_state)
             .into_make_service_with_connect_info::<SocketAddr>();
         axum::serve(listener, app).await.unwrap();
     });
@@ -88,16 +88,16 @@ cache_ttl_secs = 60
 concurrency = 1
 "#, handler = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/echo-lambda/index.ts"));
 
-    let config: osbox::config::Config = toml::from_str(&config_toml).unwrap();
-    let registry = Arc::new(osbox::process::runtime::RuntimeRegistry::new().unwrap());
-    let cache = osbox::cache::CacheLayer::new(&config.cache);
-    let metrics = osbox::metrics::MetricsEmitter::new(&config.datadog);
-    let router = osbox::router::Router::new(config.routes.clone());
-    let process_manager = osbox::process::ProcessManager::new();
-    let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<osbox::state::LogEntry>();
+    let config: riz::config::Config = toml::from_str(&config_toml).unwrap();
+    let registry = Arc::new(riz::process::runtime::RuntimeRegistry::new().unwrap());
+    let cache = riz::cache::CacheLayer::new(&config.cache);
+    let metrics = riz::metrics::MetricsEmitter::new(&config.datadog);
+    let router = riz::router::Router::new(config.routes.clone());
+    let process_manager = riz::process::ProcessManager::new();
+    let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<riz::state::LogEntry>();
     process_manager.spawn_all(&config.routes, &registry, log_tx.clone()).await.unwrap();
 
-    let state = Arc::new(osbox::state::AppState {
+    let state = Arc::new(riz::state::AppState {
         config: tokio::sync::RwLock::new(config),
         router: tokio::sync::RwLock::new(router),
         process_manager,
@@ -114,7 +114,7 @@ concurrency = 1
     let state_for_check = state.clone();
 
     tokio::spawn(async move {
-        let app = osbox::server::build_app(state)
+        let app = riz::server::build_app(state)
             .into_make_service_with_connect_info::<SocketAddr>();
         axum::serve(listener, app).await.unwrap();
     });

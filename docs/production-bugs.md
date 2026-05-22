@@ -1,4 +1,4 @@
-# osbox Production Bug Tracker
+# riz Production Bug Tracker
 
 Findings from the production-readiness audit (2026-05-22). Ordered by severity.
 
@@ -106,7 +106,7 @@ Findings from the production-readiness audit (2026-05-22). Ordered by severity.
 
 ### BUG-18: Deploy staging dir races under concurrent deploys
 **File:** `src/deploy.rs`
-**Problem:** `remove_dir_all` then `create_dir_all` on the same `/tmp/osbox-deploy/<lambda>` path races under concurrent deploys for the same lambda.
+**Problem:** `remove_dir_all` then `create_dir_all` on the same `/tmp/riz-deploy/<lambda>` path races under concurrent deploys for the same lambda.
 **Fix:** Write to a per-deploy `tempfile::TempDir` and atomic-rename into place.
 
 ### BUG-19: ZIP symlinks not rejected during deploy

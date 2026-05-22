@@ -27,7 +27,7 @@ pub fn build_app(state: Arc<AppState>) -> AxumRouter {
 
 pub async fn run(state: Arc<AppState>, addr: SocketAddr) -> anyhow::Result<()> {
     let app = build_app(state).into_make_service_with_connect_info::<SocketAddr>();
-    info!("osbox listening on {addr}");
+    info!("riz listening on {addr}");
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())

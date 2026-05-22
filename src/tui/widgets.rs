@@ -33,7 +33,7 @@ fn render_tabs(frame: &mut Frame, app: &App, area: Rect) {
         .collect();
     let tabs = Tabs::new(titles)
         .select(app.selected_tab)
-        .block(Block::default().borders(Borders::ALL).title("osbox"))
+        .block(Block::default().borders(Borders::ALL).title("riz"))
         .highlight_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
     frame.render_widget(tabs, area);
 }

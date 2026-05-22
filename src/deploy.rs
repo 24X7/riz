@@ -89,7 +89,7 @@ pub async fn deploy_handler(
     let route_key = Router::route_key(&route.method, &route.path);
 
     // Download zip from S3 and unpack to staging dir
-    let staging_dir = PathBuf::from(format!("/tmp/osbox-deploy/{}", body.lambda));
+    let staging_dir = PathBuf::from(format!("/tmp/riz-deploy/{}", body.lambda));
     if let Err(e) = download_and_unpack_s3(&body.s3_bucket, &body.s3_key, &staging_dir, &aws_region).await {
         error!("deploy download failed for {}: {e}", body.lambda);
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse {

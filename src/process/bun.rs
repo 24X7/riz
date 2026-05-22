@@ -12,9 +12,9 @@ pub struct BunRuntime {
 
 impl BunRuntime {
     pub fn new() -> anyhow::Result<Self> {
-        let dir = home_dir().join(".osbox");
+        let dir = home_dir().join(".riz");
         std::fs::create_dir_all(&dir)
-            .context("failed to create ~/.osbox")?;
+            .context("failed to create ~/.riz")?;
         let adapter_path = dir.join("bun-adapter.mjs");
         std::fs::write(&adapter_path, BUN_ADAPTER)
             .context("failed to write bun adapter")?;

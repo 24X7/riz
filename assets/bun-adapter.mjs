@@ -1,5 +1,5 @@
-// Bridges AWS Lambda HTTP Gateway v2 handler → osbox stdin/stdout protocol.
-// Spawned by osbox as: bun run bun-adapter.mjs <handler_path>
+// Bridges AWS Lambda HTTP Gateway v2 handler → riz stdin/stdout protocol.
+// Spawned by riz as: bun run bun-adapter.mjs <handler_path>
 import { createInterface } from "readline";
 
 // Redirect all console output to stderr so it doesn't corrupt the stdout protocol stream.
@@ -9,7 +9,7 @@ console.log = console.info = console.debug = _toStderr;
 
 const handlerPath = process.argv[2];
 if (!handlerPath) {
-  process.stderr.write("osbox bun-adapter: missing handler path\n");
+  process.stderr.write("riz bun-adapter: missing handler path\n");
   process.exit(1);
 }
 
@@ -18,7 +18,7 @@ const handler = mod.handler ?? mod.default;
 
 if (typeof handler !== "function") {
   process.stderr.write(
-    `osbox bun-adapter: no exported 'handler' function in ${handlerPath}\n`
+    `riz bun-adapter: no exported 'handler' function in ${handlerPath}\n`
   );
   process.exit(1);
 }
@@ -37,12 +37,12 @@ rl.on("line", async (line) => {
   }
 
   const context = {
-    functionName: process.env.AWS_LAMBDA_FUNCTION_NAME ?? "osbox",
+    functionName: process.env.AWS_LAMBDA_FUNCTION_NAME ?? "riz",
     functionVersion: "$LATEST",
     invokedFunctionArn: "",
     memoryLimitInMB: "512",
     awsRequestId: crypto.randomUUID(),
-    logGroupName: "/osbox",
+    logGroupName: "/riz",
     logStreamName: "local",
     getRemainingTimeInMillis: () => 30000,
     done: () => {},

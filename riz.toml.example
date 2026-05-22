@@ -9,11 +9,11 @@ max_size_mb = 128
 [datadog]
 enabled = false
 statsd_host = "127.0.0.1:8125"
-service = "osbox"
+service = "riz"
 env = "production"
 
 [deploy]
-# deploy_key = "changeme"   # prefer OSBOX_DEPLOY_KEY env var
+# deploy_key = "changeme"   # prefer RIZ_DEPLOY_KEY env var
 allowed_cidrs = []          # empty = allow all IPs
 
 [aws]

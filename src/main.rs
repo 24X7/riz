@@ -17,9 +17,9 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
-#[command(name = "osbox", about = "Self-hosted AWS Lambda host")]
+#[command(name = "riz", about = "Self-hosted AWS Lambda host")]
 struct Cli {
-    /// Config file. Defaults to osbox.dev.toml in --dev mode, osbox.toml otherwise.
+    /// Config file. Defaults to riz.dev.toml in --dev mode, riz.toml otherwise.
     #[arg(short, long)]
     config: Option<String>,
 
@@ -33,7 +33,7 @@ struct Cli {
     #[arg(long)]
     log_level: Option<String>,
 
-    /// Developer mode: colorized logs, debug level, TUI always on, defaults to osbox.dev.toml.
+    /// Developer mode: colorized logs, debug level, TUI always on, defaults to riz.dev.toml.
     #[arg(long)]
     dev: bool,
 
@@ -55,7 +55,7 @@ enum Commands {
 
 fn effective_config_path(dev: bool, explicit: Option<&str>) -> String {
     explicit.map(|s| s.to_string()).unwrap_or_else(|| {
-        if dev { "examples/osbox.dev.toml".into() } else { "osbox.toml".into() }
+        if dev { "examples/riz.dev.toml".into() } else { "riz.toml".into() }
     })
 }
 
@@ -156,9 +156,9 @@ async fn main() -> anyhow::Result<()> {
     });
 
     if cli.dev {
-        info!("osbox starting in [dev] mode on {addr}");
+        info!("riz starting in [dev] mode on {addr}");
     } else {
-        info!(mode = "production", addr = %addr, "osbox starting");
+        info!(mode = "production", addr = %addr, "riz starting");
     }
 
     server::run(app_state, addr).await
@@ -170,7 +170,7 @@ mod tests {
 
     #[test]
     fn dev_flag_parsed() {
-        let cli = Cli::try_parse_from(["osbox", "--dev"]).unwrap();
+        let cli = Cli::try_parse_from(["riz", "--dev"]).unwrap();
         assert!(cli.dev);
         assert!(cli.config.is_none());
         assert!(cli.log_level.is_none());
@@ -184,15 +184,15 @@ mod tests {
 
     #[test]
     fn explicit_config_overrides_dev_default() {
-        let cli = Cli::try_parse_from(["osbox", "--dev", "--config", "custom.toml"]).unwrap();
+        let cli = Cli::try_parse_from(["riz", "--dev", "--config", "custom.toml"]).unwrap();
         assert_eq!(cli.config.as_deref(), Some("custom.toml"));
         assert_eq!(effective_config_path(cli.dev, cli.config.as_deref()), "custom.toml");
     }
 
     #[test]
     fn config_defaults_by_mode() {
-        assert_eq!(effective_config_path(true, None), "examples/osbox.dev.toml");
-        assert_eq!(effective_config_path(false, None), "osbox.toml");
+        assert_eq!(effective_config_path(true, None), "examples/riz.dev.toml");
+        assert_eq!(effective_config_path(false, None), "riz.toml");
     }
 
     #[test]

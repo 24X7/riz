@@ -1,13 +1,13 @@
 [package]
-name = "osbox"
+name = "riz"
 version = "0.1.0"
 edition = "2021"
-repository = "https://github.com/OWNER/osbox"
+repository = "https://github.com/criz/riz"
 description = "Self-hosted AWS Lambda host — run TypeScript functions without AWS"
 license = "MIT"
 
 [[bin]]
-name = "osbox"
+name = "riz"
 path = "src/main.rs"
 
 [dependencies]
