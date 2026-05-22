@@ -29,8 +29,8 @@ concurrency = 1
     let metrics = osbox::metrics::MetricsEmitter::new(&config.datadog);
     let router = osbox::router::Router::new(config.routes.clone());
     let process_manager = osbox::process::ProcessManager::new();
-    process_manager.spawn_all(&config.routes, &registry).await.unwrap();
     let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<osbox::state::LogEntry>();
+    process_manager.spawn_all(&config.routes, &registry, log_tx.clone()).await.unwrap();
 
     let app_state = Arc::new(osbox::state::AppState {
         config: tokio::sync::RwLock::new(config),
@@ -94,8 +94,8 @@ concurrency = 1
     let metrics = osbox::metrics::MetricsEmitter::new(&config.datadog);
     let router = osbox::router::Router::new(config.routes.clone());
     let process_manager = osbox::process::ProcessManager::new();
-    process_manager.spawn_all(&config.routes, &registry).await.unwrap();
     let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<osbox::state::LogEntry>();
+    process_manager.spawn_all(&config.routes, &registry, log_tx.clone()).await.unwrap();
 
     let state = Arc::new(osbox::state::AppState {
         config: tokio::sync::RwLock::new(config),

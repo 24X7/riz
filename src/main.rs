@@ -117,7 +117,7 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("SECURITY: no deploy key configured — POST /deploy is unauthenticated");
     }
 
-    process_manager.spawn_all(&config.routes, &registry).await?;
+    process_manager.spawn_all(&config.routes, &registry, log_tx.clone()).await?;
 
     let app_state = Arc::new(state::AppState {
         config: tokio::sync::RwLock::new(config.clone()),

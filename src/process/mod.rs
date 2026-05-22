@@ -7,13 +7,14 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout};
-use tokio::sync::{Mutex, RwLock, Semaphore};
+use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
 use tokio::time::{timeout, Duration};
 use anyhow::Context;
 use tracing::{error, warn};
 use crate::config::RouteConfig;
 use crate::gateway::{GatewayRequest, GatewayResponse};
 use crate::process::runtime::RuntimeRegistry;
+use crate::state::LogEntry;
 
 struct ProcessHandle {
     pid: u32,
@@ -32,6 +33,7 @@ struct RoutePool {
     consecutive_crashes: AtomicU32,
     healthy: AtomicBool,
     runtime_registry: Arc<RuntimeRegistry>,
+    log_tx: mpsc::UnboundedSender<LogEntry>,
 }
 
 const CRASH_THRESHOLD: u32 = 5;
@@ -57,6 +59,7 @@ impl ProcessManager {
         &self,
         routes: &[RouteConfig],
         registry: &Arc<RuntimeRegistry>,
+        log_tx: mpsc::UnboundedSender<LogEntry>,
     ) -> anyhow::Result<()> {
         let mut pools = self.pools.write().await;
         for route in routes {
@@ -69,10 +72,11 @@ impl ProcessManager {
                 consecutive_crashes: AtomicU32::new(0),
                 healthy: AtomicBool::new(true),
                 runtime_registry: registry.clone(),
+                log_tx: log_tx.clone(),
             });
             let mut handle_vec = pool.handles.write().await;
             for _ in 0..route.concurrency {
-                let handle = spawn_process(route, registry).await
+                let handle = spawn_process(route, registry, &log_tx).await
                     .with_context(|| format!("failed to spawn lambda for {key}"))?;
                 handle_vec.push(Arc::new(Mutex::new(handle)));
             }
@@ -144,7 +148,7 @@ impl ProcessManager {
                 }
                 warn!("lambda crash on {route_key}: {e} — restarting");
                 let _ = handle._child.kill().await;
-                match spawn_process(&pool.route, &pool.runtime_registry).await {
+                match spawn_process(&pool.route, &pool.runtime_registry, &pool.log_tx).await {
                     Ok(new_handle) => {
                         *handle = new_handle;
                         pool.consecutive_crashes.store(0, Ordering::Relaxed);
@@ -158,7 +162,7 @@ impl ProcessManager {
             Err(_) => {
                 warn!("lambda timeout on {route_key} after {timeout_ms}ms — killing and restarting");
                 let _ = handle._child.kill().await;
-                match spawn_process(&pool.route, &pool.runtime_registry).await {
+                match spawn_process(&pool.route, &pool.runtime_registry, &pool.log_tx).await {
                     Ok(new_handle) => {
                         *handle = new_handle;
                     }
@@ -195,7 +199,7 @@ impl ProcessManager {
 
         let mut first_pid = 0;
         for _ in 0..new_route.concurrency {
-            let h = spawn_process(&new_route, registry).await?;
+            let h = spawn_process(&new_route, registry, &pool.log_tx).await?;
             if first_pid == 0 { first_pid = h.pid; }
             handles.push(Arc::new(Mutex::new(h)));
         }
@@ -229,9 +233,8 @@ impl ProcessManager {
 async fn spawn_process(
     route: &RouteConfig,
     registry: &RuntimeRegistry,
+    log_tx: &mpsc::UnboundedSender<LogEntry>,
 ) -> anyhow::Result<ProcessHandle> {
-    use tokio::io::AsyncReadExt;
-
     let runtime = registry.get(&route.runtime);
     let mut cmd = runtime.spawn_command(route);
     cmd.stdin(std::process::Stdio::piped())
@@ -245,13 +248,19 @@ async fn spawn_process(
     let stdin = child.stdin.take().expect("stdin piped");
     let stdout = BufReader::new(child.stdout.take().expect("stdout piped"));
 
-    if let Some(mut stderr) = child.stderr.take() {
+    if let Some(stderr) = child.stderr.take() {
         let route_key = crate::router::Router::route_key(&route.method, &route.path);
+        let tx = log_tx.clone();
         tokio::spawn(async move {
-            let mut buf = String::new();
-            let _ = stderr.read_to_string(&mut buf).await;
-            if !buf.trim().is_empty() {
-                warn!("lambda stderr [{}]: {}", route_key, buf.trim());
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if line.trim().is_empty() { continue; }
+                let _ = tx.send(LogEntry {
+                    timestamp: std::time::SystemTime::now(),
+                    level: "WARN".into(),
+                    message: format!("stderr: {line}"),
+                    route_key: Some(route_key.clone()),
+                });
             }
         });
     }
