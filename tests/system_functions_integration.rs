@@ -17,10 +17,10 @@ async fn make_state() -> Arc<riz::state::AppState> {
     let registry = Arc::new(riz::process::runtime::RuntimeRegistry::new().unwrap());
     let cache = riz::cache::CacheLayer::new(&config.cache);
     let metrics = riz::metrics::MetricsEmitter::new(&config.datadog);
-    let process_manager = Arc::new(riz::process::ProcessManager::new());
     let (log_tx, log_rx) = tokio::sync::mpsc::channel::<riz::state::LogEntry>(10_000);
 
     let riz_state = Arc::new(riz::state::RizState::new());
+    let process_manager = Arc::new(riz::process::ProcessManager::new(riz_state.clone()));
     riz_state.register(riz::state::FunctionState::system("GET /_riz/health")).await;
     riz_state.register(riz::state::FunctionState::system("GET /_riz/metrics")).await;
     riz_state.register(riz::state::FunctionState::system("GET /_riz/registry")).await;

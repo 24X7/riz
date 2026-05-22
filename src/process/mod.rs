@@ -15,7 +15,7 @@ use tracing::{error, warn};
 use crate::config::RouteConfig;
 use crate::gateway::{GatewayRequest, GatewayResponse};
 use crate::process::runtime::RuntimeRegistry;
-use crate::state::LogEntry;
+use crate::state::{LogEntry, RizState};
 
 struct ProcessHandle {
     pid: u32,
@@ -35,6 +35,10 @@ struct RoutePool {
     healthy: AtomicBool,
     runtime_registry: Arc<RuntimeRegistry>,
     log_tx: mpsc::Sender<LogEntry>,
+    /// Shared RizState used to bump cold_starts on every successful spawn.
+    /// Per-pool because handle_process_failure and timeout-respawn paths
+    /// only have a `&Arc<RoutePool>` to work from.
+    riz_state: Arc<RizState>,
 }
 
 const CRASH_THRESHOLD: u32 = 5;
@@ -42,6 +46,10 @@ const CRASH_THRESHOLD: u32 = 5;
 pub struct ProcessManager {
     pools: RwLock<HashMap<String, Arc<RoutePool>>>,
     sys: std::sync::Mutex<System>,
+    /// Shared RizState. Threaded into each RoutePool at creation so spawn
+    /// sites (initial fill, restart-after-crash, timeout-respawn, hot_swap)
+    /// can bump per-function cold_starts counters.
+    riz_state: Arc<RizState>,
 }
 
 pub struct PoolStats {
@@ -63,10 +71,11 @@ pub struct HostStats {
 }
 
 impl ProcessManager {
-    pub fn new() -> Self {
+    pub fn new(riz_state: Arc<RizState>) -> Self {
         Self {
             pools: RwLock::new(HashMap::new()),
             sys: std::sync::Mutex::new(System::new()),
+            riz_state,
         }
     }
 
@@ -88,11 +97,14 @@ impl ProcessManager {
                 healthy: AtomicBool::new(true),
                 runtime_registry: registry.clone(),
                 log_tx: log_tx.clone(),
+                riz_state: self.riz_state.clone(),
             });
             let mut handle_vec = pool.handles.write().await;
             for _ in 0..route.concurrency {
                 let handle = spawn_process(route, registry, &log_tx).await
                     .with_context(|| format!("failed to spawn lambda for {key}"))?;
+                // Initial pool fill: each spawned process is a cold start.
+                self.riz_state.note_cold_start(&key).await;
                 let handle_arc = Arc::new(Mutex::new(handle));
                 let pid = handle_arc.lock().await.pid;
                 spawn_liveness_watcher(pid, handle_arc.clone(), pool.clone(), key.clone());
@@ -206,6 +218,8 @@ impl ProcessManager {
                 match spawn_process(&pool.route, &pool.runtime_registry, &pool.log_tx).await {
                     Ok(new_handle) => {
                         *handle = new_handle;
+                        // Timeout-respawn: the fresh process is a cold start.
+                        pool.riz_state.note_cold_start(route_key).await;
                         spawn_liveness_watcher(handle.pid, arc.clone(), pool.clone(), route_key.to_string());
                     }
                     Err(spawn_err) => {
@@ -249,6 +263,8 @@ impl ProcessManager {
         for _ in 0..new_route.concurrency {
             let h = spawn_process(&new_route, registry, &pool.log_tx).await?;
             if first_pid == 0 { first_pid = h.pid; }
+            // Hot-swap: every replacement process counts as a cold start.
+            pool.riz_state.note_cold_start(route_key).await;
             let handle_arc = Arc::new(Mutex::new(h));
             let pid = handle_arc.lock().await.pid;
             spawn_liveness_watcher(pid, handle_arc.clone(), pool.clone(), route_key.to_string());
@@ -300,11 +316,14 @@ impl ProcessManager {
             healthy: AtomicBool::new(true),
             runtime_registry: registry.clone(),
             log_tx: log_tx.clone(),
+            riz_state: self.riz_state.clone(),
         });
         let mut handle_vec = pool.handles.write().await;
         for _ in 0..route.concurrency {
             let handle = spawn_process(route, registry, &log_tx).await
                 .with_context(|| format!("failed to spawn lambda for {key}"))?;
+            // Hot-reload added a new route — initial fill counts as cold start.
+            self.riz_state.note_cold_start(&key).await;
             let handle_arc = Arc::new(Mutex::new(handle));
             let pid = handle_arc.lock().await.pid;
             spawn_liveness_watcher(pid, handle_arc.clone(), pool.clone(), key.clone());
@@ -413,6 +432,8 @@ async fn handle_process_failure(
     let _ = handle._child.kill().await;
     match spawn_process(&pool.route, &pool.runtime_registry, &pool.log_tx).await {
         Ok(new_handle) => {
+            // Crash/pipe-failure respawn is a cold start.
+            pool.riz_state.note_cold_start(route_key).await;
             *handle = new_handle;
             pool.consecutive_crashes.store(0, Ordering::Relaxed);
         }

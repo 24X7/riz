@@ -76,7 +76,8 @@ mod tests {
 
     #[test]
     fn process_handler_exposes_route_entry_from_config() {
-        let pm = Arc::new(ProcessManager::new());
+        let riz_state = Arc::new(crate::state::RizState::new());
+        let pm = Arc::new(ProcessManager::new(riz_state));
         let h = ProcessHandler::for_route(&make_route(), pm);
         assert_eq!(h.routes().len(), 1);
         assert_eq!(h.routes()[0].path, "/api");

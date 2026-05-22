@@ -112,7 +112,6 @@ async fn main() -> anyhow::Result<()> {
     let registry = Arc::new(process::runtime::RuntimeRegistry::new()?);
     let cache = cache::CacheLayer::new(&config.cache);
     let metrics = metrics::MetricsEmitter::new(&config.datadog);
-    let process_manager = Arc::new(process::ProcessManager::new());
     let (log_tx, log_rx) = tokio::sync::mpsc::channel::<state::LogEntry>(10_000);
 
     let deploy_cfg = &config.deploy;
@@ -120,12 +119,10 @@ async fn main() -> anyhow::Result<()> {
         tracing::error!("SECURITY: /deploy has no auth configured — endpoint will refuse all requests. Set RIZ_DEPLOY_KEY or deploy_key/allowed_cidrs in config.");
     }
 
-    // Spawn the user-function pools (existing behavior preserved verbatim).
-    process_manager.spawn_all(&config.routes, &registry, log_tx.clone()).await?;
-
     // Per-function shared state — tracks counters and latency percentiles for
-    // both system endpoints and user functions. Registered up-front so the
-    // first invocation finds the entry.
+    // both system endpoints and user functions. Constructed FIRST so the
+    // ProcessManager (and each spawned RoutePool) can hold an Arc<RizState>
+    // and bump cold_starts at every spawn site.
     let riz_state = Arc::new(state::RizState::new());
     riz_state.register(state::FunctionState::system("GET /_riz/health")).await;
     riz_state.register(state::FunctionState::system("GET /_riz/metrics")).await;
@@ -135,6 +132,12 @@ async fn main() -> anyhow::Result<()> {
         let key = router::Router::route_key(&route.method, &route.path);
         riz_state.register(state::FunctionState::user(key, route.clone())).await;
     }
+
+    let process_manager = Arc::new(process::ProcessManager::new(riz_state.clone()));
+
+    // Spawn the user-function pools (existing behavior preserved verbatim).
+    // Each initial spawn bumps cold_starts on the matching FunctionState.
+    process_manager.spawn_all(&config.routes, &registry, log_tx.clone()).await?;
 
     // Build the trait-dispatch router. System handlers mount FIRST so that
     // /_riz/* always wins over any user attempt to shadow those paths.
