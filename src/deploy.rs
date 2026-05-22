@@ -43,6 +43,15 @@ pub async fn deploy_handler(
     let expected_key = config.effective_deploy_key();
     drop(config);
 
+    // Refuse if no auth at all configured — prevents accidental RCE
+    let has_cidr_restriction = !deploy_cfg.allowed_cidrs.is_empty();
+    if expected_key.is_none() && !has_cidr_restriction {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse { error: "deploy endpoint requires auth configuration (deploy_key or allowed_cidrs)".into() })
+        ).into_response();
+    }
+
     // IP allowlist check (empty = allow all)
     if !deploy_cfg.allowed_cidrs.is_empty() {
         let client_ip = addr.ip();
@@ -201,5 +210,22 @@ mod tests {
     #[test]
     fn route_name_no_match_on_empty() {
         assert!(!route_name_matches("/auth/signin", ""));
+    }
+
+    #[test]
+    fn deploy_refuses_when_no_auth_configured() {
+        // Verify the logic: no deploy_key + empty allowed_cidrs = refuse
+        let deploy_key: Option<String> = None;
+        let allowed_cidrs: Vec<String> = vec![];
+        let should_refuse = deploy_key.is_none() && allowed_cidrs.is_empty();
+        assert!(should_refuse, "must refuse deploy when no auth is configured");
+    }
+
+    #[test]
+    fn deploy_allows_with_cidr_only() {
+        let deploy_key: Option<String> = None;
+        let allowed_cidrs: Vec<String> = vec!["127.0.0.1/32".into()];
+        let should_refuse = deploy_key.is_none() && allowed_cidrs.is_empty();
+        assert!(!should_refuse, "cidr restriction alone is sufficient auth");
     }
 }

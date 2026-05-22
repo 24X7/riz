@@ -113,8 +113,9 @@ async fn main() -> anyhow::Result<()> {
     let process_manager = process::ProcessManager::new();
     let (log_tx, log_rx) = tokio::sync::mpsc::channel::<state::LogEntry>(10_000);
 
-    if config.effective_deploy_key().is_none() {
-        tracing::warn!("SECURITY: no deploy key configured — POST /deploy is unauthenticated");
+    let deploy_cfg = &config.deploy;
+    if config.effective_deploy_key().is_none() && deploy_cfg.allowed_cidrs.is_empty() {
+        tracing::error!("SECURITY: /deploy has no auth configured — endpoint will refuse all requests. Set RIZ_DEPLOY_KEY or deploy_key/allowed_cidrs in config.");
     }
 
     process_manager.spawn_all(&config.routes, &registry, log_tx.clone()).await?;
