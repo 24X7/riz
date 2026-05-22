@@ -7,7 +7,7 @@ use axum::{
     extract::{ConnectInfo, Request, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{any, post},
+    routing::{any, get, post},
     Json, Router as AxumRouter,
 };
 use serde::{Deserialize, Serialize};
@@ -17,8 +17,22 @@ use crate::cache::CacheLayer;
 use crate::gateway::{GatewayRequest, GatewayResponse, HttpContext, RequestContext};
 use crate::state::AppState;
 
+#[derive(Serialize)]
+struct HealthResponse {
+    status: &'static str,
+}
+
+#[derive(Serialize)]
+struct ReadyResponse {
+    status: &'static str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    unhealthy: Vec<String>,
+}
+
 pub fn build_app(state: Arc<AppState>) -> AxumRouter {
     AxumRouter::new()
+        .route("/health", get(health_handler))
+        .route("/ready", get(ready_handler))
         .route("/cache/invalidate", post(cache_invalidate))
         .route("/deploy", post(crate::deploy::deploy_handler))
         .fallback(any(dispatch_lambda))
@@ -221,6 +235,38 @@ fn extract_headers(headers: &HeaderMap) -> HashMap<String, String> {
         .collect()
 }
 
+async fn health_handler() -> impl IntoResponse {
+    Json(HealthResponse { status: "ok" })
+}
+
+async fn ready_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let stats = state.process_manager.pool_stats().await;
+    let unhealthy: Vec<String> = stats
+        .iter()
+        .filter(|s| !s.healthy)
+        .map(|s| s.route_key.clone())
+        .collect();
+    if unhealthy.is_empty() {
+        (
+            StatusCode::OK,
+            Json(ReadyResponse {
+                status: "ok",
+                unhealthy,
+            }),
+        )
+            .into_response()
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ReadyResponse {
+                status: "degraded",
+                unhealthy,
+            }),
+        )
+            .into_response()
+    }
+}
+
 #[derive(Deserialize)]
 pub struct InvalidateRequest {
     pub keys: Option<Vec<String>>,
@@ -258,5 +304,37 @@ mod tests {
         let _fut = shutdown_signal();
         // If this compiles, the signal handler is correctly set up
         assert!(true);
+    }
+
+    #[test]
+    fn health_response_serializes() {
+        let resp = HealthResponse { status: "ok" };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"status\":\"ok\""));
+    }
+
+    #[test]
+    fn ready_response_omits_empty_unhealthy() {
+        let resp = ReadyResponse {
+            status: "ok",
+            unhealthy: vec![],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(
+            !json.contains("unhealthy"),
+            "empty unhealthy list must be omitted"
+        );
+    }
+
+    #[test]
+    fn ready_response_includes_unhealthy_list() {
+        let resp = ReadyResponse {
+            status: "degraded",
+            unhealthy: vec!["route1".to_string(), "route2".to_string()],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("unhealthy"));
+        assert!(json.contains("route1"));
+        assert!(json.contains("route2"));
     }
 }
