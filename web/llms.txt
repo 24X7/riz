@@ -1,0 +1,41 @@
+# Riz
+
+> Self-hosted AWS Lambda runtime. Run your Lambda functions on any Linux or macOS box. HTTP API Gateway v2 compatible. Single Rust binary. No Docker, no cold start tax, no AWS bill.
+
+Riz is an open-source drop-in replacement for AWS Lambda + API Gateway v2. You give it a `riz.toml` describing your function fleet and a handler file per function; Riz spawns isolated child processes per route, dispatches HTTP requests using the AWS HTTP API Gateway v2 JSON payload format, and exposes a terminal dashboard (ratatui) with live latency percentiles, request logs, and per-route stats. Handlers written for AWS Lambda run on Riz unchanged.
+
+The runtime is a single Rust binary built on tokio + axum. Each route gets a process pool with a configurable concurrency limit, request timeout, and runtime adapter. Process crashes are detected by a background liveness watcher and the pool is automatically respawned. Hot reload of `riz.toml` and zero-downtime hot-swap deploys from S3 are first-class features.
+
+## Author
+
+- [Chris Rizzuto](https://linkedin.com/in/ship247) — chris@riz.dev — 20 years of engineering leadership at Meta, Google, Microsoft, Oracle.
+
+## Project
+
+- [GitHub repository](https://github.com/crizzuto/riz): Source code, issue tracker, releases
+- [Releases](https://github.com/crizzuto/riz/releases): Prebuilt binaries for Linux and macOS
+- [Quick start guide](https://github.com/crizzuto/riz#quick-start): Five-minute getting-started
+
+## Runtimes
+
+- **bun**: TypeScript and JavaScript handlers via the Bun runtime
+- **python**: Python 3 handlers
+- **rust**: Compiled Rust binary handlers
+- node: planned
+
+## Key Features
+
+- HTTP API Gateway v2 payload compatibility (drop-in for existing Lambda code)
+- Per-route process isolation with concurrency limits and request timeouts
+- Background liveness monitoring with automatic respawn on crash
+- Hot-reload of `riz.toml` configuration without restart
+- Zero-downtime hot-swap deploys from S3 (signed with `RIZ_DEPLOY_KEY` or CIDR allowlist)
+- In-process response cache with per-route TTLs and authentication-aware bypass
+- Terminal UI (ratatui) showing P50/P75/P90/P99 latency, route stats, and live logs
+- Optional JSON-formatted production logging via `tracing-subscriber`
+- Datadog metrics emitter for production observability
+- Graceful shutdown on SIGTERM/SIGINT with 30s request drain
+
+## License
+
+MIT — https://opensource.org/licenses/MIT
