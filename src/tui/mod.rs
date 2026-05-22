@@ -54,6 +54,8 @@ fn run_loop<B: ratatui::backend::Backend>(
                 .map(|f| f.snapshot(now))
                 .collect();
             app.pool_stats = state.process_manager.pool_stats().await;
+            app.host_stats = state.process_manager.host_stats();
+            app.uptime_secs = state.riz_state.uptime_secs();
             app.cache_entry_count = state.cache.entry_count();
         });
 
@@ -79,7 +81,20 @@ fn run_loop<B: ratatui::backend::Backend>(
         if event::poll(tick)? {
             if let Event::Key(key) = event::read()? {
                 match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => break,
+                    KeyCode::Char('q') => break,
+                    KeyCode::Esc => {
+                        // Esc backs out one level: clear route filter if any,
+                        // otherwise quit. `q` always quits.
+                        if app.selected_route.is_some() {
+                            app.selected_route = None;
+                        } else {
+                            break;
+                        }
+                    }
+                    // `c` always clears the route filter (mnemonic: "clear")
+                    KeyCode::Char('c') => {
+                        app.selected_route = None;
+                    }
                     KeyCode::Tab | KeyCode::Right => app.next_tab(),
                     KeyCode::BackTab | KeyCode::Left => app.prev_tab(),
                     KeyCode::Down | KeyCode::Char('j') => {

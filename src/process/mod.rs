@@ -54,6 +54,14 @@ pub struct PoolStats {
     pub cpu_percent: f32,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct HostStats {
+    pub pid: u32,
+    pub memory_rss_mb: f64,
+    pub cpu_percent: f32,
+    pub cores: usize,
+}
+
 impl ProcessManager {
     pub fn new() -> Self {
         Self {
@@ -305,6 +313,29 @@ impl ProcessManager {
         drop(handle_vec);
         self.pools.write().await.insert(key, pool);
         Ok(())
+    }
+
+    /// Stats for the Riz host process itself (the daemon that owns all the
+    /// pools). System endpoints (`/_riz/*`) run inside this process and share
+    /// its memory/CPU footprint.
+    pub fn host_stats(&self) -> HostStats {
+        let pid = std::process::id();
+        let mut sys = self.sys.lock().unwrap();
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]),
+            ProcessRefreshKind::new().with_memory().with_cpu(),
+        );
+        let (mem_bytes, cpu) = match sys.process(Pid::from_u32(pid)) {
+            Some(p) => (p.memory(), p.cpu_usage()),
+            None => (0, 0.0),
+        };
+        let cores = sys.cpus().len();
+        HostStats {
+            pid,
+            memory_rss_mb: mem_bytes as f64 / (1024.0 * 1024.0),
+            cpu_percent: cpu,
+            cores,
+        }
     }
 
     pub async fn pool_stats(&self) -> Vec<PoolStats> {

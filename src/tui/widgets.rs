@@ -121,8 +121,8 @@ fn render_log_panel(frame: &mut Frame, app: &App, area: Rect) {
         .map(|s| s.route_key.as_str());
 
     let title = match selected_key {
-        Some(k) => format!("Logs — {k}"),
-        None => "Logs".into(),
+        Some(k) => format!("Logs — {k}  [Esc / c to clear filter]"),
+        None => "Logs  (all routes)".into(),
     };
 
     let visible = filter_logs(&app.log_entries, selected_key);
@@ -169,10 +169,69 @@ fn format_timestamp(entry: &LogEntry) -> String {
 }
 
 fn render_processes(frame: &mut Frame, app: &App, area: Rect) {
-    let header = Row::new(["Route", "PIDs", "Mem MB", "CPU%", "Restarts", "Health"])
+    // Three stacked sections: Host strip, Processes table (user + system), then padding.
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(5), Constraint::Min(0)])
+        .split(area);
+    render_host_strip(frame, app, chunks[0]);
+    render_processes_table(frame, app, chunks[1]);
+}
+
+fn render_host_strip(frame: &mut Frame, app: &App, area: Rect) {
+    let h = &app.host_stats;
+    let mem_str = if h.memory_rss_mb < 1.0 {
+        format!("{:.0} KB", h.memory_rss_mb * 1024.0)
+    } else {
+        format!("{:.1} MB", h.memory_rss_mb)
+    };
+    let uptime_str = format_uptime(app.uptime_secs);
+    let line1 = Line::from(vec![
+        Span::styled("PID: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(h.pid.to_string(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::raw("   "),
+        Span::styled("Memory: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(mem_str, Style::default().fg(Color::White)),
+        Span::raw("   "),
+        Span::styled("CPU: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("{:.1}%", h.cpu_percent), Style::default().fg(Color::White)),
+        Span::raw("   "),
+        Span::styled("Cores: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(h.cores.to_string(), Style::default().fg(Color::White)),
+        Span::raw("   "),
+        Span::styled("Uptime: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(uptime_str, Style::default().fg(Color::Green)),
+    ]);
+    let paragraph = Paragraph::new(line1)
+        .block(Block::default().borders(Borders::ALL).title("Host — riz daemon"));
+    frame.render_widget(paragraph, area);
+}
+
+fn render_processes_table(frame: &mut Frame, app: &App, area: Rect) {
+    let header = Row::new(["", "Route", "PIDs", "Mem MB", "CPU%", "Restarts", "Health"])
         .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
 
-    let rows: Vec<Row> = app.pool_stats.iter().map(|s| {
+    let mut rows: Vec<Row> = Vec::new();
+
+    // System endpoints first — they share the riz host PID and contribute
+    // to its memory/CPU. We render them with the host PID and N/A in the
+    // restart column since they don't crash independently.
+    for f in app.function_stats.iter().filter(|f| matches!(f.kind, FunctionKind::System)) {
+        let health_color = if f.healthy { Color::Green } else { Color::Red };
+        rows.push(Row::new([
+            Cell::from("◆").style(Style::default().fg(Color::DarkGray)),
+            Cell::from(f.route_key.clone()).style(Style::default().fg(Color::DarkGray)),
+            Cell::from(app.host_stats.pid.to_string()).style(Style::default().fg(Color::DarkGray)),
+            Cell::from("(host)").style(Style::default().fg(Color::DarkGray)),
+            Cell::from("(host)").style(Style::default().fg(Color::DarkGray)),
+            Cell::from("—").style(Style::default().fg(Color::DarkGray)),
+            Cell::from(if f.healthy { "ok" } else { "down" })
+                .style(Style::default().fg(health_color)),
+        ]));
+    }
+
+    // User function pools.
+    for s in &app.pool_stats {
         let pids: Vec<String> = s.pids.iter().map(|p| p.to_string()).collect();
         let health_color = if s.healthy { Color::Green } else { Color::Red };
         let mem_str = if s.memory_rss_mb < 1.0 {
@@ -181,7 +240,8 @@ fn render_processes(frame: &mut Frame, app: &App, area: Rect) {
             format!("{:.1}", s.memory_rss_mb)
         };
         let cpu_str = format!("{:.1}%", s.cpu_percent);
-        Row::new([
+        rows.push(Row::new([
+            Cell::from(" "),
             Cell::from(s.route_key.as_str()),
             Cell::from(pids.join(", ")),
             Cell::from(mem_str),
@@ -189,24 +249,34 @@ fn render_processes(frame: &mut Frame, app: &App, area: Rect) {
             Cell::from(s.restart_count.to_string()),
             Cell::from(if s.healthy { "ok" } else { "down" })
                 .style(Style::default().fg(health_color)),
-        ])
-    }).collect();
+        ]));
+    }
 
     let table = Table::new(
         rows,
         [
-            Constraint::Percentage(32),
+            Constraint::Length(2),
+            Constraint::Percentage(34),
             Constraint::Percentage(18),
             Constraint::Percentage(12),
             Constraint::Percentage(10),
             Constraint::Percentage(12),
-            Constraint::Percentage(16),
+            Constraint::Percentage(14),
         ],
     )
     .header(header)
-    .block(Block::default().borders(Borders::ALL).title("Processes"));
+    .block(Block::default().borders(Borders::ALL).title("Processes  ◆ = system (shares host)"));
 
     frame.render_widget(table, area);
+}
+
+fn format_uptime(secs: u64) -> String {
+    let h = secs / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    if h > 0 { format!("{h}h{m}m{s}s") }
+    else if m > 0 { format!("{m}m{s}s") }
+    else { format!("{s}s") }
 }
 
 fn render_cache(frame: &mut Frame, app: &App, area: Rect) {

@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
+use std::time::Instant;
 use crate::state::{FunctionStateSnapshot, LogEntry};
-use crate::process::PoolStats;
+use crate::process::{HostStats, PoolStats};
 
 #[derive(Default)]
 pub struct App {
@@ -9,10 +10,13 @@ pub struct App {
     /// registered function (system endpoints are filtered out in tui::mod).
     pub function_stats: Vec<FunctionStateSnapshot>,
     pub pool_stats: Vec<PoolStats>,
+    pub host_stats: HostStats,
+    pub uptime_secs: u64,
     pub cache_entry_count: u64,
     pub log_entries: VecDeque<LogEntry>,
     pub selected_tab: usize,
     pub selected_route: Option<usize>,
+    pub started_at: Option<Instant>,
 }
 
 impl App {
