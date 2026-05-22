@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::{mpsc, Mutex, RwLock};
 use crate::cache::CacheLayer;
 use crate::config::Config;
@@ -215,5 +215,154 @@ mod tests {
             route_key: None,
         };
         assert!(global.route_key.is_none());
+    }
+}
+
+// ─── LatencyWindow ──────────────────────────────────────────────────────────
+
+/// 5-minute rolling window of latency samples. Push on each invocation,
+/// read percentiles on each metrics scrape or TUI render.
+///
+/// Memory: at 100 req/s sustained = ~30K samples × 24 bytes ≈ 720 KB per function.
+/// Hard cap at MAX_SAMPLES prevents unbounded growth under attack.
+pub struct LatencyWindow {
+    samples: VecDeque<(Instant, f64)>,
+}
+
+impl LatencyWindow {
+    pub const WINDOW: Duration = Duration::from_secs(300);
+    pub const MAX_SAMPLES: usize = 100_000;
+
+    pub fn new() -> Self {
+        Self { samples: VecDeque::new() }
+    }
+
+    pub fn push(&mut self, now: Instant, latency_ms: f64) {
+        if self.samples.len() >= Self::MAX_SAMPLES {
+            self.samples.pop_front();
+        }
+        self.samples.push_back((now, latency_ms));
+    }
+
+    fn evict_stale(&mut self, now: Instant) {
+        let cutoff = now.checked_sub(Self::WINDOW).unwrap_or(now);
+        while let Some(&(t, _)) = self.samples.front() {
+            if t < cutoff {
+                self.samples.pop_front();
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Returns (p50, p75, p90, p95, p99) over the live window using nearest-rank.
+    /// Empty window returns zeros.
+    pub fn percentiles(&mut self, now: Instant) -> (f64, f64, f64, f64, f64) {
+        self.evict_stale(now);
+        if self.samples.is_empty() {
+            return (0.0, 0.0, 0.0, 0.0, 0.0);
+        }
+        let mut sorted: Vec<f64> = self.samples.iter().map(|&(_, v)| v).collect();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let n = sorted.len();
+        let q = |p: f64| -> f64 {
+            let idx = ((p * n as f64).ceil() as usize).saturating_sub(1).min(n - 1);
+            sorted[idx]
+        };
+        (q(0.50), q(0.75), q(0.90), q(0.95), q(0.99))
+    }
+
+    pub fn count(&mut self, now: Instant) -> usize {
+        self.evict_stale(now);
+        self.samples.len()
+    }
+
+    /// Raw sample count including stale entries — for tests and MAX_SAMPLES checks.
+    pub fn raw_len(&self) -> usize {
+        self.samples.len()
+    }
+}
+
+impl Default for LatencyWindow {
+    fn default() -> Self { Self::new() }
+}
+
+#[cfg(test)]
+mod latency_window_tests {
+    use super::*;
+
+    #[test]
+    fn empty_window_returns_zero_percentiles() {
+        let mut w = LatencyWindow::new();
+        let now = Instant::now();
+        assert_eq!(w.percentiles(now), (0.0, 0.0, 0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn identical_samples_return_that_value() {
+        let mut w = LatencyWindow::new();
+        let now = Instant::now();
+        for _ in 0..100 { w.push(now, 7.5); }
+        let (p50, p75, p90, p95, p99) = w.percentiles(now);
+        assert_eq!(p50, 7.5);
+        assert_eq!(p75, 7.5);
+        assert_eq!(p90, 7.5);
+        assert_eq!(p95, 7.5);
+        assert_eq!(p99, 7.5);
+    }
+
+    #[test]
+    fn percentiles_are_monotonic() {
+        let mut w = LatencyWindow::new();
+        let now = Instant::now();
+        for i in 1..=100 { w.push(now, i as f64); }
+        let (p50, p75, p90, p95, p99) = w.percentiles(now);
+        assert!(p50 <= p75);
+        assert!(p75 <= p90);
+        assert!(p90 <= p95);
+        assert!(p95 <= p99);
+    }
+
+    #[test]
+    fn linear_distribution_gives_expected_percentiles() {
+        let mut w = LatencyWindow::new();
+        let now = Instant::now();
+        for i in 1..=100 { w.push(now, i as f64); }
+        let (p50, _, _, p95, p99) = w.percentiles(now);
+        assert!((p50 - 50.0).abs() < 1.0, "p50={p50}");
+        assert!((p95 - 95.0).abs() < 1.0, "p95={p95}");
+        assert!((p99 - 99.0).abs() < 1.0, "p99={p99}");
+    }
+
+    #[test]
+    fn samples_older_than_window_are_evicted() {
+        let mut w = LatencyWindow::new();
+        let old = Instant::now();
+        w.push(old, 1.0);
+        let now = old + Duration::from_secs(301);
+        w.push(now, 100.0);
+        let (p50, _, _, _, _) = w.percentiles(now);
+        assert_eq!(p50, 100.0);
+        assert_eq!(w.count(now), 1);
+    }
+
+    #[test]
+    fn push_never_exceeds_max_samples() {
+        let mut w = LatencyWindow::new();
+        let now = Instant::now();
+        for i in 0..(LatencyWindow::MAX_SAMPLES + 10_000) {
+            w.push(now, i as f64);
+        }
+        assert!(w.raw_len() <= LatencyWindow::MAX_SAMPLES);
+    }
+
+    #[test]
+    fn count_only_includes_live_samples() {
+        let mut w = LatencyWindow::new();
+        let old = Instant::now();
+        for _ in 0..5 { w.push(old, 1.0); }
+        let now = old + Duration::from_secs(301);
+        for _ in 0..3 { w.push(now, 2.0); }
+        assert_eq!(w.count(now), 3);
     }
 }
