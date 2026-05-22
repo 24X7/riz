@@ -156,49 +156,15 @@ impl ProcessManager {
                         Ok(resp)
                     }
                     Err(_) => {
-                        pool.restart_count.fetch_add(1, Ordering::Relaxed);
-                        let crashes = pool.consecutive_crashes.fetch_add(1, Ordering::Relaxed) + 1;
-                        if crashes >= CRASH_THRESHOLD {
-                            pool.healthy.store(false, Ordering::Relaxed);
-                            error!("route {route_key} marked unhealthy after {crashes} crashes");
-                        }
                         warn!("malformed lambda response on {route_key}: {line:?} — killing and restarting");
-                        kill_process_group(handle.pid);
-                        let _ = handle._child.kill().await;
-                        match spawn_process(&pool.route, &pool.runtime_registry, &pool.log_tx).await {
-                            Ok(new_handle) => {
-                                *handle = new_handle;
-                                pool.consecutive_crashes.store(0, Ordering::Relaxed);
-                            }
-                            Err(spawn_err) => {
-                                error!("failed to respawn {route_key}: {spawn_err}");
-                                pool.healthy.store(false, Ordering::Relaxed);
-                            }
-                        }
+                        handle_process_failure(&pool, &mut handle, route_key).await;
                         Ok(GatewayResponse::error(502, "malformed lambda response"))
                     }
                 }
             }
             Ok(Err(e)) => {
-                pool.restart_count.fetch_add(1, Ordering::Relaxed);
-                let crashes = pool.consecutive_crashes.fetch_add(1, Ordering::Relaxed) + 1;
-                if crashes >= CRASH_THRESHOLD {
-                    pool.healthy.store(false, Ordering::Relaxed);
-                    error!("route {route_key} marked unhealthy after {crashes} crashes");
-                }
                 warn!("lambda crash on {route_key}: {e} — restarting");
-                kill_process_group(handle.pid);
-                let _ = handle._child.kill().await;
-                match spawn_process(&pool.route, &pool.runtime_registry, &pool.log_tx).await {
-                    Ok(new_handle) => {
-                        *handle = new_handle;
-                        pool.consecutive_crashes.store(0, Ordering::Relaxed);
-                    }
-                    Err(spawn_err) => {
-                        error!("failed to respawn {route_key}: {spawn_err}");
-                        pool.healthy.store(false, Ordering::Relaxed);
-                    }
-                }
+                handle_process_failure(&pool, &mut handle, route_key).await;
                 Ok(GatewayResponse::error(502, "lambda error"))
             }
             Err(_) => {
@@ -311,6 +277,31 @@ impl ProcessManager {
                 cpu_percent: cpu,
             }
         }).collect()
+    }
+}
+
+async fn handle_process_failure(
+    pool: &Arc<RoutePool>,
+    handle: &mut ProcessHandle,
+    route_key: &str,
+) {
+    pool.restart_count.fetch_add(1, Ordering::Relaxed);
+    let crashes = pool.consecutive_crashes.fetch_add(1, Ordering::Relaxed) + 1;
+    if crashes >= CRASH_THRESHOLD {
+        pool.healthy.store(false, Ordering::Relaxed);
+        error!("route {route_key} marked unhealthy after {crashes} crashes");
+    }
+    kill_process_group(handle.pid);
+    let _ = handle._child.kill().await;
+    match spawn_process(&pool.route, &pool.runtime_registry, &pool.log_tx).await {
+        Ok(new_handle) => {
+            *handle = new_handle;
+            pool.consecutive_crashes.store(0, Ordering::Relaxed);
+        }
+        Err(spawn_err) => {
+            error!("failed to respawn {route_key}: {spawn_err}");
+            pool.healthy.store(false, Ordering::Relaxed);
+        }
     }
 }
 
