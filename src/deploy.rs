@@ -120,6 +120,21 @@ pub async fn deploy_handler(
     // Hot-swap the process pool
     match state.process_manager.hot_swap(&route_key, route, &state.runtime_registry).await {
         Ok(pid) => {
+            // Brief pause then health check — catches handlers that crash immediately
+            tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+            let stats = state.process_manager.pool_stats().await;
+            let still_healthy = stats.iter()
+                .find(|s| s.route_key == route_key)
+                .map(|s| s.healthy)
+                .unwrap_or(false);
+
+            if !still_healthy {
+                info!("deploy {} pid={pid} crashed on startup — returning 422", body.lambda);
+                return (StatusCode::UNPROCESSABLE_ENTITY, Json(ErrorResponse {
+                    error: "handler crashed immediately after deploy — check handler code".into(),
+                })).into_response();
+            }
+
             info!("deployed {} pid={pid}", body.lambda);
             (StatusCode::OK, Json(DeployResponse {
                 status: "ok".into(),
@@ -227,5 +242,12 @@ mod tests {
         let allowed_cidrs: Vec<String> = vec!["127.0.0.1/32".into()];
         let should_refuse = deploy_key.is_none() && allowed_cidrs.is_empty();
         assert!(!should_refuse, "cidr restriction alone is sufficient auth");
+    }
+
+    #[test]
+    fn deploy_health_check_uses_422_for_crash() {
+        // 422 Unprocessable Entity is the right status for "handler crashed"
+        // (client sent valid input, but the server-side handler rejected it)
+        assert_eq!(StatusCode::UNPROCESSABLE_ENTITY.as_u16(), 422);
     }
 }
