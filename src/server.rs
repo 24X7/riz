@@ -59,6 +59,11 @@ async fn dispatch_lambda(
         let latency = start.elapsed().as_secs_f64() * 1000.0;
         state.record_request(&route_key, true, latency, true).await;
         state.metrics.record_cache_hit(&route_key);
+        state.push_log(
+            "INFO",
+            Some(&route_key),
+            format!("{method} {path} 200 {latency:.0}ms [cache]"),
+        );
         return gateway_to_axum(&cached);
     }
 
@@ -128,6 +133,12 @@ async fn dispatch_lambda(
             }
 
             state.record_request(&route_key, false, latency, healthy).await;
+
+            state.push_log(
+                "INFO",
+                Some(&route_key),
+                format!("{method} {path} {} {latency:.0}ms", gw_resp.status_code),
+            );
 
             if gw_resp.status_code >= 500 {
                 state.push_log("WARN", Some(&route_key), format!("lambda {} returned {}", route_key, gw_resp.status_code));
