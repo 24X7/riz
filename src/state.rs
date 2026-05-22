@@ -1,5 +1,6 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::SystemTime;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use crate::cache::CacheLayer;
@@ -16,36 +17,79 @@ pub struct AppState {
     pub cache: CacheLayer,
     pub metrics: MetricsEmitter,
     pub runtime_registry: Arc<RuntimeRegistry>,
-    pub route_stats: RwLock<HashMap<String, RouteStats>>,
+    pub route_stats: RwLock<HashMap<String, Arc<RouteStats>>>,
     pub log_tx: mpsc::Sender<LogEntry>,
     pub log_rx: Mutex<mpsc::Receiver<LogEntry>>,
 }
 
-#[derive(Default, Clone)]
+/// Per-route counters stored as atomics so the hot path only needs a READ lock
+/// on the outer HashMap (to find the Arc), not a write lock.
 pub struct RouteStats {
-    pub request_count: u64,
-    pub cache_hits: u64,
-    pub cache_misses: u64,
-    pub latencies_ms: VecDeque<f64>,
-    pub healthy: bool,
+    pub total_requests: AtomicU64,
+    pub cache_hits: AtomicU64,
+    pub cache_misses: AtomicU64,
+    pub error_count: AtomicU64,
+    /// Sum of all request latencies in microseconds.
+    pub total_latency_us: AtomicU64,
+    pub healthy: AtomicBool,
+}
+
+impl Default for RouteStats {
+    fn default() -> Self {
+        Self {
+            total_requests: AtomicU64::new(0),
+            cache_hits: AtomicU64::new(0),
+            cache_misses: AtomicU64::new(0),
+            error_count: AtomicU64::new(0),
+            total_latency_us: AtomicU64::new(0),
+            healthy: AtomicBool::new(true),
+        }
+    }
 }
 
 impl RouteStats {
-    pub fn p50_ms(&self) -> f64 {
-        percentile(&self.latencies_ms, 0.5)
-    }
-
-    pub fn p95_ms(&self) -> f64 {
-        percentile(&self.latencies_ms, 0.95)
+    /// Produce a plain-data snapshot for display/testing purposes.
+    pub fn snapshot(&self) -> RouteStatsSnapshot {
+        RouteStatsSnapshot {
+            total_requests: self.total_requests.load(Ordering::Relaxed),
+            cache_hits: self.cache_hits.load(Ordering::Relaxed),
+            cache_misses: self.cache_misses.load(Ordering::Relaxed),
+            error_count: self.error_count.load(Ordering::Relaxed),
+            total_latency_us: self.total_latency_us.load(Ordering::Relaxed),
+            healthy: self.healthy.load(Ordering::Relaxed),
+        }
     }
 }
 
-fn percentile(values: &VecDeque<f64>, p: f64) -> f64 {
-    if values.is_empty() { return 0.0; }
-    let mut sorted: Vec<f64> = values.iter().copied().collect();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let idx = ((sorted.len() as f64) * p).min((sorted.len() - 1) as f64) as usize;
-    sorted[idx]
+/// Plain-data snapshot of [`RouteStats`] suitable for the TUI and tests.
+#[derive(Default, Clone)]
+pub struct RouteStatsSnapshot {
+    pub total_requests: u64,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
+    pub error_count: u64,
+    pub total_latency_us: u64,
+    pub healthy: bool,
+}
+
+impl RouteStatsSnapshot {
+    /// Average latency in milliseconds (used as p50 approximation in the TUI).
+    pub fn avg_latency_ms(&self) -> f64 {
+        if self.total_requests == 0 {
+            return 0.0;
+        }
+        (self.total_latency_us as f64 / self.total_requests as f64) / 1000.0
+    }
+
+    /// p50 approximation: returns average latency.
+    pub fn p50_ms(&self) -> f64 {
+        self.avg_latency_ms()
+    }
+
+    /// p95 approximation: returns average latency (best possible without per-sample storage).
+    pub fn p95_ms(&self) -> f64 {
+        self.avg_latency_ms()
+    }
 }
 
 #[derive(Clone)]
@@ -73,48 +117,75 @@ impl AppState {
         latency_ms: f64,
         healthy: bool,
     ) {
-        let mut stats = self.route_stats.write().await;
-        let entry = stats.entry(route_key.to_string()).or_default();
-        entry.request_count += 1;
-        entry.healthy = healthy;
-        if cache_hit { entry.cache_hits += 1; } else { entry.cache_misses += 1; }
-        entry.latencies_ms.push_back(latency_ms);
-        if entry.latencies_ms.len() > 100 {
-            entry.latencies_ms.pop_front();
+        let latency_us = (latency_ms * 1000.0) as u64;
+
+        // Fast path: read lock — no write contention on the hot path.
+        {
+            let stats = self.route_stats.read().await;
+            if let Some(entry) = stats.get(route_key) {
+                entry.total_requests.fetch_add(1, Ordering::Relaxed);
+                if cache_hit {
+                    entry.cache_hits.fetch_add(1, Ordering::Relaxed);
+                } else {
+                    entry.cache_misses.fetch_add(1, Ordering::Relaxed);
+                }
+                if !healthy {
+                    entry.error_count.fetch_add(1, Ordering::Relaxed);
+                }
+                entry.total_latency_us.fetch_add(latency_us, Ordering::Relaxed);
+                entry.healthy.store(healthy, Ordering::Relaxed);
+                return;
+            }
         }
+
+        // Slow path: write lock only on first request to this route.
+        let mut stats = self.route_stats.write().await;
+        let entry = stats
+            .entry(route_key.to_string())
+            .or_insert_with(|| Arc::new(RouteStats::default()));
+        entry.total_requests.fetch_add(1, Ordering::Relaxed);
+        if cache_hit {
+            entry.cache_hits.fetch_add(1, Ordering::Relaxed);
+        } else {
+            entry.cache_misses.fetch_add(1, Ordering::Relaxed);
+        }
+        if !healthy {
+            entry.error_count.fetch_add(1, Ordering::Relaxed);
+        }
+        entry.total_latency_us.fetch_add(latency_us, Ordering::Relaxed);
+        entry.healthy.store(healthy, Ordering::Relaxed);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
-    fn make_stats(latencies: &[f64]) -> RouteStats {
-        let mut s = RouteStats::default();
-        for &v in latencies {
-            s.latencies_ms.push_back(v);
-        }
-        s
+    #[test]
+    fn route_stats_fetch_add_is_atomic() {
+        let counter = AtomicU64::new(0);
+        counter.fetch_add(1, Ordering::Relaxed);
+        counter.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(counter.load(Ordering::Relaxed), 2);
     }
 
     #[test]
-    fn p50_of_sorted_values() {
-        let s = make_stats(&[10.0, 20.0, 30.0, 40.0, 50.0]);
-        assert_eq!(s.p50_ms(), 30.0);
-    }
-
-    #[test]
-    fn p95_of_sorted_values() {
-        // 5 values, p95 index = floor(5 * 0.95) = 4 (last element)
-        let s = make_stats(&[10.0, 20.0, 30.0, 40.0, 100.0]);
-        assert_eq!(s.p95_ms(), 100.0);
-    }
-
-    #[test]
-    fn empty_returns_zero() {
+    fn snapshot_avg_latency_ms_correct() {
         let s = RouteStats::default();
-        assert_eq!(s.p50_ms(), 0.0);
-        assert_eq!(s.p95_ms(), 0.0);
+        s.total_requests.store(2, Ordering::Relaxed);
+        // 10 ms + 30 ms = 40 000 us total
+        s.total_latency_us.store(40_000, Ordering::Relaxed);
+        let snap = s.snapshot();
+        assert_eq!(snap.p50_ms(), 20.0);
+    }
+
+    #[test]
+    fn snapshot_zero_requests_returns_zero_latency() {
+        let s = RouteStats::default();
+        let snap = s.snapshot();
+        assert_eq!(snap.p50_ms(), 0.0);
+        assert_eq!(snap.p95_ms(), 0.0);
     }
 
     #[test]

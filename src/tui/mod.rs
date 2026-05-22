@@ -45,7 +45,7 @@ fn run_loop<B: ratatui::backend::Backend>(
             let route_stats = state.route_stats.read().await;
             app.route_stats = route_stats
                 .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
+                .map(|(k, v)| (k.clone(), v.snapshot()))
                 .collect();
             app.pool_stats = state.process_manager.pool_stats().await;
             app.cache_entry_count = state.cache.entry_count();

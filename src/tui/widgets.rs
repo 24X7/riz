@@ -54,7 +54,7 @@ fn render_routes_table(frame: &mut Frame, app: &App, area: Rect) {
 
     let rows: Vec<Row> = app.route_stats.iter().enumerate().map(|(i, (key, stats))| {
         let cursor = if app.selected_route == Some(i) { "▶" } else { " " };
-        let rps = if stats.latencies_ms.is_empty() { 0.0 } else {
+        let rps = if stats.total_requests == 0 { 0.0 } else {
             1000.0 / stats.p50_ms().max(1.0)
         };
         let hit_pct = if stats.cache_hits + stats.cache_misses == 0 { 0.0 } else {
@@ -70,7 +70,7 @@ fn render_routes_table(frame: &mut Frame, app: &App, area: Rect) {
         Row::new([
             Cell::from(cursor).style(cursor_style),
             Cell::from(key.as_str()),
-            Cell::from(format!("{}", stats.request_count)),
+            Cell::from(format!("{}", stats.total_requests)),
             Cell::from(format!("{:.1}", stats.p50_ms())),
             Cell::from(format!("{:.1}", stats.p95_ms())),
             Cell::from(format!("{hit_pct:.0}%")),

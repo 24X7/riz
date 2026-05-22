@@ -1,10 +1,10 @@
 use std::collections::VecDeque;
-use crate::state::{LogEntry, RouteStats};
+use crate::state::{LogEntry, RouteStatsSnapshot};
 use crate::process::PoolStats;
 
 #[derive(Default)]
 pub struct App {
-    pub route_stats: Vec<(String, RouteStats)>,
+    pub route_stats: Vec<(String, RouteStatsSnapshot)>,
     pub pool_stats: Vec<PoolStats>,
     pub cache_entry_count: u64,
     pub log_entries: VecDeque<LogEntry>,
@@ -53,12 +53,12 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::RouteStats;
+    use crate::state::RouteStatsSnapshot;
 
     fn app_with_routes(n: usize) -> App {
         let mut app = App::default();
         for i in 0..n {
-            app.route_stats.push((format!("GET /route{i}"), RouteStats::default()));
+            app.route_stats.push((format!("GET /route{i}"), RouteStatsSnapshot::default()));
         }
         app
     }

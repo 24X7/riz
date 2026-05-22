@@ -139,6 +139,7 @@ concurrency = 1
     assert_eq!(state_for_check.cache.entry_count(), 1);
     let stats = state_for_check.route_stats.read().await;
     let route_stats = stats.get("GET /cached").unwrap();
-    assert_eq!(route_stats.cache_hits, 1);
-    assert_eq!(route_stats.cache_misses, 1);
+    use std::sync::atomic::Ordering;
+    assert_eq!(route_stats.cache_hits.load(Ordering::Relaxed), 1);
+    assert_eq!(route_stats.cache_misses.load(Ordering::Relaxed), 1);
 }
