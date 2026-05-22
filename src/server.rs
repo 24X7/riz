@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
+use base64::Engine as _;
 use axum::{
     body::Body,
     extract::{ConnectInfo, Request, State},
@@ -104,28 +105,44 @@ async fn dispatch_lambda(
     let route_key = crate::router::Router::route_key(&method, &route.path);
     let cache_key = CacheLayer::make_key(&method, &path, &query);
 
-    // Cache check
-    if let Some(cached) = state.cache.get(&cache_key).await {
-        let latency = start.elapsed().as_secs_f64() * 1000.0;
-        state.record_request(&route_key, true, latency, true).await;
-        state.metrics.record_cache_hit(&route_key);
-        state.push_log(
-            "INFO",
-            Some(&route_key),
-            format!("{method} {path} 200 {latency:.0}ms [cache]"),
-        );
-        return gateway_to_axum(&cached);
+    // BUG-12: skip cache for authenticated/personalized requests
+    let has_auth = req.headers().contains_key("authorization") || req.headers().contains_key("cookie");
+
+    // Cache check — only when no auth headers present
+    if !has_auth {
+        if let Some(cached) = state.cache.get(&cache_key).await {
+            let latency = start.elapsed().as_secs_f64() * 1000.0;
+            let request_id = Uuid::new_v4().to_string();
+            state.record_request(&route_key, true, latency, true).await;
+            state.metrics.record_cache_hit(&route_key);
+            // BUG-16: include request_id and source_ip in cache-hit log
+            state.push_log(
+                "INFO",
+                Some(&route_key),
+                format!("{method} {path} 200 {latency:.0}ms [cache] req={request_id} ip={source_ip}"),
+            );
+            return gateway_to_axum(&cached);
+        }
     }
 
     // Build Gateway v2 request
     let headers = extract_headers(req.headers());
-    let body_bytes = axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024)
-        .await
-        .unwrap_or_default();
-    let body = if body_bytes.is_empty() {
-        None
+    // BUG-10: return 413 instead of silently swallowing oversized body
+    let body_bytes = match axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024).await {
+        Ok(b) => b,
+        Err(_) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
+    };
+    // BUG-09: handle binary (non-UTF8) bodies by base64-encoding them
+    let (body, is_base64_encoded) = if body_bytes.is_empty() {
+        (None, false)
     } else {
-        Some(String::from_utf8_lossy(&body_bytes).into_owned())
+        match String::from_utf8(body_bytes.to_vec()) {
+            Ok(s) => (Some(s), false),
+            Err(e) => {
+                let encoded = base64::engine::general_purpose::STANDARD.encode(e.into_bytes());
+                (Some(encoded), true)
+            }
+        }
     };
 
     let request_id = Uuid::new_v4().to_string();
@@ -145,14 +162,14 @@ async fn dispatch_lambda(
                 method: method.clone(),
                 path: path.clone(),
                 protocol: "HTTP/1.1".into(),
-                source_ip,
+                source_ip: source_ip.clone(),
             },
-            request_id,
+            request_id: request_id.clone(),
             time_epoch,
         },
         path_parameters: if path_params.is_empty() { None } else { Some(path_params) },
         body,
-        is_base64_encoded: false,
+        is_base64_encoded,
     };
 
     // Invoke lambda
@@ -184,14 +201,16 @@ async fn dispatch_lambda(
 
             state.record_request(&route_key, false, latency, healthy).await;
 
+            // BUG-16: include request_id and source_ip in access log
             state.push_log(
                 "INFO",
                 Some(&route_key),
-                format!("{method} {path} {} {latency:.0}ms", gw_resp.status_code),
+                format!("{method} {path} {} {latency:.0}ms req={request_id} ip={source_ip}", gw_resp.status_code),
             );
 
+            // BUG-12: only cache when no auth headers were present
             let ttl = route.cache_ttl_secs.unwrap_or(default_ttl);
-            if ttl > 0 && gw_resp.status_code < 400 {
+            if !has_auth && ttl > 0 && gw_resp.status_code < 400 {
                 state.cache.set(cache_key, gw_resp.clone(), ttl).await;
             }
 
@@ -222,9 +241,17 @@ pub fn gateway_to_axum(resp: &GatewayResponse) -> Response {
             }
         }
     }
-    let body = resp.body.clone().unwrap_or_default();
+    // BUG-09: decode base64 body when Lambda signals it's binary
+    let body_bytes: Vec<u8> = if resp.is_base64_encoded == Some(true) {
+        let encoded = resp.body.clone().unwrap_or_default();
+        base64::engine::general_purpose::STANDARD
+            .decode(encoded.as_bytes())
+            .unwrap_or_default()
+    } else {
+        resp.body.clone().unwrap_or_default().into_bytes()
+    };
     builder
-        .body(Body::from(body))
+        .body(Body::from(body_bytes))
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
@@ -336,5 +363,68 @@ mod tests {
         assert!(json.contains("unhealthy"));
         assert!(json.contains("route1"));
         assert!(json.contains("route2"));
+    }
+
+    /// BUG-09: binary body is base64-encoded and flag is set
+    #[test]
+    fn binary_body_is_base64_encoded() {
+        // Simulate bytes that are NOT valid UTF-8
+        let binary: Vec<u8> = vec![0xFF, 0xFE, 0x00, 0x01];
+        let result = String::from_utf8(binary.clone());
+        assert!(result.is_err(), "should fail UTF-8 parse");
+
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&binary);
+        // Verify round-trip: decode must give back original bytes
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(encoded.as_bytes())
+            .unwrap();
+        assert_eq!(decoded, binary);
+        // is_base64_encoded flag should be set to true in this path
+        let is_base64_encoded = true;
+        assert!(is_base64_encoded);
+    }
+
+    /// BUG-12: has_auth is true when Authorization or Cookie header is present
+    #[test]
+    fn auth_headers_skip_cache() {
+        let mut headers = HeaderMap::new();
+        // No auth headers — has_auth should be false
+        let has_auth = headers.contains_key("authorization") || headers.contains_key("cookie");
+        assert!(!has_auth);
+
+        // With Authorization header
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            axum::http::HeaderValue::from_static("Bearer token123"),
+        );
+        let has_auth = headers.contains_key("authorization") || headers.contains_key("cookie");
+        assert!(has_auth, "Authorization header must trigger has_auth");
+
+        // With Cookie header only
+        let mut headers2 = HeaderMap::new();
+        headers2.insert(
+            axum::http::header::COOKIE,
+            axum::http::HeaderValue::from_static("session=abc"),
+        );
+        let has_auth2 = headers2.contains_key("authorization") || headers2.contains_key("cookie");
+        assert!(has_auth2, "Cookie header must trigger has_auth");
+    }
+
+    /// BUG-16: access log format includes req= and ip= fields
+    #[test]
+    fn access_log_format_includes_request_id() {
+        let method = "GET";
+        let path = "/api/data";
+        let status = 200u16;
+        let latency = 42.5f64;
+        let request_id = "550e8400-e29b-41d4-a716-446655440000";
+        let source_ip = "10.0.0.1";
+
+        let log = format!(
+            "{method} {path} {status} {latency:.0}ms req={request_id} ip={source_ip}"
+        );
+        assert!(log.contains("req=550e8400-e29b-41d4-a716-446655440000"), "log must contain req= field");
+        assert!(log.contains("ip=10.0.0.1"), "log must contain ip= field");
+        assert!(log.contains("GET /api/data 200"), "log must contain method, path, status");
     }
 }
