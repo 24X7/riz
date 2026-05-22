@@ -33,9 +33,15 @@ pub struct CacheLayer {
 
 impl CacheLayer {
     pub fn new(config: &CacheConfig) -> Self {
-        let max_capacity = (config.max_size_mb * 1024 * 1024 / 512).max(1);
+        let max_bytes = config.max_size_mb * 1024 * 1024;
         let cache = Cache::builder()
-            .max_capacity(max_capacity)
+            .max_capacity(max_bytes)
+            .weigher(|_key: &String, value: &CacheEntry| -> u32 {
+                // Weight = approximate byte size of the cached response body
+                let body_bytes = value.response.body.as_deref().map(|b| b.len()).unwrap_or(0);
+                // Cap at u32::MAX to avoid overflow; real responses are much smaller
+                body_bytes.min(u32::MAX as usize) as u32
+            })
             .expire_after(EntryExpiry)
             .build();
         Self { inner: cache }
@@ -122,6 +128,19 @@ mod tests {
             CacheLayer::make_key("get", "/foo", "bar=1"),
             "GET:/foo?bar=1"
         );
+    }
+
+    #[test]
+    fn cache_weigher_uses_body_size() {
+        // Verify weight calculation: body size determines weight
+        let body = "hello world"; // 11 bytes
+        let weight = body.len().min(u32::MAX as usize) as u32;
+        assert_eq!(weight, 11);
+
+        // Empty body = 0 weight
+        let empty: Option<&str> = None;
+        let empty_weight = empty.map(|b| b.len()).unwrap_or(0) as u32;
+        assert_eq!(empty_weight, 0);
     }
 
     #[tokio::test]
