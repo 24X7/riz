@@ -1,6 +1,45 @@
 use std::collections::HashMap;
 use crate::config::RouteConfig;
 
+/// Decodes a percent-encoded string (e.g. "foo%2Fbar" → "foo/bar").
+/// Matches AWS API Gateway behavior of decoding path parameters.
+fn percent_decode(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut bytes = s.bytes().peekable();
+    while let Some(b) = bytes.next() {
+        if b == b'%' {
+            let h = bytes.next();
+            let l = bytes.next();
+            if let (Some(h), Some(l)) = (h, l) {
+                if let (Some(hi), Some(lo)) = (hex_val(h), hex_val(l)) {
+                    result.push(char::from(hi << 4 | lo));
+                    continue;
+                }
+                // Invalid escape sequence, pass through
+                result.push('%');
+                result.push(char::from(h));
+                result.push(char::from(l));
+            } else {
+                // Incomplete escape sequence
+                result.push('%');
+            }
+        } else {
+            result.push(char::from(b));
+        }
+    }
+    result
+}
+
+/// Helper to convert a hex digit (0-9, a-f, A-F) to its numeric value.
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
 pub struct Router {
     routes: Vec<RouteConfig>,
 }
@@ -46,7 +85,8 @@ fn match_pattern(pattern: &str, path: &str) -> Option<HashMap<String, String>> {
     let mut params = HashMap::new();
     for (pat, seg) in pattern_parts.iter().zip(path_parts.iter()) {
         if let Some(name) = pat.strip_prefix(':') {
-            params.insert(name.to_string(), seg.to_string());
+            // Percent-decode the path segment to match AWS API Gateway behavior
+            params.insert(name.to_string(), percent_decode(seg));
         } else if pat != seg {
             return None;
         }
@@ -109,5 +149,33 @@ mod tests {
         let router = Router::new(vec![make_route("GET", "/ping")]);
         assert!(router.match_route("get", "/ping").is_some());
         assert!(router.match_route("Get", "/ping").is_some());
+    }
+
+    #[test]
+    fn percent_decode_handles_encoded_slash() {
+        assert_eq!(percent_decode("foo%2Fbar"), "foo/bar");
+    }
+
+    #[test]
+    fn percent_decode_handles_space() {
+        assert_eq!(percent_decode("hello%20world"), "hello world");
+    }
+
+    #[test]
+    fn percent_decode_passthrough_unencoded() {
+        assert_eq!(percent_decode("normal"), "normal");
+    }
+
+    #[test]
+    fn percent_decode_mixed_encoded_and_unencoded() {
+        assert_eq!(percent_decode("foo%2Fbar/baz"), "foo/bar/baz");
+    }
+
+    #[test]
+    fn matches_path_param_with_percent_encoding() {
+        let router = Router::new(vec![make_route("GET", "/accounts/:id")]);
+        let m = router.match_route("GET", "/accounts/foo%2Fbar").unwrap();
+        // Path parameter should be decoded
+        assert_eq!(m.path_params["id"], "foo/bar");
     }
 }
