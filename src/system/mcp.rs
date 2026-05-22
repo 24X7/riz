@@ -1,9 +1,22 @@
-//! /_riz/mcp handler — JSON-RPC 2.0 implementing MCP tools/list + tools/call.
+//! /_riz/mcp handler — full MCP-spec-compliant JSON-RPC 2.0 server.
 //!
-//! For tools/call, the handler assembles a GatewayRequest from the supplied
-//! arguments (using a generic envelope schema) and dispatches it back through
-//! the Router — so any user function becomes an MCP-callable tool with no
-//! changes to the function's own code.
+//! Supports the lifecycle (`initialize`, `notifications/initialized`, `ping`),
+//! tools (`tools/list`, `tools/call`), and empty implementations of
+//! `resources/list` + `prompts/list` so probing clients don't error.
+//!
+//! Each user function in the riz.toml becomes one MCP tool. tools/call
+//! assembles a GatewayRequest from the supplied arguments and dispatches it
+//! through the Router — so any function becomes MCP-callable with no changes
+//! to the function's own code.
+//!
+//! Transport: stateless HTTP. One JSON-RPC message (or a batch array) per
+//! POST. Notifications (requests without `id`) get a 204 No Content. Batches
+//! return a 200 with an array of responses (notifications inside a batch
+//! contribute nothing).
+//!
+//! Protocol version: advertises "2024-11-05" — the widely-supported baseline.
+//! On `initialize`, echoes the version requested by the client if recognized;
+//! otherwise responds with the baseline (client may choose to disconnect).
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -37,11 +50,18 @@ impl McpHandler {
     }
 }
 
+/// MCP protocol versions this server understands. We echo back the client's
+/// version if it appears here; otherwise we respond with SERVER_DEFAULT and let
+/// the client decide whether to proceed.
+const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2024-11-05", "2025-03-26"];
+const SERVER_DEFAULT_PROTOCOL_VERSION: &str = "2024-11-05";
+
 #[derive(Deserialize)]
 struct JsonRpcRequest {
     #[serde(default)]
     #[allow(dead_code)]
     jsonrpc: String,
+    /// Per JSON-RPC 2.0: absent `id` means this is a notification — no response.
     id: Option<serde_json::Value>,
     method: String,
     #[serde(default)]
@@ -123,22 +143,134 @@ impl LambdaHandler for McpHandler {
 
     async fn invoke(&self, event: GatewayRequest) -> Result<GatewayResponse, HandlerError> {
         let body = event.body.as_deref().unwrap_or("{}");
-        let req: JsonRpcRequest = match serde_json::from_str(body) {
-            Ok(r) => r,
-            Err(e) => return Ok(jsonrpc_error(serde_json::Value::Null, -32700, &format!("parse error: {e}"))),
+        // Parse as raw JSON first to detect batch (array) vs single (object)
+        let raw: serde_json::Value = match serde_json::from_str(body) {
+            Ok(v) => v,
+            Err(e) => return Ok(jsonrpc_error_response(
+                serde_json::Value::Null, -32700, &format!("parse error: {e}"),
+            )),
         };
-        let id = req.id.clone().unwrap_or(serde_json::Value::Null);
 
-        match req.method.as_str() {
-            "tools/list" => self.tools_list(id).await,
-            "tools/call" => self.tools_call(id, req.params).await,
-            other => Ok(jsonrpc_error(id, -32601, &format!("method not found: {other}"))),
+        // JSON-RPC 2.0 batch: array of requests. Process each, collect
+        // non-notification responses, return a JSON array (or 204 if all
+        // were notifications). Empty batch is itself an "Invalid Request".
+        if let Some(arr) = raw.as_array() {
+            if arr.is_empty() {
+                return Ok(jsonrpc_error_response(
+                    serde_json::Value::Null, -32600, "empty batch is invalid",
+                ));
+            }
+            let mut out: Vec<serde_json::Value> = Vec::new();
+            for item in arr {
+                if let Some(resp) = self.process_one(item).await {
+                    out.push(resp);
+                }
+            }
+            return Ok(if out.is_empty() {
+                no_content_response()
+            } else {
+                json_response(serde_json::Value::Array(out))
+            });
+        }
+
+        // Single request (object).
+        match self.process_one(&raw).await {
+            Some(resp) => Ok(json_response(resp)),
+            None => Ok(no_content_response()),  // it was a notification
         }
     }
 }
 
 impl McpHandler {
-    async fn tools_list(&self, id: serde_json::Value) -> Result<GatewayResponse, HandlerError> {
+    /// Process one JSON-RPC message. Returns Some(response JSON) for requests
+    /// (those with an `id`); None for notifications.
+    async fn process_one(&self, raw: &serde_json::Value) -> Option<serde_json::Value> {
+        // Parse into JsonRpcRequest. On parse failure: if it looks like it had
+        // an id, return an error response; otherwise (looks like a notification)
+        // silently drop.
+        let req: JsonRpcRequest = match serde_json::from_value(raw.clone()) {
+            Ok(r) => r,
+            Err(e) => {
+                let id = raw.get("id").cloned().unwrap_or(serde_json::Value::Null);
+                if raw.get("id").is_some() {
+                    return Some(jsonrpc_error_value(
+                        id, -32600, &format!("invalid request: {e}"),
+                    ));
+                }
+                return None;
+            }
+        };
+
+        let is_notification = req.id.is_none();
+        let id = req.id.clone().unwrap_or(serde_json::Value::Null);
+
+        let result = match req.method.as_str() {
+            // Lifecycle
+            "initialize" => self.initialize(req.params).await,
+            "notifications/initialized" => {
+                // No response for notifications.
+                return None;
+            }
+            "ping" => Ok(serde_json::json!({})),
+
+            // Tools
+            "tools/list" => self.tools_list_value().await,
+            "tools/call" => self.tools_call_value(req.params).await,
+
+            // Resources / Prompts — Riz doesn't expose these, but return
+            // empty lists so probing clients don't choke on -32601.
+            "resources/list" => Ok(serde_json::json!({ "resources": [] })),
+            "resources/templates/list" => Ok(serde_json::json!({ "resourceTemplates": [] })),
+            "prompts/list" => Ok(serde_json::json!({ "prompts": [] })),
+
+            // Unknown method
+            other => Err(JsonRpcError {
+                code: -32601,
+                message: format!("method not found: {other}"),
+            }),
+        };
+
+        if is_notification {
+            // Per JSON-RPC 2.0 spec: notifications never receive a response,
+            // even if processing produced an error.
+            return None;
+        }
+
+        Some(match result {
+            Ok(value) => serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": value,
+            }),
+            Err(e) => serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": e.code, "message": e.message },
+            }),
+        })
+    }
+
+    async fn initialize(&self, params: serde_json::Value) -> Result<serde_json::Value, JsonRpcError> {
+        // Best-effort client protocol version negotiation.
+        let requested = params.get("protocolVersion").and_then(|v| v.as_str()).unwrap_or("");
+        let chosen = if SUPPORTED_PROTOCOL_VERSIONS.contains(&requested) {
+            requested
+        } else {
+            SERVER_DEFAULT_PROTOCOL_VERSION
+        };
+        Ok(serde_json::json!({
+            "protocolVersion": chosen,
+            "capabilities": {
+                "tools": { "listChanged": false }
+            },
+            "serverInfo": {
+                "name": "riz",
+                "version": env!("CARGO_PKG_VERSION"),
+            }
+        }))
+    }
+
+    async fn tools_list_value(&self) -> Result<serde_json::Value, JsonRpcError> {
         let functions = self.riz_state.functions.read().await;
         let mut tools = Vec::new();
         for (_, f) in functions.iter() {
@@ -154,15 +286,17 @@ impl McpHandler {
                 input_schema: generic_envelope_schema(),
             });
         }
-        let result = ToolsListResult { tools };
-        ok_response(id, result)
+        let value = serde_json::to_value(ToolsListResult { tools })
+            .map_err(|e| JsonRpcError { code: -32603, message: e.to_string() })?;
+        Ok(value)
     }
 
-    async fn tools_call(&self, id: serde_json::Value, params: serde_json::Value) -> Result<GatewayResponse, HandlerError> {
-        let parsed: ToolsCallParams = match serde_json::from_value(params) {
-            Ok(p) => p,
-            Err(e) => return Ok(jsonrpc_error(id, -32602, &format!("invalid params: {e}"))),
-        };
+    async fn tools_call_value(&self, params: serde_json::Value) -> Result<serde_json::Value, JsonRpcError> {
+        let parsed: ToolsCallParams = serde_json::from_value(params)
+            .map_err(|e| JsonRpcError {
+                code: -32602,
+                message: format!("invalid params: {e}"),
+            })?;
 
         // Look up the matching route by tool-name derivation.
         let matched: Option<(String, String, String)> = {
@@ -180,15 +314,14 @@ impl McpHandler {
             found
         };
 
-        let (route_key, method, path) = match matched {
-            Some(m) => m,
-            None => return Ok(jsonrpc_error(id, -32602, &format!("unknown tool: {}", parsed.name))),
-        };
+        let (route_key, method, path) = matched.ok_or_else(|| JsonRpcError {
+            code: -32602,
+            message: format!("unknown tool: {}", parsed.name),
+        })?;
 
-        // Build a GatewayRequest from the tool arguments. If the matched
-        // route is a pattern like `/accounts/:id`, substitute `:id` with the
-        // caller-supplied pathParams.id so the Router can re-extract the
-        // params during dispatch (the canonical extraction path).
+        // Build a GatewayRequest. If the matched route is a pattern like
+        // `/accounts/:id`, substitute `:id` with the caller-supplied
+        // pathParams.id; the Router re-extracts params during dispatch.
         let args = parsed.arguments;
         let concrete_path = substitute_path_params(&path, &args.path_params);
         let raw_qs = args.query_params.iter()
@@ -214,19 +347,19 @@ impl McpHandler {
                     .unwrap_or_default()
                     .as_millis() as u64,
             },
-            // path_parameters is left None — the Router will populate it from
-            // its own pattern match on concrete_path.
             path_parameters: None,
             body: args.body,
             is_base64_encoded: args.is_base64_encoded,
         };
 
-        // Reentrant dispatch through the same Router that called this handler.
+        // Reentrant dispatch through the same Router.
         let router = self.router.read().await;
-        let router = match router.as_ref() {
-            Some(r) => r.clone(),
-            None => return Ok(jsonrpc_error(id, -32603, "router not initialized")),
-        };
+        let router = router.as_ref()
+            .cloned()
+            .ok_or_else(|| JsonRpcError {
+                code: -32603,
+                message: "router not initialized".into(),
+            })?;
         let inner = match router.dispatch(event).await {
             Ok(outcome) => outcome.response,
             Err(e) => e.to_response(),
@@ -234,13 +367,22 @@ impl McpHandler {
 
         let is_error = inner.status_code >= 400;
         let inner_json = serde_json::to_string(&inner)
-            .map_err(|e| HandlerError::Internal(e.to_string()))?;
+            .map_err(|e| JsonRpcError { code: -32603, message: e.to_string() })?;
         let result = ToolsCallResult {
             content: vec![ToolContent { kind: "text", text: inner_json }],
             is_error,
         };
-        ok_response(id, result)
+        let value = serde_json::to_value(result)
+            .map_err(|e| JsonRpcError { code: -32603, message: e.to_string() })?;
+        Ok(value)
     }
+}
+
+/// Internal error type for the new dispatcher — converted to JSON-RPC error
+/// shape at the response boundary.
+struct JsonRpcError {
+    code: i32,
+    message: String,
 }
 
 fn generic_envelope_schema() -> serde_json::Value {
@@ -307,35 +449,43 @@ fn urlencode(s: &str) -> String {
     out
 }
 
-fn ok_response<T: Serialize>(id: serde_json::Value, result: T) -> Result<GatewayResponse, HandlerError> {
-    let body = JsonRpcOk { jsonrpc: "2.0", id, result };
-    let json = serde_json::to_string(&body)
-        .map_err(|e| HandlerError::Internal(e.to_string()))?;
+/// Wrap any JSON value in a 200 response with content-type application/json.
+fn json_response(value: serde_json::Value) -> GatewayResponse {
+    let json = serde_json::to_string(&value).unwrap_or_else(|_| String::from("{}"));
     let mut headers = HashMap::new();
     headers.insert("content-type".into(), "application/json".into());
-    Ok(GatewayResponse {
+    GatewayResponse {
         status_code: 200,
         headers: Some(headers),
         body: Some(json),
         is_base64_encoded: None,
-    })
+    }
 }
 
-fn jsonrpc_error(id: serde_json::Value, code: i32, message: &str) -> GatewayResponse {
-    let body = JsonRpcErr {
-        jsonrpc: "2.0",
-        id,
-        error: JsonRpcErrBody { code, message: message.to_string() },
-    };
-    let json = serde_json::to_string(&body).unwrap_or_else(|_| String::from("{}"));
-    let mut headers = HashMap::new();
-    headers.insert("content-type".into(), "application/json".into());
+/// 204 No Content — used when the entire request was notifications.
+fn no_content_response() -> GatewayResponse {
     GatewayResponse {
-        status_code: 200,  // JSON-RPC errors travel as 200 with error body
-        headers: Some(headers),
-        body: Some(json),
+        status_code: 204,
+        headers: None,
+        body: None,
         is_base64_encoded: None,
     }
+}
+
+/// Build a JSON-RPC error envelope around a single id, return as a full HTTP
+/// response. Used at the top of `invoke` for parse/batch-shape failures.
+fn jsonrpc_error_response(id: serde_json::Value, code: i32, message: &str) -> GatewayResponse {
+    json_response(jsonrpc_error_value(id, code, message))
+}
+
+/// Just the JSON-RPC error envelope as a JSON value — used inside batch
+/// processing where we collect responses into an array.
+fn jsonrpc_error_value(id: serde_json::Value, code: i32, message: &str) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": { "code": code, "message": message }
+    })
 }
 
 #[cfg(test)]
@@ -479,5 +629,161 @@ mod tests {
         // ":id" in place; the Router will 404 on that path.
         let params = HashMap::new();
         assert_eq!(substitute_path_params("/accounts/:id", &params), "/accounts/:id");
+    }
+
+    // ─── MCP spec compliance ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn initialize_returns_server_info_and_capabilities() {
+        let s = Arc::new(RizState::new());
+        let h = McpHandler::new(s);
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        assert_eq!(resp.status_code, 200);
+        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        assert_eq!(body["jsonrpc"], "2.0");
+        assert_eq!(body["id"], 1);
+        assert_eq!(body["result"]["protocolVersion"], "2024-11-05");
+        assert_eq!(body["result"]["serverInfo"]["name"], "riz");
+        assert!(body["result"]["capabilities"]["tools"].is_object(),
+            "tools capability must be advertised");
+    }
+
+    #[tokio::test]
+    async fn initialize_echoes_supported_client_version() {
+        let s = Arc::new(RizState::new());
+        let h = McpHandler::new(s);
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        assert_eq!(body["result"]["protocolVersion"], "2025-03-26");
+    }
+
+    #[tokio::test]
+    async fn initialize_falls_back_to_default_for_unknown_version() {
+        let s = Arc::new(RizState::new());
+        let h = McpHandler::new(s);
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"9999-99-99"}}"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        assert_eq!(body["result"]["protocolVersion"], SERVER_DEFAULT_PROTOCOL_VERSION);
+    }
+
+    #[tokio::test]
+    async fn ping_returns_empty_object() {
+        let s = Arc::new(RizState::new());
+        let h = McpHandler::new(s);
+        let req = r#"{"jsonrpc":"2.0","id":42,"method":"ping"}"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        assert_eq!(resp.status_code, 200);
+        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        assert_eq!(body["id"], 42);
+        assert!(body["result"].is_object());
+        assert_eq!(body["result"], serde_json::json!({}));
+    }
+
+    #[tokio::test]
+    async fn notification_without_id_returns_204_no_content() {
+        let s = Arc::new(RizState::new());
+        let h = McpHandler::new(s);
+        let req = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        assert_eq!(resp.status_code, 204, "notifications must not produce a body");
+        assert!(resp.body.is_none() || resp.body.as_deref() == Some(""));
+    }
+
+    #[tokio::test]
+    async fn notification_with_unknown_method_still_no_response() {
+        // Per JSON-RPC 2.0: even errors from notifications produce no response.
+        let s = Arc::new(RizState::new());
+        let h = McpHandler::new(s);
+        let req = r#"{"jsonrpc":"2.0","method":"nonsense/method"}"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        assert_eq!(resp.status_code, 204);
+    }
+
+    #[tokio::test]
+    async fn resources_list_returns_empty_array() {
+        let s = Arc::new(RizState::new());
+        let h = McpHandler::new(s);
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"resources/list"}"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        assert_eq!(body["result"]["resources"], serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn prompts_list_returns_empty_array() {
+        let s = Arc::new(RizState::new());
+        let h = McpHandler::new(s);
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"prompts/list"}"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        assert_eq!(body["result"]["prompts"], serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn resources_templates_list_returns_empty_array() {
+        let s = Arc::new(RizState::new());
+        let h = McpHandler::new(s);
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"resources/templates/list"}"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        assert_eq!(body["result"]["resourceTemplates"], serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn batch_request_returns_array_of_responses() {
+        let s = Arc::new(RizState::new());
+        let h = McpHandler::new(s);
+        let req = r#"[
+            {"jsonrpc":"2.0","id":1,"method":"ping"},
+            {"jsonrpc":"2.0","id":2,"method":"resources/list"}
+        ]"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        assert_eq!(resp.status_code, 200);
+        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        let arr = body.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["id"], 1);
+        assert_eq!(arr[1]["id"], 2);
+        assert!(arr[1]["result"]["resources"].is_array());
+    }
+
+    #[tokio::test]
+    async fn batch_with_only_notifications_returns_204() {
+        let s = Arc::new(RizState::new());
+        let h = McpHandler::new(s);
+        let req = r#"[
+            {"jsonrpc":"2.0","method":"notifications/initialized"},
+            {"jsonrpc":"2.0","method":"some/notification"}
+        ]"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        assert_eq!(resp.status_code, 204);
+    }
+
+    #[tokio::test]
+    async fn batch_skips_notifications_keeps_request_responses() {
+        let s = Arc::new(RizState::new());
+        let h = McpHandler::new(s);
+        let req = r#"[
+            {"jsonrpc":"2.0","method":"notifications/initialized"},
+            {"jsonrpc":"2.0","id":7,"method":"ping"}
+        ]"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        let arr = body.as_array().unwrap();
+        assert_eq!(arr.len(), 1, "only the ping request should appear");
+        assert_eq!(arr[0]["id"], 7);
+    }
+
+    #[tokio::test]
+    async fn empty_batch_returns_invalid_request_error() {
+        let s = Arc::new(RizState::new());
+        let h = McpHandler::new(s);
+        let req = r#"[]"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        assert_eq!(body["error"]["code"], -32600);
     }
 }
