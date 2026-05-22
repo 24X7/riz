@@ -6,8 +6,10 @@ mod hotreload;
 mod metrics;
 mod process;
 mod router;
+mod runtime;
 mod server;
 mod state;
+mod system;
 mod tui;
 
 use std::net::SocketAddr;

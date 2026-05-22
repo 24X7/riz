@@ -33,6 +33,9 @@ ipnet = "2"
 nix = { version = "0.29", features = ["process", "signal"] }
 sysinfo = "0.31"
 base64 = "0.22"
+async-trait = "0.1"
+thiserror = "1"
+indexmap = { version = "2", features = ["serde"] }
 
 [profile.release]
 opt-level = 3
