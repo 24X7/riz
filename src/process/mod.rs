@@ -102,8 +102,11 @@ impl ProcessManager {
             return Ok(GatewayResponse::error(503, "lambda unhealthy"));
         }
 
-        // Acquire permit: guarantees at least one handle is free
-        let _permit = pool.semaphore.acquire().await?;
+        // Fail fast when all slots are busy — don't queue indefinitely
+        let _permit = match pool.semaphore.try_acquire() {
+            Ok(p) => p,
+            Err(_) => return Ok(GatewayResponse::error(429, "too many concurrent requests")),
+        };
 
         // Find a free handle (try_lock always succeeds when semaphore is correct)
         let free_arc = {
@@ -266,4 +269,21 @@ async fn spawn_process(
     }
 
     Ok(ProcessHandle { pid, stdin, stdout, spawned_at: Instant::now(), _child: child })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn semaphore_exhausted_returns_error_not_block() {
+        let sem = tokio::sync::Semaphore::new(2);
+        let _p1 = sem.try_acquire().expect("first permit");
+        let _p2 = sem.try_acquire().expect("second permit");
+        // All permits taken — try_acquire must fail immediately, not block
+        assert!(
+            sem.try_acquire().is_err(),
+            "expected TryAcquireError when semaphore exhausted"
+        );
+    }
 }
