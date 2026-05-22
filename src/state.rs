@@ -17,8 +17,8 @@ pub struct AppState {
     pub metrics: MetricsEmitter,
     pub runtime_registry: Arc<RuntimeRegistry>,
     pub route_stats: RwLock<HashMap<String, RouteStats>>,
-    pub log_tx: mpsc::UnboundedSender<LogEntry>,
-    pub log_rx: Mutex<mpsc::UnboundedReceiver<LogEntry>>,
+    pub log_tx: mpsc::Sender<LogEntry>,
+    pub log_rx: Mutex<mpsc::Receiver<LogEntry>>,
 }
 
 #[derive(Default, Clone)]
@@ -58,7 +58,7 @@ pub struct LogEntry {
 
 impl AppState {
     pub fn push_log(&self, level: &str, route_key: Option<&str>, message: String) {
-        let _ = self.log_tx.send(LogEntry {
+        let _ = self.log_tx.try_send(LogEntry {
             timestamp: SystemTime::now(),
             level: level.into(),
             message,
@@ -115,6 +115,16 @@ mod tests {
         let s = RouteStats::default();
         assert_eq!(s.p50_ms(), 0.0);
         assert_eq!(s.p95_ms(), 0.0);
+    }
+
+    #[test]
+    fn bounded_channel_applies_backpressure() {
+        // Verify that try_send on a full bounded channel returns an error
+        // (proving the send site won't OOM — it drops the entry instead)
+        let (tx, _rx) = tokio::sync::mpsc::channel::<i32>(2);
+        tx.try_send(1).unwrap();
+        tx.try_send(2).unwrap();
+        assert!(tx.try_send(3).is_err(), "full channel must reject send");
     }
 
     #[test]

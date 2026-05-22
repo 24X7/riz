@@ -29,7 +29,7 @@ concurrency = 1
     let metrics = riz::metrics::MetricsEmitter::new(&config.datadog);
     let router = riz::router::Router::new(config.routes.clone());
     let process_manager = riz::process::ProcessManager::new();
-    let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<riz::state::LogEntry>();
+    let (log_tx, log_rx) = tokio::sync::mpsc::channel::<riz::state::LogEntry>(10_000);
     process_manager.spawn_all(&config.routes, &registry, log_tx.clone()).await.unwrap();
 
     let app_state = Arc::new(riz::state::AppState {
@@ -94,7 +94,7 @@ concurrency = 1
     let metrics = riz::metrics::MetricsEmitter::new(&config.datadog);
     let router = riz::router::Router::new(config.routes.clone());
     let process_manager = riz::process::ProcessManager::new();
-    let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<riz::state::LogEntry>();
+    let (log_tx, log_rx) = tokio::sync::mpsc::channel::<riz::state::LogEntry>(10_000);
     process_manager.spawn_all(&config.routes, &registry, log_tx.clone()).await.unwrap();
 
     let state = Arc::new(riz::state::AppState {

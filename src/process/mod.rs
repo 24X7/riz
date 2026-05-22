@@ -34,7 +34,7 @@ struct RoutePool {
     consecutive_crashes: AtomicU32,
     healthy: AtomicBool,
     runtime_registry: Arc<RuntimeRegistry>,
-    log_tx: mpsc::UnboundedSender<LogEntry>,
+    log_tx: mpsc::Sender<LogEntry>,
 }
 
 const CRASH_THRESHOLD: u32 = 5;
@@ -66,7 +66,7 @@ impl ProcessManager {
         &self,
         routes: &[RouteConfig],
         registry: &Arc<RuntimeRegistry>,
-        log_tx: mpsc::UnboundedSender<LogEntry>,
+        log_tx: mpsc::Sender<LogEntry>,
     ) -> anyhow::Result<()> {
         let mut pools = self.pools.write().await;
         for route in routes {
@@ -390,7 +390,7 @@ fn spawn_liveness_watcher(
 async fn spawn_process(
     route: &RouteConfig,
     registry: &RuntimeRegistry,
-    log_tx: &mpsc::UnboundedSender<LogEntry>,
+    log_tx: &mpsc::Sender<LogEntry>,
 ) -> anyhow::Result<ProcessHandle> {
     let runtime = registry.get(&route.runtime);
     let mut cmd = runtime.spawn_command(route);
@@ -415,7 +415,7 @@ async fn spawn_process(
             let mut lines = BufReader::new(stderr).lines();
             while let Ok(Some(line)) = lines.next_line().await {
                 if line.trim().is_empty() { continue; }
-                let _ = tx.send(LogEntry {
+                let _ = tx.try_send(LogEntry {
                     timestamp: std::time::SystemTime::now(),
                     level: "WARN".into(),
                     message: format!("stderr: {line}"),

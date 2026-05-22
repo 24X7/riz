@@ -111,7 +111,7 @@ async fn main() -> anyhow::Result<()> {
     let metrics = metrics::MetricsEmitter::new(&config.datadog);
     let router = router::Router::new(config.routes.clone());
     let process_manager = process::ProcessManager::new();
-    let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<state::LogEntry>();
+    let (log_tx, log_rx) = tokio::sync::mpsc::channel::<state::LogEntry>(10_000);
 
     if config.effective_deploy_key().is_none() {
         tracing::warn!("SECURITY: no deploy key configured — POST /deploy is unauthenticated");
@@ -145,6 +145,20 @@ async fn main() -> anyhow::Result<()> {
         std::thread::spawn(move || {
             if let Err(e) = tui::run_tui(tui_state, tui_handle) {
                 eprintln!("TUI error: {e}");
+            }
+        });
+    } else {
+        // In headless mode, drain logs to tracing so the bounded channel doesn't back up.
+        let state_for_drain = app_state.clone();
+        tokio::spawn(async move {
+            let mut rx = state_for_drain.log_rx.lock().await;
+            while let Some(entry) = rx.recv().await {
+                tracing::debug!(
+                    route = entry.route_key.as_deref().unwrap_or("-"),
+                    "[{}] {}",
+                    entry.level,
+                    entry.message
+                );
             }
         });
     }
