@@ -335,9 +335,15 @@ impl ProcessManager {
         drop(pools);
 
         // Refresh sysinfo (sync — no await points here)
+        // Collect all PIDs first, then pass them to ProcessesToUpdate::Some
+        // so sysinfo only scans the specific PIDs we care about
+        let all_pids: Vec<sysinfo::Pid> = raw.iter()
+            .flat_map(|r| r.pids.iter().map(|&p| sysinfo::Pid::from_u32(p)))
+            .collect();
+
         let mut sys = self.sys.lock().unwrap();
         sys.refresh_processes_specifics(
-            ProcessesToUpdate::All,
+            ProcessesToUpdate::Some(&all_pids),
             ProcessRefreshKind::new().with_memory().with_cpu(),
         );
 
@@ -564,5 +570,14 @@ mod tests {
             matches!(sem2.try_acquire(), Err(tokio::sync::TryAcquireError::Closed)),
             "closed semaphore must return Closed, not NoPermits"
         );
+    }
+
+    #[test]
+    fn processes_to_update_some_accepts_pid_slice() {
+        // Verifies the API: ProcessesToUpdate::Some takes a &[Pid] slice.
+        // This documents the sysinfo API we depend on.
+        let pids = vec![sysinfo::Pid::from_u32(1), sysinfo::Pid::from_u32(2)];
+        let _update = sysinfo::ProcessesToUpdate::Some(&pids);
+        // If this compiles, the API is correct
     }
 }
