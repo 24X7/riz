@@ -105,7 +105,12 @@ impl ProcessManager {
         // Fail fast when all slots are busy — don't queue indefinitely
         let _permit = match pool.semaphore.try_acquire() {
             Ok(p) => p,
-            Err(_) => return Ok(GatewayResponse::error(429, "too many concurrent requests")),
+            Err(tokio::sync::TryAcquireError::NoPermits) => {
+                return Ok(GatewayResponse::error(429, "too many concurrent requests"))
+            }
+            Err(tokio::sync::TryAcquireError::Closed) => {
+                return Err(anyhow::anyhow!("concurrency semaphore closed for {route_key}"))
+            }
         };
 
         // Find a free handle (try_lock always succeeds when semaphore is correct)
@@ -276,14 +281,21 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn semaphore_exhausted_returns_error_not_block() {
-        let sem = tokio::sync::Semaphore::new(2);
-        let _p1 = sem.try_acquire().expect("first permit");
-        let _p2 = sem.try_acquire().expect("second permit");
-        // All permits taken — try_acquire must fail immediately, not block
+    async fn semaphore_try_acquire_distinguishes_no_permits_from_closed() {
+        // Exhausted semaphore returns NoPermits
+        let sem = tokio::sync::Semaphore::new(1);
+        let _p = sem.try_acquire().expect("first permit");
         assert!(
-            sem.try_acquire().is_err(),
-            "expected TryAcquireError when semaphore exhausted"
+            matches!(sem.try_acquire(), Err(tokio::sync::TryAcquireError::NoPermits)),
+            "exhausted semaphore must return NoPermits"
+        );
+
+        // Closed semaphore returns a different error variant
+        let sem2 = tokio::sync::Semaphore::new(1);
+        sem2.close();
+        assert!(
+            matches!(sem2.try_acquire(), Err(tokio::sync::TryAcquireError::Closed)),
+            "closed semaphore must return Closed, not NoPermits"
         );
     }
 }
