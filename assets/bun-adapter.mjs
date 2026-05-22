@@ -2,6 +2,11 @@
 // Spawned by osbox as: bun run bun-adapter.mjs <handler_path>
 import { createInterface } from "readline";
 
+// Redirect all console output to stderr so it doesn't corrupt the stdout protocol stream.
+// console.error and console.warn already go to stderr; .log/.info/.debug do not by default.
+const _toStderr = (...args) => process.stderr.write(args.map(String).join(' ') + '\n');
+console.log = console.info = console.debug = _toStderr;
+
 const handlerPath = process.argv[2];
 if (!handlerPath) {
   process.stderr.write("osbox bun-adapter: missing handler path\n");
