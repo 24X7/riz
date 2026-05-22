@@ -332,21 +332,20 @@ fn spawn_liveness_watcher(
     pool: Arc<RoutePool>,
     route_key: String,
 ) {
+    if pid == 0 { return; }
+    #[cfg(not(unix))]
+    { return; } // liveness watching not supported on non-unix
+    #[cfg(unix)]
     tokio::spawn(async move {
         // Poll every 200ms to see if the process is still alive
         loop {
             tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-            #[cfg(unix)]
-            {
-                use nix::sys::signal;
-                use nix::unistd::Pid;
-                if signal::kill(Pid::from_raw(pid as i32), None).is_err() {
-                    // Process is gone
-                    break;
-                }
+            use nix::sys::signal;
+            use nix::unistd::Pid;
+            if signal::kill(Pid::from_raw(pid as i32), None).is_err() {
+                // Process is gone
+                break;
             }
-            #[cfg(not(unix))]
-            break; // non-unix: skip liveness
         }
 
         warn!("lambda process {pid} exited unexpectedly on {route_key} — respawning");
