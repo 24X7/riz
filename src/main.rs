@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn no_dev_flag_by_default() {
-        let cli = Cli::try_parse_from(["osbox"]).unwrap();
+        let cli = Cli::try_parse_from(["riz"]).unwrap();
         assert!(!cli.dev);
     }
 
