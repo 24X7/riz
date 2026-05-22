@@ -4,6 +4,7 @@ pub mod bun;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout};
@@ -40,6 +41,7 @@ const CRASH_THRESHOLD: u32 = 5;
 
 pub struct ProcessManager {
     pools: RwLock<HashMap<String, Arc<RoutePool>>>,
+    sys: std::sync::Mutex<System>,
 }
 
 pub struct PoolStats {
@@ -48,11 +50,16 @@ pub struct PoolStats {
     pub restart_count: u32,
     pub healthy: bool,
     pub concurrency: usize,
+    pub memory_rss_mb: f64,
+    pub cpu_percent: f32,
 }
 
 impl ProcessManager {
     pub fn new() -> Self {
-        Self { pools: RwLock::new(HashMap::new()) }
+        Self {
+            pools: RwLock::new(HashMap::new()),
+            sys: std::sync::Mutex::new(System::new()),
+        }
     }
 
     pub async fn spawn_all(
@@ -230,20 +237,55 @@ impl ProcessManager {
 
     pub async fn pool_stats(&self) -> Vec<PoolStats> {
         let pools = self.pools.read().await;
-        let mut stats = Vec::new();
+
+        // Collect PIDs and metadata first (needs async for RwLock reads)
+        struct RawStat {
+            key: String,
+            pids: Vec<u32>,
+            restarts: u32,
+            healthy: bool,
+            concurrency: usize,
+        }
+        let mut raw: Vec<RawStat> = Vec::new();
         for (key, pool) in pools.iter() {
             let handles = pool.handles.read().await;
-            stats.push(PoolStats {
-                route_key: key.clone(),
-                pids: handles.iter()
-                    .filter_map(|h| h.try_lock().ok().map(|g| g.pid))
-                    .collect(),
-                restart_count: pool.restart_count.load(Ordering::Relaxed),
+            let pids = handles.iter()
+                .filter_map(|h| h.try_lock().ok().map(|g| g.pid))
+                .collect();
+            raw.push(RawStat {
+                key: key.clone(),
+                pids,
+                restarts: pool.restart_count.load(Ordering::Relaxed),
                 healthy: pool.healthy.load(Ordering::Relaxed),
                 concurrency: pool.route.concurrency,
             });
         }
-        stats
+        drop(pools);
+
+        // Refresh sysinfo (sync — no await points here)
+        let mut sys = self.sys.lock().unwrap();
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            ProcessRefreshKind::new().with_memory().with_cpu(),
+        );
+
+        raw.into_iter().map(|r| {
+            let (mem_bytes, cpu) = r.pids.iter().fold((0u64, 0f32), |(m, c), &pid| {
+                match sys.process(Pid::from_u32(pid)) {
+                    Some(p) => (m + p.memory(), c + p.cpu_usage()),
+                    None => (m, c),
+                }
+            });
+            PoolStats {
+                route_key: r.key,
+                pids: r.pids,
+                restart_count: r.restarts,
+                healthy: r.healthy,
+                concurrency: r.concurrency,
+                memory_rss_mb: mem_bytes as f64 / (1024.0 * 1024.0),
+                cpu_percent: cpu,
+            }
+        }).collect()
     }
 }
 
@@ -310,6 +352,25 @@ mod tests {
         // killpg with a dead pgid returns ESRCH which we silently discard.
         // This test ensures the helper doesn't panic on the error path.
         kill_process_group(99999);
+    }
+
+    #[test]
+    fn pool_stats_fold_handles_missing_pid_gracefully() {
+        // When sysinfo can't find a PID, it returns None.
+        // Verify the fold produces (0, 0.0) — not a panic.
+        let mut sys = sysinfo::System::new();
+        sys.refresh_processes_specifics(
+            sysinfo::ProcessesToUpdate::All,
+            sysinfo::ProcessRefreshKind::new().with_memory().with_cpu(),
+        );
+        let (mem, cpu) = [999999u32].iter().fold((0u64, 0f32), |(m, c), &pid| {
+            match sys.process(sysinfo::Pid::from_u32(pid)) {
+                Some(p) => (m + p.memory(), c + p.cpu_usage()),
+                None => (m, c),
+            }
+        });
+        assert_eq!(mem, 0, "missing PID should contribute 0 memory");
+        assert_eq!(cpu, 0.0, "missing PID should contribute 0 CPU");
     }
 
     #[tokio::test]

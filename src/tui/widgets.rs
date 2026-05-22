@@ -151,15 +151,23 @@ fn format_timestamp(entry: &LogEntry) -> String {
 }
 
 fn render_processes(frame: &mut Frame, app: &App, area: Rect) {
-    let header = Row::new(["Route", "PIDs", "Restarts", "Health"])
+    let header = Row::new(["Route", "PIDs", "Mem MB", "CPU%", "Restarts", "Health"])
         .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app.pool_stats.iter().map(|s| {
         let pids: Vec<String> = s.pids.iter().map(|p| p.to_string()).collect();
         let health_color = if s.healthy { Color::Green } else { Color::Red };
+        let mem_str = if s.memory_rss_mb < 1.0 {
+            format!("{:.0}KB", s.memory_rss_mb * 1024.0)
+        } else {
+            format!("{:.1}", s.memory_rss_mb)
+        };
+        let cpu_str = format!("{:.1}%", s.cpu_percent);
         Row::new([
             Cell::from(s.route_key.as_str()),
             Cell::from(pids.join(", ")),
+            Cell::from(mem_str),
+            Cell::from(cpu_str),
             Cell::from(s.restart_count.to_string()),
             Cell::from(if s.healthy { "ok" } else { "down" })
                 .style(Style::default().fg(health_color)),
@@ -169,10 +177,12 @@ fn render_processes(frame: &mut Frame, app: &App, area: Rect) {
     let table = Table::new(
         rows,
         [
-            Constraint::Percentage(40),
-            Constraint::Percentage(30),
-            Constraint::Percentage(15),
-            Constraint::Percentage(15),
+            Constraint::Percentage(32),
+            Constraint::Percentage(18),
+            Constraint::Percentage(12),
+            Constraint::Percentage(10),
+            Constraint::Percentage(12),
+            Constraint::Percentage(16),
         ],
     )
     .header(header)
