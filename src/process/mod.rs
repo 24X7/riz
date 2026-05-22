@@ -164,6 +164,7 @@ impl ProcessManager {
                     }
                     Err(spawn_err) => {
                         error!("failed to respawn {route_key}: {spawn_err}");
+                        pool.healthy.store(false, Ordering::Relaxed);
                     }
                 }
                 Ok(GatewayResponse::error(502, "lambda error"))
@@ -177,7 +178,8 @@ impl ProcessManager {
                         *handle = new_handle;
                     }
                     Err(spawn_err) => {
-                        error!("failed to respawn after timeout {route_key}: {spawn_err}");
+                        error!("failed to respawn {route_key}: {spawn_err}");
+                        pool.healthy.store(false, Ordering::Relaxed);
                     }
                 }
                 pool.restart_count.fetch_add(1, Ordering::Relaxed);
@@ -205,6 +207,11 @@ impl ProcessManager {
 
         // Now safe to swap handles — no requests are in flight
         let mut handles = pool.handles.write().await;
+        for h in handles.iter() {
+            if let Ok(g) = h.try_lock() {
+                kill_process_group(g.pid);
+            }
+        }
         handles.clear();
 
         let mut first_pid = 0;
@@ -242,6 +249,7 @@ impl ProcessManager {
 
 #[cfg(unix)]
 fn kill_process_group(pid: u32) {
+    if pid == 0 { return; }
     let _ = nix::sys::signal::killpg(
         nix::unistd::Pid::from_raw(pid as i32),
         nix::sys::signal::Signal::SIGKILL,
