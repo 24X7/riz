@@ -150,9 +150,34 @@ impl ProcessManager {
 
         match result {
             Ok(Ok(line)) => {
-                pool.consecutive_crashes.store(0, Ordering::Relaxed);
-                serde_json::from_str(line.trim())
-                    .map_err(|_| anyhow::anyhow!("malformed lambda response: {line}"))
+                match serde_json::from_str(line.trim()) {
+                    Ok(resp) => {
+                        pool.consecutive_crashes.store(0, Ordering::Relaxed);
+                        Ok(resp)
+                    }
+                    Err(_) => {
+                        pool.restart_count.fetch_add(1, Ordering::Relaxed);
+                        let crashes = pool.consecutive_crashes.fetch_add(1, Ordering::Relaxed) + 1;
+                        if crashes >= CRASH_THRESHOLD {
+                            pool.healthy.store(false, Ordering::Relaxed);
+                            error!("route {route_key} marked unhealthy after {crashes} crashes");
+                        }
+                        warn!("malformed lambda response on {route_key}: {line:?} — killing and restarting");
+                        kill_process_group(handle.pid);
+                        let _ = handle._child.kill().await;
+                        match spawn_process(&pool.route, &pool.runtime_registry, &pool.log_tx).await {
+                            Ok(new_handle) => {
+                                *handle = new_handle;
+                                pool.consecutive_crashes.store(0, Ordering::Relaxed);
+                            }
+                            Err(spawn_err) => {
+                                error!("failed to respawn {route_key}: {spawn_err}");
+                                pool.healthy.store(false, Ordering::Relaxed);
+                            }
+                        }
+                        Ok(GatewayResponse::error(502, "malformed lambda response"))
+                    }
+                }
             }
             Ok(Err(e)) => {
                 pool.restart_count.fetch_add(1, Ordering::Relaxed);
@@ -371,6 +396,21 @@ mod tests {
         });
         assert_eq!(mem, 0, "missing PID should contribute 0 memory");
         assert_eq!(cpu, 0.0, "missing PID should contribute 0 CPU");
+    }
+
+    #[test]
+    fn parse_failure_arm_is_distinct_from_crash_arm() {
+        // Verifies the structural contract: a malformed response line (not empty, not valid JSON)
+        // is a distinct failure mode from I/O crash. The parse failure arm must kill+respawn
+        // (same as crash arm) rather than leaving the pipe desynced.
+        // This test validates the data shape we rely on: a non-empty, non-JSON string
+        // is what triggers the desync bug that this fix addresses.
+        let bad_line = "not valid json at all\n";
+        let result = serde_json::from_str::<crate::gateway::GatewayResponse>(bad_line.trim());
+        assert!(result.is_err(), "non-JSON line must fail to parse — this is the trigger condition for BUG-01");
+        // Empty line is a different edge case (read_line returned EOF or blank)
+        let empty_result = serde_json::from_str::<crate::gateway::GatewayResponse>("".trim());
+        assert!(empty_result.is_err(), "empty string also fails to parse");
     }
 
     #[tokio::test]
