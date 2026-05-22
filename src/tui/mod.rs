@@ -51,6 +51,13 @@ fn run_loop<B: ratatui::backend::Backend>(
             app.cache_entry_count = state.cache.entry_count();
         });
 
+        // Clamp selection if routes were removed
+        if let Some(i) = app.selected_route {
+            if i >= app.route_stats.len() {
+                app.selected_route = app.route_stats.len().checked_sub(1);
+            }
+        }
+
         // Drain log channel (synchronous — no block_on needed)
         if let Ok(mut rx) = state.log_rx.try_lock() {
             while let Ok(entry) = rx.try_recv() {

@@ -140,10 +140,6 @@ async fn dispatch_lambda(
                 format!("{method} {path} {} {latency:.0}ms", gw_resp.status_code),
             );
 
-            if gw_resp.status_code >= 500 {
-                state.push_log("WARN", Some(&route_key), format!("lambda {} returned {}", route_key, gw_resp.status_code));
-            }
-
             let ttl = route.cache_ttl_secs.unwrap_or(default_ttl);
             if ttl > 0 && gw_resp.status_code < 400 {
                 state.cache.set(cache_key, gw_resp.clone(), ttl).await;
