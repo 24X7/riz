@@ -2,6 +2,9 @@
 name = "osbox"
 version = "0.1.0"
 edition = "2021"
+repository = "https://github.com/OWNER/osbox"
+description = "Self-hosted AWS Lambda host — run TypeScript functions without AWS"
+license = "MIT"
 
 [[bin]]
 name = "osbox"
@@ -34,7 +37,28 @@ sysinfo = "0.31"
 opt-level = 3
 lto = "thin"
 
+# The profile that 'cargo dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
+
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json"] }
 tempfile = "3"
 tokio-test = "0.4"
+
+# Config for 'cargo dist'
+[workspace.metadata.dist]
+# The preferred cargo-dist version to use in CI (Cargo.toml SemVer syntax)
+cargo-dist-version = "0.22.1"
+# CI backends to support
+ci = "github"
+# The installers to generate for each app
+installers = ["shell"]
+# Target platforms to build apps for (Rust target-triple syntax)
+targets = [
+  "aarch64-apple-darwin",
+  "x86_64-apple-darwin",
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu",
+]
