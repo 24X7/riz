@@ -95,18 +95,24 @@ async fn dispatch_lambda(
     let query = req.uri().query().unwrap_or("").to_string();
     let source_ip = peer.ip().to_string();
 
-    let (route, path_params) = {
-        let router = state.router.read().await;
-        match router.match_route(&method, &path) {
-            Some(m) => (m.route.clone(), m.path_params.clone()),
-            None => return (StatusCode::NOT_FOUND, "not found").into_response(),
-        }
-    };
-    let route_key = crate::router::Router::route_key(&method, &route.path);
+    let route_key = crate::router::Router::route_key(&method, &path);
     let cache_key = CacheLayer::make_key(&method, &path, &query);
 
     // BUG-12: skip cache for authenticated/personalized requests
     let has_auth = req.headers().contains_key("authorization") || req.headers().contains_key("cookie");
+
+    // Resolve per-route config knobs (runtime tag + cache TTL override). System
+    // routes won't appear in config.routes — we fall back to defaults for those.
+    let (route_runtime_tag, route_cache_ttl, default_ttl) = {
+        let cfg = state.config.read().await;
+        let matched = cfg.routes.iter()
+            .find(|r| crate::router::Router::route_key(&r.method, &r.path) == route_key);
+        let runtime_tag = matched
+            .map(|r| r.runtime.as_str().to_string())
+            .unwrap_or_else(|| "system".to_string());
+        let ttl_override = matched.and_then(|r| r.cache_ttl_secs);
+        (runtime_tag, ttl_override, cfg.cache.default_ttl_secs)
+    };
 
     // Cache check — only when no auth headers present
     if !has_auth {
@@ -167,19 +173,19 @@ async fn dispatch_lambda(
             request_id: request_id.clone(),
             time_epoch,
         },
-        path_parameters: if path_params.is_empty() { None } else { Some(path_params) },
+        path_parameters: None,
         body,
         is_base64_encoded,
     };
 
-    // Invoke lambda
-    let result = state.process_manager.invoke(&route_key, &gw_request, route.timeout_ms).await;
-    let latency = start.elapsed().as_secs_f64() * 1000.0;
-
-    let default_ttl = {
-        let cfg = state.config.read().await;
-        cfg.cache.default_ttl_secs
+    // Trait dispatch — system handlers (mounted first) win on /_riz/*; user
+    // ProcessHandlers serve the rest. If no handler claims it, a 404 response
+    // is returned by the router.
+    let result = {
+        let router = state.router.read().await;
+        router.dispatch(gw_request).await
     };
+    let latency = start.elapsed().as_secs_f64() * 1000.0;
 
     match result {
         Ok(gw_resp) => {
@@ -188,7 +194,7 @@ async fn dispatch_lambda(
 
             // Emit specific metrics for lambda-side errors
             match gw_resp.status_code {
-                502 => state.metrics.record_lambda_crash(&route_key, route.runtime.as_str()),
+                502 => state.metrics.record_lambda_crash(&route_key, &route_runtime_tag),
                 504 => state.metrics.record_lambda_timeout(&route_key),
                 _ => {}
             }
@@ -209,7 +215,7 @@ async fn dispatch_lambda(
             );
 
             // BUG-12: only cache when no auth headers were present
-            let ttl = route.cache_ttl_secs.unwrap_or(default_ttl);
+            let ttl = route_cache_ttl.unwrap_or(default_ttl);
             if !has_auth && ttl > 0 && gw_resp.status_code < 400 {
                 state.cache.set(cache_key, gw_resp.clone(), ttl).await;
             }
@@ -217,12 +223,14 @@ async fn dispatch_lambda(
             gateway_to_axum(&gw_resp)
         }
         Err(e) => {
+            // HandlerError — convert via its canonical to_response()
+            let resp = e.to_response();
             error!("dispatch error for {route_key}: {e}");
-            state.metrics.record_lambda_crash(&route_key, route.runtime.as_str());
+            state.metrics.record_lambda_crash(&route_key, &route_runtime_tag);
             state.metrics.record_lambda_healthy(&route_key, false);
             state.record_request(&route_key, false, latency, false).await;
             state.push_log("ERROR", Some(&route_key), format!("dispatch error {route_key}: {e}"));
-            gateway_to_axum(&GatewayResponse::error(502, "internal error"))
+            gateway_to_axum(&resp)
         }
     }
 }

@@ -13,13 +13,14 @@ use crate::router::Router;
 pub struct AppState {
     pub config: RwLock<Config>,
     pub router: RwLock<Router>,
-    pub process_manager: ProcessManager,
+    pub process_manager: Arc<ProcessManager>,
     pub cache: CacheLayer,
     pub metrics: MetricsEmitter,
     pub runtime_registry: Arc<RuntimeRegistry>,
     pub route_stats: RwLock<HashMap<String, Arc<RouteStats>>>,
     pub log_tx: mpsc::Sender<LogEntry>,
     pub log_rx: Mutex<mpsc::Receiver<LogEntry>>,
+    pub riz_state: Arc<RizState>,
 }
 
 /// Per-route counters stored as atomics so the hot path only needs a READ lock

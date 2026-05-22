@@ -87,8 +87,28 @@ pub async fn watch_config(config_path: String, state: Arc<AppState>) {
                     }
                 }
 
-                // Update router and config last (after pools are ready)
-                let new_router = Router::new(new_config.routes.clone());
+                // Rebuild handler list from new routes — one ProcessHandler per route.
+                // System handlers don't change on hot-reload (no system routes in riz.toml).
+                let mut handlers: Vec<Arc<dyn crate::runtime::LambdaHandler>> = Vec::new();
+                for route in &new_config.routes {
+                    let h = crate::runtime::process::ProcessHandler::for_route(
+                        route,
+                        state.process_manager.clone(),
+                    );
+                    handlers.push(Arc::new(h));
+                }
+                // Re-register user functions in RizState (new entries; existing keys
+                // retain their counters thanks to IndexMap::insert overwriting).
+                for route in &new_config.routes {
+                    let key = Router::route_key(&route.method, &route.path);
+                    let already = state.riz_state.functions.read().await.contains_key(&key);
+                    if !already {
+                        state.riz_state.register(
+                            crate::state::FunctionState::user(key, route.clone())
+                        ).await;
+                    }
+                }
+                let new_router = Router::new(handlers);
                 *state.router.write().await = new_router;
                 *state.config.write().await = new_config;
             }

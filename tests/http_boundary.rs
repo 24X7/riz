@@ -17,9 +17,26 @@ fn make_state_with_routes(routes: Vec<riz::config::RouteConfig>) -> Arc<riz::sta
     let registry = Arc::new(riz::process::runtime::RuntimeRegistry::new().unwrap());
     let cache = riz::cache::CacheLayer::new(&config.cache);
     let metrics = riz::metrics::MetricsEmitter::new(&config.datadog);
-    let router = riz::router::Router::new(config.routes.clone());
-    let process_manager = riz::process::ProcessManager::new();
+    let process_manager = Arc::new(riz::process::ProcessManager::new());
     let (log_tx, log_rx) = tokio::sync::mpsc::channel::<riz::state::LogEntry>(10_000);
+
+    // Trait dispatch: build one ProcessHandler per route. Note: we do NOT
+    // call spawn_all here because these tests don't need real processes —
+    // they exercise the routing surface and the body/cache paths that run
+    // before invoke. A request to a registered route will reach the trait
+    // handler, which (without a spawned pool) will fail at process_manager
+    // lookup; the 413 boundary test relies on the body-size check firing
+    // before we get that far.
+    let handlers: Vec<Arc<dyn riz::runtime::LambdaHandler>> = config.routes.iter()
+        .map(|r| {
+            let h = riz::runtime::process::ProcessHandler::for_route(r, process_manager.clone());
+            Arc::new(h) as Arc<dyn riz::runtime::LambdaHandler>
+        })
+        .collect();
+    let router = riz::router::Router::new(handlers);
+
+    let riz_state = Arc::new(riz::state::RizState::new());
+
     Arc::new(riz::state::AppState {
         config: tokio::sync::RwLock::new(config),
         router: tokio::sync::RwLock::new(router),
@@ -30,6 +47,7 @@ fn make_state_with_routes(routes: Vec<riz::config::RouteConfig>) -> Arc<riz::sta
         route_stats: tokio::sync::RwLock::new(Default::default()),
         log_tx,
         log_rx: tokio::sync::Mutex::new(log_rx),
+        riz_state,
     })
 }
 

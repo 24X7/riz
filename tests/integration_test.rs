@@ -27,10 +27,21 @@ concurrency = 1
     let registry = Arc::new(riz::process::runtime::RuntimeRegistry::new().unwrap());
     let cache = riz::cache::CacheLayer::new(&config.cache);
     let metrics = riz::metrics::MetricsEmitter::new(&config.datadog);
-    let router = riz::router::Router::new(config.routes.clone());
-    let process_manager = riz::process::ProcessManager::new();
+    let process_manager = Arc::new(riz::process::ProcessManager::new());
     let (log_tx, log_rx) = tokio::sync::mpsc::channel::<riz::state::LogEntry>(10_000);
     process_manager.spawn_all(&config.routes, &registry, log_tx.clone()).await.unwrap();
+
+    let handlers: Vec<Arc<dyn riz::runtime::LambdaHandler>> = config.routes.iter()
+        .map(|r| Arc::new(riz::runtime::process::ProcessHandler::for_route(r, process_manager.clone()))
+            as Arc<dyn riz::runtime::LambdaHandler>)
+        .collect();
+    let router = riz::router::Router::new(handlers);
+
+    let riz_state = Arc::new(riz::state::RizState::new());
+    for route in &config.routes {
+        let key = riz::router::Router::route_key(&route.method, &route.path);
+        riz_state.register(riz::state::FunctionState::user(key, route.clone())).await;
+    }
 
     let app_state = Arc::new(riz::state::AppState {
         config: tokio::sync::RwLock::new(config),
@@ -42,6 +53,7 @@ concurrency = 1
         route_stats: tokio::sync::RwLock::new(Default::default()),
         log_tx,
         log_rx: tokio::sync::Mutex::new(log_rx),
+        riz_state,
     });
 
     // Bind to random port
@@ -92,10 +104,21 @@ concurrency = 1
     let registry = Arc::new(riz::process::runtime::RuntimeRegistry::new().unwrap());
     let cache = riz::cache::CacheLayer::new(&config.cache);
     let metrics = riz::metrics::MetricsEmitter::new(&config.datadog);
-    let router = riz::router::Router::new(config.routes.clone());
-    let process_manager = riz::process::ProcessManager::new();
+    let process_manager = Arc::new(riz::process::ProcessManager::new());
     let (log_tx, log_rx) = tokio::sync::mpsc::channel::<riz::state::LogEntry>(10_000);
     process_manager.spawn_all(&config.routes, &registry, log_tx.clone()).await.unwrap();
+
+    let handlers: Vec<Arc<dyn riz::runtime::LambdaHandler>> = config.routes.iter()
+        .map(|r| Arc::new(riz::runtime::process::ProcessHandler::for_route(r, process_manager.clone()))
+            as Arc<dyn riz::runtime::LambdaHandler>)
+        .collect();
+    let router = riz::router::Router::new(handlers);
+
+    let riz_state = Arc::new(riz::state::RizState::new());
+    for route in &config.routes {
+        let key = riz::router::Router::route_key(&route.method, &route.path);
+        riz_state.register(riz::state::FunctionState::user(key, route.clone())).await;
+    }
 
     let state = Arc::new(riz::state::AppState {
         config: tokio::sync::RwLock::new(config),
@@ -107,6 +130,7 @@ concurrency = 1
         route_stats: tokio::sync::RwLock::new(Default::default()),
         log_tx,
         log_rx: tokio::sync::Mutex::new(log_rx),
+        riz_state,
     });
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

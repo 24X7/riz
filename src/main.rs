@@ -111,8 +111,7 @@ async fn main() -> anyhow::Result<()> {
     let registry = Arc::new(process::runtime::RuntimeRegistry::new()?);
     let cache = cache::CacheLayer::new(&config.cache);
     let metrics = metrics::MetricsEmitter::new(&config.datadog);
-    let router = router::Router::new(config.routes.clone());
-    let process_manager = process::ProcessManager::new();
+    let process_manager = Arc::new(process::ProcessManager::new());
     let (log_tx, log_rx) = tokio::sync::mpsc::channel::<state::LogEntry>(10_000);
 
     let deploy_cfg = &config.deploy;
@@ -120,7 +119,26 @@ async fn main() -> anyhow::Result<()> {
         tracing::error!("SECURITY: /deploy has no auth configured — endpoint will refuse all requests. Set RIZ_DEPLOY_KEY or deploy_key/allowed_cidrs in config.");
     }
 
+    // Spawn the user-function pools (existing behavior preserved verbatim).
     process_manager.spawn_all(&config.routes, &registry, log_tx.clone()).await?;
+
+    // Per-function shared state — tracks counters and latency percentiles for
+    // both user functions and (in Task 13) system functions. Each function is
+    // registered up-front so record_invocation() finds them on first request.
+    let riz_state = Arc::new(state::RizState::new());
+    for route in &config.routes {
+        let key = router::Router::route_key(&route.method, &route.path);
+        riz_state.register(state::FunctionState::user(key, route.clone())).await;
+    }
+
+    // Build the trait-dispatch router. For Spec A we mount one ProcessHandler
+    // per user route. System handlers are added in Task 13.
+    let mut handlers: Vec<Arc<dyn runtime::LambdaHandler>> = Vec::new();
+    for route in &config.routes {
+        let h = runtime::process::ProcessHandler::for_route(route, process_manager.clone());
+        handlers.push(Arc::new(h));
+    }
+    let router = router::Router::new(handlers);
 
     let app_state = Arc::new(state::AppState {
         config: tokio::sync::RwLock::new(config.clone()),
@@ -132,6 +150,7 @@ async fn main() -> anyhow::Result<()> {
         route_stats: tokio::sync::RwLock::new(Default::default()),
         log_tx,
         log_rx: tokio::sync::Mutex::new(log_rx),
+        riz_state,
     });
 
     // Dev mode forces TUI on regardless of --no-tui and atty check.

@@ -1,9 +1,52 @@
-use std::collections::HashMap;
-use crate::config::RouteConfig;
+use std::sync::Arc;
+use crate::gateway::{GatewayRequest, GatewayResponse};
+use crate::runtime::{HandlerError, LambdaHandler};
+
+pub struct Router {
+    handlers: Vec<Arc<dyn LambdaHandler>>,
+}
+
+impl Router {
+    pub fn new(handlers: Vec<Arc<dyn LambdaHandler>>) -> Self {
+        Self { handlers }
+    }
+
+    pub fn empty() -> Self {
+        Self { handlers: Vec::new() }
+    }
+
+    /// Stable key format used in logs/metrics/registry.
+    pub fn route_key(method: &str, pattern: &str) -> String {
+        format!("{} {}", method.to_uppercase(), pattern)
+    }
+
+    pub fn handlers(&self) -> &[Arc<dyn LambdaHandler>] {
+        &self.handlers
+    }
+
+    /// Dispatch one event through the first matching handler.
+    /// Returns Ok(404 response) if no handler claims the route.
+    pub async fn dispatch(
+        &self,
+        event: GatewayRequest,
+    ) -> Result<GatewayResponse, HandlerError> {
+        let method = event.request_context.http.method.clone();
+        let path = event.request_context.http.path.clone();
+        for h in &self.handlers {
+            for r in h.routes() {
+                if r.matches(&method, &path) {
+                    return h.invoke(event).await;
+                }
+            }
+        }
+        Ok(GatewayResponse::error(404, "not found"))
+    }
+}
 
 /// Decodes a percent-encoded string (e.g. "foo%2Fbar" → "foo/bar").
-/// Matches AWS API Gateway behavior of decoding path parameters.
-fn percent_decode(s: &str) -> String {
+/// Kept available for future path-param support (Spec B).
+#[allow(dead_code)]
+pub fn percent_decode(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut bytes = s.bytes().peekable();
     while let Some(b) = bytes.next() {
@@ -15,12 +58,10 @@ fn percent_decode(s: &str) -> String {
                     result.push(char::from(hi << 4 | lo));
                     continue;
                 }
-                // Invalid escape sequence, pass through
                 result.push('%');
                 result.push(char::from(h));
                 result.push(char::from(l));
             } else {
-                // Incomplete escape sequence
                 result.push('%');
             }
         } else {
@@ -30,7 +71,7 @@ fn percent_decode(s: &str) -> String {
     result
 }
 
-/// Helper to convert a hex digit (0-9, a-f, A-F) to its numeric value.
+#[allow(dead_code)]
 fn hex_val(b: u8) -> Option<u8> {
     match b {
         b'0'..=b'9' => Some(b - b'0'),
@@ -40,142 +81,116 @@ fn hex_val(b: u8) -> Option<u8> {
     }
 }
 
-pub struct Router {
-    routes: Vec<RouteConfig>,
-}
-
-pub struct RouteMatch<'a> {
-    pub route: &'a RouteConfig,
-    pub path_params: HashMap<String, String>,
-}
-
-impl Router {
-    pub fn new(routes: Vec<RouteConfig>) -> Self {
-        Self { routes }
-    }
-
-    /// Returns "METHOD /path/pattern" — the stable key used throughout the system.
-    pub fn route_key(method: &str, pattern: &str) -> String {
-        format!("{} {}", method.to_uppercase(), pattern)
-    }
-
-    pub fn match_route<'a>(&'a self, method: &str, path: &str) -> Option<RouteMatch<'a>> {
-        let method_upper = method.to_uppercase();
-        for route in &self.routes {
-            if route.method.to_uppercase() != method_upper {
-                continue;
-            }
-            if let Some(params) = match_pattern(&route.path, path) {
-                return Some(RouteMatch { route, path_params: params });
-            }
-        }
-        None
-    }
-}
-
-/// Matches a route pattern (e.g. "/accounts/:id") against a concrete path.
-fn match_pattern(pattern: &str, path: &str) -> Option<HashMap<String, String>> {
-    let pattern_parts: Vec<&str> = pattern.trim_matches('/').split('/').collect();
-    let path_parts: Vec<&str> = path.trim_matches('/').split('/').collect();
-
-    if pattern_parts.len() != path_parts.len() {
-        return None;
-    }
-
-    let mut params = HashMap::new();
-    for (pat, seg) in pattern_parts.iter().zip(path_parts.iter()) {
-        if let Some(name) = pat.strip_prefix(':') {
-            // Percent-decode the path segment to match AWS API Gateway behavior
-            params.insert(name.to_string(), percent_decode(seg));
-        } else if pat != seg {
-            return None;
-        }
-    }
-    Some(params)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
-    use crate::config::RuntimeKind;
+    use crate::gateway::{HttpContext, RequestContext};
+    use crate::runtime::{LambdaHandler, RouteEntry, RouteMethod};
+    use async_trait::async_trait;
+    use std::collections::HashMap;
 
-    fn make_route(method: &str, path: &str) -> RouteConfig {
-        RouteConfig {
-            path: path.into(),
-            method: method.into(),
-            runtime: RuntimeKind::Bun,
-            handler: PathBuf::from("./handler.ts"),
-            timeout_ms: 5000,
-            cache_ttl_secs: None,
-            concurrency: 1,
+    struct StubHandler {
+        name: String,
+        routes: Vec<RouteEntry>,
+        body: String,
+    }
+
+    #[async_trait]
+    impl LambdaHandler for StubHandler {
+        fn name(&self) -> &str { &self.name }
+        fn routes(&self) -> &[RouteEntry] { &self.routes }
+        async fn invoke(&self, _event: GatewayRequest) -> Result<GatewayResponse, HandlerError> {
+            Ok(GatewayResponse {
+                status_code: 200,
+                headers: None,
+                body: Some(self.body.clone()),
+                is_base64_encoded: None,
+            })
+        }
+    }
+
+    fn make_event(method: &str, path: &str) -> GatewayRequest {
+        GatewayRequest {
+            version: "2.0".into(),
+            route_key: format!("{method} {path}"),
+            raw_path: path.into(),
+            raw_query_string: "".into(),
+            headers: HashMap::new(),
+            request_context: RequestContext {
+                http: HttpContext {
+                    method: method.into(),
+                    path: path.into(),
+                    protocol: "HTTP/1.1".into(),
+                    source_ip: "127.0.0.1".into(),
+                },
+                request_id: "req-1".into(),
+                time_epoch: 0,
+            },
+            path_parameters: None,
+            body: None,
+            is_base64_encoded: false,
         }
     }
 
     #[test]
-    fn matches_exact_path() {
-        let router = Router::new(vec![make_route("GET", "/ping")]);
-        assert!(router.match_route("GET", "/ping").is_some());
-        assert!(router.match_route("GET", "/pong").is_none());
+    fn route_key_format_preserved() {
+        assert_eq!(Router::route_key("get", "/api"), "GET /api");
+    }
+
+    #[tokio::test]
+    async fn first_matching_handler_wins() {
+        let h1 = Arc::new(StubHandler {
+            name: "first".into(),
+            routes: vec![RouteEntry { method: RouteMethod::Get, path: "/api".into() }],
+            body: "from-first".into(),
+        });
+        let h2 = Arc::new(StubHandler {
+            name: "second".into(),
+            routes: vec![RouteEntry { method: RouteMethod::Get, path: "/api".into() }],
+            body: "from-second".into(),
+        });
+        let router = Router::new(vec![h1, h2]);
+        let resp = router.dispatch(make_event("GET", "/api")).await.unwrap();
+        assert_eq!(resp.body.as_deref(), Some("from-first"));
+    }
+
+    #[tokio::test]
+    async fn no_match_returns_404() {
+        let router = Router::empty();
+        let resp = router.dispatch(make_event("GET", "/no-such")).await.unwrap();
+        assert_eq!(resp.status_code, 404);
+    }
+
+    #[tokio::test]
+    async fn method_mismatch_returns_404() {
+        let h = Arc::new(StubHandler {
+            name: "only-get".into(),
+            routes: vec![RouteEntry { method: RouteMethod::Get, path: "/api".into() }],
+            body: "x".into(),
+        });
+        let router = Router::new(vec![h]);
+        let resp = router.dispatch(make_event("POST", "/api")).await.unwrap();
+        assert_eq!(resp.status_code, 404);
+    }
+
+    #[tokio::test]
+    async fn route_method_any_matches_all_methods() {
+        let h = Arc::new(StubHandler {
+            name: "any".into(),
+            routes: vec![RouteEntry { method: RouteMethod::Any, path: "/api".into() }],
+            body: "ok".into(),
+        });
+        let router = Router::new(vec![h]);
+        for m in &["GET", "POST", "PUT", "DELETE", "PATCH"] {
+            let resp = router.dispatch(make_event(m, "/api")).await.unwrap();
+            assert_eq!(resp.status_code, 200, "method {m} should match");
+        }
     }
 
     #[test]
-    fn matches_path_param() {
-        let router = Router::new(vec![make_route("GET", "/accounts/:id")]);
-        let m = router.match_route("GET", "/accounts/42").unwrap();
-        assert_eq!(m.path_params["id"], "42");
-    }
-
-    #[test]
-    fn method_mismatch_returns_none() {
-        let router = Router::new(vec![make_route("GET", "/ping")]);
-        assert!(router.match_route("POST", "/ping").is_none());
-    }
-
-    #[test]
-    fn route_key_format() {
-        assert_eq!(Router::route_key("get", "/accounts/:id"), "GET /accounts/:id");
-    }
-
-    #[test]
-    fn no_match_on_different_segment_count() {
-        let router = Router::new(vec![make_route("GET", "/a/b")]);
-        assert!(router.match_route("GET", "/a").is_none());
-        assert!(router.match_route("GET", "/a/b/c").is_none());
-    }
-
-    #[test]
-    fn case_insensitive_method() {
-        let router = Router::new(vec![make_route("GET", "/ping")]);
-        assert!(router.match_route("get", "/ping").is_some());
-        assert!(router.match_route("Get", "/ping").is_some());
-    }
-
-    #[test]
-    fn percent_decode_handles_encoded_slash() {
+    fn percent_decode_helper_still_works() {
         assert_eq!(percent_decode("foo%2Fbar"), "foo/bar");
-    }
-
-    #[test]
-    fn percent_decode_handles_space() {
         assert_eq!(percent_decode("hello%20world"), "hello world");
-    }
-
-    #[test]
-    fn percent_decode_passthrough_unencoded() {
         assert_eq!(percent_decode("normal"), "normal");
-    }
-
-    #[test]
-    fn percent_decode_mixed_encoded_and_unencoded() {
-        assert_eq!(percent_decode("foo%2Fbar/baz"), "foo/bar/baz");
-    }
-
-    #[test]
-    fn matches_path_param_with_percent_encoding() {
-        let router = Router::new(vec![make_route("GET", "/accounts/:id")]);
-        let m = router.match_route("GET", "/accounts/foo%2Fbar").unwrap();
-        // Path parameter should be decoded
-        assert_eq!(m.path_params["id"], "foo/bar");
     }
 }
