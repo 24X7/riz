@@ -87,6 +87,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let config = config::Config::from_file(&config_path)?;
+    config.validate().map_err(|e| anyhow::anyhow!("invalid config: {e}"))?;
 
     match &cli.command {
         Some(Commands::Validate) => {
@@ -123,21 +124,36 @@ async fn main() -> anyhow::Result<()> {
     process_manager.spawn_all(&config.routes, &registry, log_tx.clone()).await?;
 
     // Per-function shared state — tracks counters and latency percentiles for
-    // both user functions and (in Task 13) system functions. Each function is
-    // registered up-front so record_invocation() finds them on first request.
+    // both system endpoints and user functions. Registered up-front so the
+    // first invocation finds the entry.
     let riz_state = Arc::new(state::RizState::new());
+    riz_state.register(state::FunctionState::system("GET /_riz/health")).await;
+    riz_state.register(state::FunctionState::system("GET /_riz/metrics")).await;
+    riz_state.register(state::FunctionState::system("GET /_riz/registry")).await;
+    riz_state.register(state::FunctionState::system("POST /_riz/mcp")).await;
     for route in &config.routes {
         let key = router::Router::route_key(&route.method, &route.path);
         riz_state.register(state::FunctionState::user(key, route.clone())).await;
     }
 
-    // Build the trait-dispatch router. For Spec A we mount one ProcessHandler
-    // per user route. System handlers are added in Task 13.
-    let mut handlers: Vec<Arc<dyn runtime::LambdaHandler>> = Vec::new();
+    // Build the trait-dispatch router. System handlers mount FIRST so that
+    // /_riz/* always wins over any user attempt to shadow those paths.
+    let mcp = Arc::new(system::mcp::McpHandler::new(riz_state.clone()));
+    let mut handlers: Vec<Arc<dyn runtime::LambdaHandler>> = vec![
+        Arc::new(system::health::HealthHandler::new(riz_state.clone())),
+        Arc::new(system::metrics::MetricsHandler::new(riz_state.clone())),
+        Arc::new(system::registry::RegistryHandler::new(riz_state.clone())),
+        mcp.clone() as Arc<dyn runtime::LambdaHandler>,
+    ];
     for route in &config.routes {
         let h = runtime::process::ProcessHandler::for_route(route, process_manager.clone());
         handlers.push(Arc::new(h));
     }
+    // McpHandler.tools_call needs an Arc<Router> for reentrant dispatch.
+    // We construct the inner Router first, hand it to MCP, then wrap a clone
+    // in AppState's RwLock so hot-reload can swap handler lists later.
+    let router_arc = Arc::new(router::Router::new(handlers.clone()));
+    mcp.set_router(router_arc.clone()).await;
     let router = router::Router::new(handlers);
 
     let app_state = Arc::new(state::AppState {

@@ -143,6 +143,20 @@ impl Config {
     pub fn effective_deploy_key(&self) -> Option<String> {
         std::env::var("RIZ_DEPLOY_KEY").ok().or_else(|| self.deploy.deploy_key.clone())
     }
+
+    /// Reject configurations that overlap Riz's reserved /_riz/* namespace.
+    /// Called at startup; returns Err with the offending path if found.
+    pub fn validate(&self) -> Result<(), String> {
+        for r in &self.routes {
+            if r.path == "/_riz" || r.path.starts_with("/_riz/") {
+                return Err(format!(
+                    "route path '{}' uses reserved /_riz/* namespace",
+                    r.path
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -221,5 +235,50 @@ deploy_key = "filekey"
         let default = CacheConfig::default();
         assert_eq!(default.max_size_mb, 128);
         assert_eq!(default.default_ttl_secs, 0);
+    }
+
+    #[test]
+    fn validate_rejects_riz_prefix() {
+        let toml_str = r#"
+[server]
+port = 8080
+host = "127.0.0.1"
+
+[[routes]]
+path = "/_riz/health"
+method = "GET"
+runtime = "bun"
+handler = "./h.ts"
+timeout_ms = 1000
+concurrency = 1
+"#;
+        let c: Config = toml::from_str(toml_str).unwrap();
+        let err = c.validate().unwrap_err();
+        assert!(err.contains("/_riz"));
+    }
+
+    #[test]
+    fn validate_rejects_bare_riz_path() {
+        let toml_str = r#"
+[server]
+port = 8080
+host = "127.0.0.1"
+
+[[routes]]
+path = "/_riz"
+method = "GET"
+runtime = "bun"
+handler = "./h.ts"
+timeout_ms = 1000
+concurrency = 1
+"#;
+        let c: Config = toml::from_str(toml_str).unwrap();
+        assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn validate_accepts_normal_routes() {
+        let c: Config = toml::from_str(SAMPLE).unwrap();
+        assert!(c.validate().is_ok());
     }
 }
