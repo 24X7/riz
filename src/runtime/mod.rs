@@ -33,8 +33,40 @@ pub struct RouteEntry {
 }
 
 impl RouteEntry {
+    /// Returns Some(params) if the entry matches the given request — the map
+    /// contains any path parameters extracted from `:name`-style segments
+    /// (empty when the pattern has no params). Returns None on mismatch.
+    pub fn match_path(&self, method: &str, path: &str) -> Option<HashMap<String, String>> {
+        if !self.method.matches(method) {
+            return None;
+        }
+        // Fast path: no `:` segments → exact compare.
+        if !self.path.contains(':') {
+            if self.path == path {
+                return Some(HashMap::new());
+            }
+            return None;
+        }
+        // Pattern path: split by `/` and compare segment-by-segment.
+        let pattern_parts: Vec<&str> = self.path.trim_matches('/').split('/').collect();
+        let path_parts: Vec<&str> = path.trim_matches('/').split('/').collect();
+        if pattern_parts.len() != path_parts.len() {
+            return None;
+        }
+        let mut params = HashMap::new();
+        for (pat, seg) in pattern_parts.iter().zip(path_parts.iter()) {
+            if let Some(name) = pat.strip_prefix(':') {
+                params.insert(name.to_string(), crate::router::percent_decode(seg));
+            } else if pat != seg {
+                return None;
+            }
+        }
+        Some(params)
+    }
+
+    /// Convenience boolean form for tests / callers that don't need the params.
     pub fn matches(&self, method: &str, path: &str) -> bool {
-        self.method.matches(method) && self.path == path
+        self.match_path(method, path).is_some()
     }
 }
 
@@ -156,6 +188,48 @@ mod tests {
         assert!(e.matches("GET", "/api"));
         assert!(!e.matches("POST", "/api"));
         assert!(!e.matches("GET", "/api/users"));
+    }
+
+    #[test]
+    fn route_entry_match_path_returns_empty_params_for_exact() {
+        let e = RouteEntry { method: RouteMethod::Get, path: "/api".into() };
+        let params = e.match_path("GET", "/api").unwrap();
+        assert!(params.is_empty());
+    }
+
+    #[test]
+    fn route_entry_extracts_single_path_param() {
+        let e = RouteEntry { method: RouteMethod::Get, path: "/accounts/:id".into() };
+        let params = e.match_path("GET", "/accounts/42").unwrap();
+        assert_eq!(params.get("id").map(String::as_str), Some("42"));
+    }
+
+    #[test]
+    fn route_entry_extracts_multiple_path_params() {
+        let e = RouteEntry { method: RouteMethod::Get, path: "/orgs/:org/repos/:repo".into() };
+        let params = e.match_path("GET", "/orgs/anthropic/repos/riz").unwrap();
+        assert_eq!(params.get("org").map(String::as_str), Some("anthropic"));
+        assert_eq!(params.get("repo").map(String::as_str), Some("riz"));
+    }
+
+    #[test]
+    fn route_entry_pattern_rejects_segment_count_mismatch() {
+        let e = RouteEntry { method: RouteMethod::Get, path: "/accounts/:id".into() };
+        assert!(e.match_path("GET", "/accounts").is_none());
+        assert!(e.match_path("GET", "/accounts/42/profile").is_none());
+    }
+
+    #[test]
+    fn route_entry_pattern_rejects_method_mismatch() {
+        let e = RouteEntry { method: RouteMethod::Get, path: "/accounts/:id".into() };
+        assert!(e.match_path("POST", "/accounts/42").is_none());
+    }
+
+    #[test]
+    fn route_entry_pattern_percent_decodes_params() {
+        let e = RouteEntry { method: RouteMethod::Get, path: "/files/:name".into() };
+        let params = e.match_path("GET", "/files/hello%20world").unwrap();
+        assert_eq!(params.get("name").map(String::as_str), Some("hello world"));
     }
 
     #[test]

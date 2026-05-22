@@ -185,8 +185,12 @@ impl McpHandler {
             None => return Ok(jsonrpc_error(id, -32602, &format!("unknown tool: {}", parsed.name))),
         };
 
-        // Build a GatewayRequest from the tool arguments.
+        // Build a GatewayRequest from the tool arguments. If the matched
+        // route is a pattern like `/accounts/:id`, substitute `:id` with the
+        // caller-supplied pathParams.id so the Router can re-extract the
+        // params during dispatch (the canonical extraction path).
         let args = parsed.arguments;
+        let concrete_path = substitute_path_params(&path, &args.path_params);
         let raw_qs = args.query_params.iter()
             .map(|(k, v)| format!("{}={}", urlencode(k), urlencode(v)))
             .collect::<Vec<_>>()
@@ -194,13 +198,13 @@ impl McpHandler {
         let event = GatewayRequest {
             version: "2.0".into(),
             route_key: route_key.clone(),
-            raw_path: path.clone(),
+            raw_path: concrete_path.clone(),
             raw_query_string: raw_qs,
             headers: args.headers,
             request_context: RequestContext {
                 http: HttpContext {
                     method: method.clone(),
-                    path: path.clone(),
+                    path: concrete_path,
                     protocol: "HTTP/1.1".into(),
                     source_ip: "127.0.0.1".into(),
                 },
@@ -210,7 +214,9 @@ impl McpHandler {
                     .unwrap_or_default()
                     .as_millis() as u64,
             },
-            path_parameters: if args.path_params.is_empty() { None } else { Some(args.path_params) },
+            // path_parameters is left None — the Router will populate it from
+            // its own pattern match on concrete_path.
+            path_parameters: None,
             body: args.body,
             is_base64_encoded: args.is_base64_encoded,
         };
@@ -222,7 +228,7 @@ impl McpHandler {
             None => return Ok(jsonrpc_error(id, -32603, "router not initialized")),
         };
         let inner = match router.dispatch(event).await {
-            Ok(r) => r,
+            Ok(outcome) => outcome.response,
             Err(e) => e.to_response(),
         };
 
@@ -248,6 +254,38 @@ fn generic_envelope_schema() -> serde_json::Value {
             "isBase64Encoded": {"type": "boolean", "default": false}
         }
     })
+}
+
+/// Substitute `:name` segments in `pattern` with values from `params`.
+/// Segments without a matching param key are left as-is (caller error,
+/// the Router's match will then reject the request as a 404).
+fn substitute_path_params(pattern: &str, params: &HashMap<String, String>) -> String {
+    if !pattern.contains(':') {
+        return pattern.to_string();
+    }
+    let mut out = String::with_capacity(pattern.len());
+    let mut first = true;
+    for seg in pattern.trim_start_matches('/').split('/') {
+        if !first { out.push('/'); }
+        first = false;
+        if let Some(name) = seg.strip_prefix(':') {
+            if let Some(v) = params.get(name) {
+                out.push_str(v);
+            } else {
+                out.push_str(seg);  // unresolved param — Router will 404
+            }
+        } else {
+            out.push_str(seg);
+        }
+    }
+    if pattern.starts_with('/') {
+        let mut prefixed = String::with_capacity(out.len() + 1);
+        prefixed.push('/');
+        prefixed.push_str(&out);
+        prefixed
+    } else {
+        out
+    }
 }
 
 fn urlencode(s: &str) -> String {
@@ -409,5 +447,37 @@ mod tests {
         let resp = h.invoke(evt(req)).await.unwrap();
         let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
         assert_eq!(body["error"]["code"], -32602);
+    }
+
+    #[test]
+    fn substitute_path_params_replaces_segments() {
+        let mut params = HashMap::new();
+        params.insert("id".to_string(), "42".to_string());
+        assert_eq!(substitute_path_params("/accounts/:id", &params), "/accounts/42");
+    }
+
+    #[test]
+    fn substitute_path_params_handles_multiple_segments() {
+        let mut params = HashMap::new();
+        params.insert("org".to_string(), "anthropic".to_string());
+        params.insert("repo".to_string(), "riz".to_string());
+        assert_eq!(
+            substitute_path_params("/orgs/:org/repos/:repo", &params),
+            "/orgs/anthropic/repos/riz"
+        );
+    }
+
+    #[test]
+    fn substitute_path_params_passes_through_when_no_pattern() {
+        let params = HashMap::new();
+        assert_eq!(substitute_path_params("/api", &params), "/api");
+    }
+
+    #[test]
+    fn substitute_path_params_leaves_unresolved_pattern_intact() {
+        // Caller forgot to provide a value — substitution leaves the literal
+        // ":id" in place; the Router will 404 on that path.
+        let params = HashMap::new();
+        assert_eq!(substitute_path_params("/accounts/:id", &params), "/accounts/:id");
     }
 }

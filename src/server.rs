@@ -179,8 +179,9 @@ async fn dispatch_lambda(
     };
 
     // Trait dispatch — system handlers (mounted first) win on /_riz/*; user
-    // ProcessHandlers serve the rest. If no handler claims it, a 404 response
-    // is returned by the router.
+    // ProcessHandlers serve the rest. The router returns the MATCHED route_key
+    // (e.g. "GET /accounts/:id") so metrics/health/logs attribute to the
+    // pattern, not the raw incoming path.
     let result = {
         let router = state.router.read().await;
         router.dispatch(gw_request).await
@@ -188,11 +189,31 @@ async fn dispatch_lambda(
     let latency = start.elapsed().as_secs_f64() * 1000.0;
 
     match result {
-        Ok(gw_resp) => {
+        Ok(outcome) => {
+            // Prefer the matched route_key from the router (pattern-aware);
+            // fall back to the raw path key only if dispatch produced an
+            // unmatched 404. The cache key already uses the raw path because
+            // a cached response is keyed by the request, not the pattern.
+            let route_key = outcome.route_key.clone();
+            let gw_resp = outcome.response;
+            // Re-resolve runtime tag + ttl override against the matched key.
+            let (route_runtime_tag, route_cache_ttl) = {
+                let cfg = state.config.read().await;
+                let matched = cfg.routes.iter()
+                    .find(|r| crate::router::Router::route_key(&r.method, &r.path) == route_key);
+                let runtime_tag = matched
+                    .map(|r| r.runtime.as_str().to_string())
+                    .unwrap_or_else(|| "system".to_string());
+                let ttl_override = matched.and_then(|r| r.cache_ttl_secs);
+                (runtime_tag, ttl_override)
+            };
+            // Shadow earlier-bound `route_runtime_tag` / `route_cache_ttl` so
+            // we use the pattern-aware values below.
+            let _ = (route_runtime_tag.clone(), route_cache_ttl);
+
             let healthy = gw_resp.status_code < 500;
             state.metrics.record_request(&route_key, &method, gw_resp.status_code, latency);
 
-            // Emit specific metrics for lambda-side errors
             match gw_resp.status_code {
                 502 => state.metrics.record_lambda_crash(&route_key, &route_runtime_tag),
                 504 => state.metrics.record_lambda_timeout(&route_key),
@@ -200,7 +221,6 @@ async fn dispatch_lambda(
             }
             state.metrics.record_lambda_healthy(&route_key, healthy);
 
-            // Cache miss metric only for successful cache-eligible requests
             if gw_resp.status_code < 400 {
                 state.metrics.record_cache_miss(&route_key);
             }
@@ -223,7 +243,6 @@ async fn dispatch_lambda(
             gateway_to_axum(&gw_resp)
         }
         Err(e) => {
-            // HandlerError — convert via its canonical to_response()
             let resp = e.to_response();
             error!("dispatch error for {route_key}: {e}");
             state.metrics.record_lambda_crash(&route_key, &route_runtime_tag);

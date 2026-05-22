@@ -6,6 +6,14 @@ pub struct Router {
     handlers: Vec<Arc<dyn LambdaHandler>>,
 }
 
+/// Result of a dispatch — exposes the matched route_key so callers can
+/// attribute metrics and logs to the pattern (e.g. "GET /accounts/:id"),
+/// not the raw incoming path ("GET /accounts/42").
+pub struct DispatchOutcome {
+    pub route_key: String,
+    pub response: GatewayResponse,
+}
+
 impl Router {
     pub fn new(handlers: Vec<Arc<dyn LambdaHandler>>) -> Self {
         Self { handlers }
@@ -24,22 +32,35 @@ impl Router {
         &self.handlers
     }
 
-    /// Dispatch one event through the first matching handler.
-    /// Returns Ok(404 response) if no handler claims the route.
+    /// Dispatch one event through the first matching handler. Extracts any
+    /// path parameters from `:name`-style segments into `event.path_parameters`.
+    /// Returns the matched route_key alongside the handler's response (or a
+    /// synthetic 404 response if nothing matched).
     pub async fn dispatch(
         &self,
-        event: GatewayRequest,
-    ) -> Result<GatewayResponse, HandlerError> {
+        mut event: GatewayRequest,
+    ) -> Result<DispatchOutcome, HandlerError> {
         let method = event.request_context.http.method.clone();
         let path = event.request_context.http.path.clone();
         for h in &self.handlers {
             for r in h.routes() {
-                if r.matches(&method, &path) {
-                    return h.invoke(event).await;
+                if let Some(params) = r.match_path(&method, &path) {
+                    if !params.is_empty() {
+                        event.path_parameters = Some(params);
+                    }
+                    let matched_route_key = Self::route_key(r.method.as_str(), &r.path);
+                    let response = h.invoke(event).await?;
+                    return Ok(DispatchOutcome {
+                        route_key: matched_route_key,
+                        response,
+                    });
                 }
             }
         }
-        Ok(GatewayResponse::error(404, "not found"))
+        Ok(DispatchOutcome {
+            route_key: Self::route_key(&method, &path),
+            response: GatewayResponse::error(404, "not found"),
+        })
     }
 }
 
@@ -150,15 +171,16 @@ mod tests {
             body: "from-second".into(),
         });
         let router = Router::new(vec![h1, h2]);
-        let resp = router.dispatch(make_event("GET", "/api")).await.unwrap();
-        assert_eq!(resp.body.as_deref(), Some("from-first"));
+        let outcome = router.dispatch(make_event("GET", "/api")).await.unwrap();
+        assert_eq!(outcome.response.body.as_deref(), Some("from-first"));
+        assert_eq!(outcome.route_key, "GET /api");
     }
 
     #[tokio::test]
     async fn no_match_returns_404() {
         let router = Router::empty();
-        let resp = router.dispatch(make_event("GET", "/no-such")).await.unwrap();
-        assert_eq!(resp.status_code, 404);
+        let outcome = router.dispatch(make_event("GET", "/no-such")).await.unwrap();
+        assert_eq!(outcome.response.status_code, 404);
     }
 
     #[tokio::test]
@@ -169,8 +191,8 @@ mod tests {
             body: "x".into(),
         });
         let router = Router::new(vec![h]);
-        let resp = router.dispatch(make_event("POST", "/api")).await.unwrap();
-        assert_eq!(resp.status_code, 404);
+        let outcome = router.dispatch(make_event("POST", "/api")).await.unwrap();
+        assert_eq!(outcome.response.status_code, 404);
     }
 
     #[tokio::test]
@@ -182,9 +204,51 @@ mod tests {
         });
         let router = Router::new(vec![h]);
         for m in &["GET", "POST", "PUT", "DELETE", "PATCH"] {
-            let resp = router.dispatch(make_event(m, "/api")).await.unwrap();
-            assert_eq!(resp.status_code, 200, "method {m} should match");
+            let outcome = router.dispatch(make_event(m, "/api")).await.unwrap();
+            assert_eq!(outcome.response.status_code, 200, "method {m} should match");
         }
+    }
+
+    struct CapturingHandler {
+        routes: Vec<RouteEntry>,
+        captured: std::sync::Mutex<Option<std::collections::HashMap<String, String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LambdaHandler for CapturingHandler {
+        fn name(&self) -> &str { "capturing" }
+        fn routes(&self) -> &[RouteEntry] { &self.routes }
+        async fn invoke(&self, event: GatewayRequest) -> Result<GatewayResponse, HandlerError> {
+            *self.captured.lock().unwrap() = event.path_parameters.clone();
+            Ok(GatewayResponse { status_code: 200, headers: None, body: None, is_base64_encoded: None })
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_injects_path_params_into_event() {
+        let h = Arc::new(CapturingHandler {
+            routes: vec![RouteEntry { method: RouteMethod::Get, path: "/accounts/:id".into() }],
+            captured: std::sync::Mutex::new(None),
+        });
+        let router = Router::new(vec![h.clone()]);
+        let outcome = router.dispatch(make_event("GET", "/accounts/42")).await.unwrap();
+        assert_eq!(outcome.response.status_code, 200);
+        assert_eq!(outcome.route_key, "GET /accounts/:id");
+        let captured = h.captured.lock().unwrap();
+        let params = captured.as_ref().unwrap();
+        assert_eq!(params.get("id").map(String::as_str), Some("42"));
+    }
+
+    #[tokio::test]
+    async fn dispatch_uses_matched_pattern_for_route_key_not_raw_path() {
+        let h = Arc::new(CapturingHandler {
+            routes: vec![RouteEntry { method: RouteMethod::Get, path: "/orgs/:org/repos/:repo".into() }],
+            captured: std::sync::Mutex::new(None),
+        });
+        let router = Router::new(vec![h]);
+        let outcome = router.dispatch(make_event("GET", "/orgs/anthropic/repos/riz")).await.unwrap();
+        assert_eq!(outcome.route_key, "GET /orgs/:org/repos/:repo",
+            "metrics must attribute to the pattern, not the incoming path");
     }
 
     #[test]

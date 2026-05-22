@@ -121,7 +121,7 @@ impl AppState {
         let latency_us = (latency_ms * 1000.0) as u64;
 
         // Fast path: read lock — no write contention on the hot path.
-        {
+        let updated = {
             let stats = self.route_stats.read().await;
             if let Some(entry) = stats.get(route_key) {
                 entry.total_requests.fetch_add(1, Ordering::Relaxed);
@@ -135,26 +135,36 @@ impl AppState {
                 }
                 entry.total_latency_us.fetch_add(latency_us, Ordering::Relaxed);
                 entry.healthy.store(healthy, Ordering::Relaxed);
-                return;
+                true
+            } else {
+                false
             }
+        };
+
+        if !updated {
+            // Slow path: write lock only on first request to this route.
+            let mut stats = self.route_stats.write().await;
+            let entry = stats
+                .entry(route_key.to_string())
+                .or_insert_with(|| Arc::new(RouteStats::default()));
+            entry.total_requests.fetch_add(1, Ordering::Relaxed);
+            if cache_hit {
+                entry.cache_hits.fetch_add(1, Ordering::Relaxed);
+            } else {
+                entry.cache_misses.fetch_add(1, Ordering::Relaxed);
+            }
+            if !healthy {
+                entry.error_count.fetch_add(1, Ordering::Relaxed);
+            }
+            entry.total_latency_us.fetch_add(latency_us, Ordering::Relaxed);
+            entry.healthy.store(healthy, Ordering::Relaxed);
         }
 
-        // Slow path: write lock only on first request to this route.
-        let mut stats = self.route_stats.write().await;
-        let entry = stats
-            .entry(route_key.to_string())
-            .or_insert_with(|| Arc::new(RouteStats::default()));
-        entry.total_requests.fetch_add(1, Ordering::Relaxed);
-        if cache_hit {
-            entry.cache_hits.fetch_add(1, Ordering::Relaxed);
-        } else {
-            entry.cache_misses.fetch_add(1, Ordering::Relaxed);
-        }
-        if !healthy {
-            entry.error_count.fetch_add(1, Ordering::Relaxed);
-        }
-        entry.total_latency_us.fetch_add(latency_us, Ordering::Relaxed);
-        entry.healthy.store(healthy, Ordering::Relaxed);
+        // Dual-write to RizState — this is what /_riz/health, /_riz/metrics,
+        // and the TUI's future migration will read from. record_invocation
+        // is a noop if the route_key isn't registered, so it's safe to call
+        // unconditionally.
+        self.riz_state.record_invocation(route_key, latency_ms, healthy, cache_hit).await;
     }
 }
 
