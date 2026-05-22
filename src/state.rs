@@ -402,7 +402,64 @@ pub struct FunctionState {
     pub latency: std::sync::Mutex<LatencyWindow>,
 }
 
+/// Plain-data view of one FunctionState — what the TUI renders.
+#[derive(Clone, Debug, Default)]
+pub struct FunctionStateSnapshot {
+    pub route_key: String,
+    pub kind: FunctionKind,
+    pub invocations: u64,
+    pub errors: u64,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
+    pub cold_starts: u64,
+    pub healthy: bool,
+    pub p50_ms: f64,
+    pub p75_ms: f64,
+    pub p90_ms: f64,
+    pub p95_ms: f64,
+    pub p99_ms: f64,
+    pub last_invoked_secs_ago: Option<f64>,
+}
+
+impl FunctionStateSnapshot {
+    pub fn hit_rate_pct(&self) -> f64 {
+        let total = self.cache_hits + self.cache_misses;
+        if total == 0 { 0.0 } else { self.cache_hits as f64 / total as f64 * 100.0 }
+    }
+}
+
+impl Default for FunctionKind {
+    fn default() -> Self { FunctionKind::User }
+}
+
 impl FunctionState {
+    /// Capture an immutable snapshot. Reads atomics with Relaxed ordering,
+    /// briefly locks `latency` and `last_invoked` to read their state.
+    pub fn snapshot(&self, now: Instant) -> FunctionStateSnapshot {
+        let (p50, p75, p90, p95, p99) = self.latency.lock()
+            .map(|mut w| w.percentiles(now))
+            .unwrap_or((0.0, 0.0, 0.0, 0.0, 0.0));
+        let last_invoked_secs_ago = self.last_invoked.lock()
+            .ok()
+            .and_then(|l| l.map(|t| now.duration_since(t).as_secs_f64()));
+        FunctionStateSnapshot {
+            route_key: self.route_key.clone(),
+            kind: self.kind,
+            invocations: self.invocations.load(Ordering::Relaxed),
+            errors: self.errors.load(Ordering::Relaxed),
+            cache_hits: self.cache_hits.load(Ordering::Relaxed),
+            cache_misses: self.cache_misses.load(Ordering::Relaxed),
+            cold_starts: self.cold_starts.load(Ordering::Relaxed),
+            healthy: self.healthy.load(Ordering::Relaxed),
+            p50_ms: p50,
+            p75_ms: p75,
+            p90_ms: p90,
+            p95_ms: p95,
+            p99_ms: p99,
+            last_invoked_secs_ago,
+        }
+    }
+
     pub fn user(route_key: impl Into<String>, route: RouteConfig) -> Self {
         Self {
             route_key: route_key.into(),

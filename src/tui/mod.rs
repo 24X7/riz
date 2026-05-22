@@ -42,10 +42,16 @@ fn run_loop<B: ratatui::backend::Backend>(
 
     loop {
         handle.block_on(async {
-            let route_stats = state.route_stats.read().await;
-            app.route_stats = route_stats
-                .iter()
-                .map(|(k, v)| (k.clone(), v.snapshot()))
+            // Snapshot every function from RizState (user + system). The
+            // routes table shows them all so operators can see /_riz/* load
+            // alongside their own functions. System routes are visually
+            // marked in the widget so they don't get confused with user
+            // deployments.
+            let now = std::time::Instant::now();
+            let functions = state.riz_state.functions.read().await;
+            app.function_stats = functions
+                .values()
+                .map(|f| f.snapshot(now))
                 .collect();
             app.pool_stats = state.process_manager.pool_stats().await;
             app.cache_entry_count = state.cache.entry_count();
@@ -53,8 +59,8 @@ fn run_loop<B: ratatui::backend::Backend>(
 
         // Clamp selection if routes were removed
         if let Some(i) = app.selected_route {
-            if i >= app.route_stats.len() {
-                app.selected_route = app.route_stats.len().checked_sub(1);
+            if i >= app.function_stats.len() {
+                app.selected_route = app.function_stats.len().checked_sub(1);
             }
         }
 

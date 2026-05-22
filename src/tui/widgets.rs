@@ -7,7 +7,7 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, Tabs, Wrap},
     Frame,
 };
-use crate::state::LogEntry;
+use crate::state::{FunctionKind, LogEntry};
 use crate::tui::app::App;
 
 pub fn render(frame: &mut Frame, app: &App) {
@@ -49,16 +49,25 @@ fn render_routes(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_routes_table(frame: &mut Frame, app: &App, area: Rect) {
-    let header = Row::new(["", "Route", "Reqs", "p50ms", "p95ms", "Hit%", "Health"])
+    let header = Row::new([
+        "", "Route", "Reqs", "Err", "Cold",
+        "p50", "p75", "p90", "p95", "p99",
+        "Hit%", "Health",
+    ])
         .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
 
-    let rows: Vec<Row> = app.route_stats.iter().enumerate().map(|(i, (key, stats))| {
+    let rows: Vec<Row> = app.function_stats.iter().enumerate().map(|(i, stats)| {
         let cursor = if app.selected_route == Some(i) { "▶" } else { " " };
-        let rps = if stats.total_requests == 0 { 0.0 } else {
-            1000.0 / stats.p50_ms().max(1.0)
+        let is_system = matches!(stats.kind, FunctionKind::System);
+        let route_label = if is_system {
+            format!("◆ {}", stats.route_key)  // diamond marker for system routes
+        } else {
+            stats.route_key.clone()
         };
-        let hit_pct = if stats.cache_hits + stats.cache_misses == 0 { 0.0 } else {
-            stats.cache_hits as f64 / (stats.cache_hits + stats.cache_misses) as f64 * 100.0
+        let route_style = if is_system {
+            Style::default().fg(Color::DarkGray)
+        } else {
+            Style::default()
         };
         let health_color = if stats.healthy { Color::Green } else { Color::Red };
         let cursor_style = if app.selected_route == Some(i) {
@@ -66,14 +75,18 @@ fn render_routes_table(frame: &mut Frame, app: &App, area: Rect) {
         } else {
             Style::default()
         };
-        let _ = rps; // used for potential future display; hit_pct shown in Hit%
         Row::new([
             Cell::from(cursor).style(cursor_style),
-            Cell::from(key.as_str()),
-            Cell::from(format!("{}", stats.total_requests)),
-            Cell::from(format!("{:.1}", stats.p50_ms())),
-            Cell::from(format!("{:.1}", stats.p95_ms())),
-            Cell::from(format!("{hit_pct:.0}%")),
+            Cell::from(route_label).style(route_style),
+            Cell::from(format!("{}", stats.invocations)),
+            Cell::from(format!("{}", stats.errors)),
+            Cell::from(format!("{}", stats.cold_starts)),
+            Cell::from(format!("{:.1}", stats.p50_ms)),
+            Cell::from(format!("{:.1}", stats.p75_ms)),
+            Cell::from(format!("{:.1}", stats.p90_ms)),
+            Cell::from(format!("{:.1}", stats.p95_ms)),
+            Cell::from(format!("{:.1}", stats.p99_ms)),
+            Cell::from(format!("{:.0}%", stats.hit_rate_pct())),
             Cell::from(if stats.healthy { "ok" } else { "down" })
                 .style(Style::default().fg(health_color)),
         ])
@@ -82,25 +95,30 @@ fn render_routes_table(frame: &mut Frame, app: &App, area: Rect) {
     let table = Table::new(
         rows,
         [
-            Constraint::Length(2),
-            Constraint::Percentage(38),
-            Constraint::Percentage(10),
-            Constraint::Percentage(12),
-            Constraint::Percentage(12),
-            Constraint::Percentage(12),
-            Constraint::Percentage(14),
+            Constraint::Length(2),       // cursor
+            Constraint::Percentage(26),  // route
+            Constraint::Length(6),       // reqs
+            Constraint::Length(5),       // err
+            Constraint::Length(5),       // cold
+            Constraint::Length(7),       // p50
+            Constraint::Length(7),       // p75
+            Constraint::Length(7),       // p90
+            Constraint::Length(7),       // p95
+            Constraint::Length(7),       // p99
+            Constraint::Length(6),       // hit%
+            Constraint::Length(7),       // health
         ],
     )
     .header(header)
-    .block(Block::default().borders(Borders::ALL).title("Routes  [↑↓ / j k to select]"));
+    .block(Block::default().borders(Borders::ALL).title("Routes  [↑↓ / j k] ◆ = system"));
 
     frame.render_widget(table, area);
 }
 
 fn render_log_panel(frame: &mut Frame, app: &App, area: Rect) {
     let selected_key: Option<&str> = app.selected_route
-        .and_then(|i| app.route_stats.get(i))
-        .map(|(k, _)| k.as_str());
+        .and_then(|i| app.function_stats.get(i))
+        .map(|s| s.route_key.as_str());
 
     let title = match selected_key {
         Some(k) => format!("Logs — {k}"),

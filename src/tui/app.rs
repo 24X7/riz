@@ -1,10 +1,13 @@
 use std::collections::VecDeque;
-use crate::state::{LogEntry, RouteStatsSnapshot};
+use crate::state::{FunctionStateSnapshot, LogEntry};
 use crate::process::PoolStats;
 
 #[derive(Default)]
 pub struct App {
-    pub route_stats: Vec<(String, RouteStatsSnapshot)>,
+    /// Snapshot of all user-function state from RizState. Each tick the TUI
+    /// rebuilds this list by calling FunctionState::snapshot() for every
+    /// registered function (system endpoints are filtered out in tui::mod).
+    pub function_stats: Vec<FunctionStateSnapshot>,
     pub pool_stats: Vec<PoolStats>,
     pub cache_entry_count: u64,
     pub log_entries: VecDeque<LogEntry>,
@@ -30,17 +33,17 @@ impl App {
     }
 
     pub fn select_next_route(&mut self) {
-        if self.route_stats.is_empty() {
+        if self.function_stats.is_empty() {
             return;
         }
         self.selected_route = Some(match self.selected_route {
             None => 0,
-            Some(i) => (i + 1).min(self.route_stats.len() - 1),
+            Some(i) => (i + 1).min(self.function_stats.len() - 1),
         });
     }
 
     pub fn select_prev_route(&mut self) {
-        if self.route_stats.is_empty() {
+        if self.function_stats.is_empty() {
             return;
         }
         self.selected_route = Some(match self.selected_route {
@@ -53,12 +56,13 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::RouteStatsSnapshot;
 
     fn app_with_routes(n: usize) -> App {
         let mut app = App::default();
         for i in 0..n {
-            app.route_stats.push((format!("GET /route{i}"), RouteStatsSnapshot::default()));
+            let mut s = FunctionStateSnapshot::default();
+            s.route_key = format!("GET /route{i}");
+            app.function_stats.push(s);
         }
         app
     }
