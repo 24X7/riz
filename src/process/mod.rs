@@ -155,6 +155,7 @@ impl ProcessManager {
                     error!("route {route_key} marked unhealthy after {crashes} crashes");
                 }
                 warn!("lambda crash on {route_key}: {e} — restarting");
+                kill_process_group(handle.pid);
                 let _ = handle._child.kill().await;
                 match spawn_process(&pool.route, &pool.runtime_registry, &pool.log_tx).await {
                     Ok(new_handle) => {
@@ -169,6 +170,7 @@ impl ProcessManager {
             }
             Err(_) => {
                 warn!("lambda timeout on {route_key} after {timeout_ms}ms — killing and restarting");
+                kill_process_group(handle.pid);
                 let _ = handle._child.kill().await;
                 match spawn_process(&pool.route, &pool.runtime_registry, &pool.log_tx).await {
                     Ok(new_handle) => {
@@ -238,6 +240,17 @@ impl ProcessManager {
     }
 }
 
+#[cfg(unix)]
+fn kill_process_group(pid: u32) {
+    let _ = nix::sys::signal::killpg(
+        nix::unistd::Pid::from_raw(pid as i32),
+        nix::sys::signal::Signal::SIGKILL,
+    );
+}
+
+#[cfg(not(unix))]
+fn kill_process_group(_pid: u32) {}
+
 async fn spawn_process(
     route: &RouteConfig,
     registry: &RuntimeRegistry,
@@ -248,6 +261,9 @@ async fn spawn_process(
     cmd.stdin(std::process::Stdio::piped())
        .stdout(std::process::Stdio::piped())
        .stderr(std::process::Stdio::piped());
+
+    #[cfg(unix)]
+    cmd.process_group(0);
 
     let mut child = cmd.spawn()
         .with_context(|| format!("failed to spawn {:?}", route.handler))?;
@@ -279,6 +295,14 @@ async fn spawn_process(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kill_process_group_nonexistent_pid_does_not_panic() {
+        // PID 99999 almost certainly does not exist.
+        // killpg with a dead pgid returns ESRCH which we silently discard.
+        // This test ensures the helper doesn't panic on the error path.
+        kill_process_group(99999);
+    }
 
     #[tokio::test]
     async fn semaphore_try_acquire_distinguishes_no_permits_from_closed() {
