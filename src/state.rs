@@ -52,10 +52,11 @@ pub struct LogEntry {
     pub timestamp: SystemTime,
     pub level: String,
     pub message: String,
+    pub route_key: Option<String>,
 }
 
 impl AppState {
-    pub async fn push_log(&self, level: &str, message: String) {
+    pub async fn push_log(&self, level: &str, route_key: Option<&str>, message: String) {
         let mut buf = self.log_buffer.lock().await;
         if buf.len() >= 200 {
             buf.pop_front();
@@ -64,6 +65,7 @@ impl AppState {
             timestamp: SystemTime::now(),
             level: level.into(),
             message,
+            route_key: route_key.map(|s| s.to_string()),
         });
     }
 
@@ -116,5 +118,24 @@ mod tests {
         let s = RouteStats::default();
         assert_eq!(s.p50_ms(), 0.0);
         assert_eq!(s.p95_ms(), 0.0);
+    }
+
+    #[test]
+    fn log_entry_has_route_key_field() {
+        let entry = LogEntry {
+            timestamp: std::time::SystemTime::UNIX_EPOCH,
+            level: "INFO".into(),
+            message: "test".into(),
+            route_key: Some("GET /ping".into()),
+        };
+        assert_eq!(entry.route_key.as_deref(), Some("GET /ping"));
+
+        let global = LogEntry {
+            timestamp: std::time::SystemTime::UNIX_EPOCH,
+            level: "WARN".into(),
+            message: "system".into(),
+            route_key: None,
+        };
+        assert!(global.route_key.is_none());
     }
 }
