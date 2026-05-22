@@ -49,9 +49,17 @@ fn run_loop<B: ratatui::backend::Backend>(
                 .collect();
             app.pool_stats = state.process_manager.pool_stats().await;
             app.cache_entry_count = state.cache.entry_count();
-            let log_buf = state.log_buffer.lock().await;
-            app.log_entries = log_buf.clone();
         });
+
+        // Drain log channel (synchronous — no block_on needed)
+        if let Ok(mut rx) = state.log_rx.try_lock() {
+            while let Ok(entry) = rx.try_recv() {
+                app.log_entries.push_back(entry);
+                if app.log_entries.len() > 500 {
+                    app.log_entries.pop_front();
+                }
+            }
+        }
 
         terminal.draw(|f| widgets::render(f, &app))?;
 

@@ -30,6 +30,7 @@ concurrency = 1
     let router = osbox::router::Router::new(config.routes.clone());
     let process_manager = osbox::process::ProcessManager::new();
     process_manager.spawn_all(&config.routes, &registry).await.unwrap();
+    let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<osbox::state::LogEntry>();
 
     let app_state = Arc::new(osbox::state::AppState {
         config: tokio::sync::RwLock::new(config),
@@ -39,7 +40,8 @@ concurrency = 1
         metrics,
         runtime_registry: registry,
         route_stats: tokio::sync::RwLock::new(Default::default()),
-        log_buffer: tokio::sync::Mutex::new(Default::default()),
+        log_tx,
+        log_rx: tokio::sync::Mutex::new(log_rx),
     });
 
     // Bind to random port
@@ -93,6 +95,7 @@ concurrency = 1
     let router = osbox::router::Router::new(config.routes.clone());
     let process_manager = osbox::process::ProcessManager::new();
     process_manager.spawn_all(&config.routes, &registry).await.unwrap();
+    let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<osbox::state::LogEntry>();
 
     let state = Arc::new(osbox::state::AppState {
         config: tokio::sync::RwLock::new(config),
@@ -102,7 +105,8 @@ concurrency = 1
         metrics,
         runtime_registry: registry,
         route_stats: tokio::sync::RwLock::new(Default::default()),
-        log_buffer: tokio::sync::Mutex::new(Default::default()),
+        log_tx,
+        log_rx: tokio::sync::Mutex::new(log_rx),
     });
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

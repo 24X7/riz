@@ -130,7 +130,7 @@ async fn dispatch_lambda(
             state.record_request(&route_key, false, latency, healthy).await;
 
             if gw_resp.status_code >= 500 {
-                state.push_log("WARN", Some(&route_key), format!("lambda {} returned {}", route_key, gw_resp.status_code)).await;
+                state.push_log("WARN", Some(&route_key), format!("lambda {} returned {}", route_key, gw_resp.status_code));
             }
 
             let ttl = route.cache_ttl_secs.unwrap_or(default_ttl);
@@ -145,7 +145,7 @@ async fn dispatch_lambda(
             state.metrics.record_lambda_crash(&route_key, route.runtime.as_str());
             state.metrics.record_lambda_healthy(&route_key, false);
             state.record_request(&route_key, false, latency, false).await;
-            state.push_log("ERROR", Some(&route_key), format!("dispatch error {route_key}: {e}")).await;
+            state.push_log("ERROR", Some(&route_key), format!("dispatch error {route_key}: {e}"));
             gateway_to_axum(&GatewayResponse::error(502, "internal error"))
         }
     }

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::SystemTime;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{mpsc, Mutex, RwLock};
 use crate::cache::CacheLayer;
 use crate::config::Config;
 use crate::metrics::MetricsEmitter;
@@ -17,7 +17,8 @@ pub struct AppState {
     pub metrics: MetricsEmitter,
     pub runtime_registry: Arc<RuntimeRegistry>,
     pub route_stats: RwLock<HashMap<String, RouteStats>>,
-    pub log_buffer: Mutex<VecDeque<LogEntry>>,
+    pub log_tx: mpsc::UnboundedSender<LogEntry>,
+    pub log_rx: Mutex<mpsc::UnboundedReceiver<LogEntry>>,
 }
 
 #[derive(Default, Clone)]
@@ -56,12 +57,8 @@ pub struct LogEntry {
 }
 
 impl AppState {
-    pub async fn push_log(&self, level: &str, route_key: Option<&str>, message: String) {
-        let mut buf = self.log_buffer.lock().await;
-        if buf.len() >= 200 {
-            buf.pop_front();
-        }
-        buf.push_back(LogEntry {
+    pub fn push_log(&self, level: &str, route_key: Option<&str>, message: String) {
+        let _ = self.log_tx.send(LogEntry {
             timestamp: SystemTime::now(),
             level: level.into(),
             message,

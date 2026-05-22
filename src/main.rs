@@ -111,6 +111,7 @@ async fn main() -> anyhow::Result<()> {
     let metrics = metrics::MetricsEmitter::new(&config.datadog);
     let router = router::Router::new(config.routes.clone());
     let process_manager = process::ProcessManager::new();
+    let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<state::LogEntry>();
 
     if config.effective_deploy_key().is_none() {
         tracing::warn!("SECURITY: no deploy key configured — POST /deploy is unauthenticated");
@@ -126,7 +127,8 @@ async fn main() -> anyhow::Result<()> {
         metrics,
         runtime_registry: registry,
         route_stats: tokio::sync::RwLock::new(Default::default()),
-        log_buffer: tokio::sync::Mutex::new(Default::default()),
+        log_tx,
+        log_rx: tokio::sync::Mutex::new(log_rx),
     });
 
     // Dev mode forces TUI on regardless of --no-tui and atty check.
