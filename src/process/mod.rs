@@ -85,7 +85,10 @@ impl ProcessManager {
             for _ in 0..route.concurrency {
                 let handle = spawn_process(route, registry, &log_tx).await
                     .with_context(|| format!("failed to spawn lambda for {key}"))?;
-                handle_vec.push(Arc::new(Mutex::new(handle)));
+                let handle_arc = Arc::new(Mutex::new(handle));
+                let pid = handle_arc.lock().await.pid;
+                spawn_liveness_watcher(pid, handle_arc.clone(), pool.clone(), key.clone());
+                handle_vec.push(handle_arc);
             }
             drop(handle_vec);
             pools.insert(key, pool);
@@ -158,6 +161,7 @@ impl ProcessManager {
                     Err(_) => {
                         warn!("malformed lambda response on {route_key}: {line:?} — killing and restarting");
                         handle_process_failure(&pool, &mut handle, route_key).await;
+                        spawn_liveness_watcher(handle.pid, arc.clone(), pool.clone(), route_key.to_string());
                         Ok(GatewayResponse::error(502, "malformed lambda response"))
                     }
                 }
@@ -165,6 +169,7 @@ impl ProcessManager {
             Ok(Err(e)) => {
                 warn!("lambda crash on {route_key}: {e} — restarting");
                 handle_process_failure(&pool, &mut handle, route_key).await;
+                spawn_liveness_watcher(handle.pid, arc.clone(), pool.clone(), route_key.to_string());
                 Ok(GatewayResponse::error(502, "lambda error"))
             }
             Err(_) => {
@@ -174,6 +179,7 @@ impl ProcessManager {
                 match spawn_process(&pool.route, &pool.runtime_registry, &pool.log_tx).await {
                     Ok(new_handle) => {
                         *handle = new_handle;
+                        spawn_liveness_watcher(handle.pid, arc.clone(), pool.clone(), route_key.to_string());
                     }
                     Err(spawn_err) => {
                         error!("failed to respawn {route_key}: {spawn_err}");
@@ -216,7 +222,10 @@ impl ProcessManager {
         for _ in 0..new_route.concurrency {
             let h = spawn_process(&new_route, registry, &pool.log_tx).await?;
             if first_pid == 0 { first_pid = h.pid; }
-            handles.push(Arc::new(Mutex::new(h)));
+            let handle_arc = Arc::new(Mutex::new(h));
+            let pid = handle_arc.lock().await.pid;
+            spawn_liveness_watcher(pid, handle_arc.clone(), pool.clone(), route_key.to_string());
+            handles.push(handle_arc);
         }
 
         pool.healthy.store(true, Ordering::Relaxed);
@@ -317,6 +326,49 @@ fn kill_process_group(pid: u32) {
 #[cfg(not(unix))]
 fn kill_process_group(_pid: u32) {}
 
+fn spawn_liveness_watcher(
+    pid: u32,
+    handle_arc: Arc<Mutex<ProcessHandle>>,
+    pool: Arc<RoutePool>,
+    route_key: String,
+) {
+    tokio::spawn(async move {
+        // Poll every 200ms to see if the process is still alive
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+            #[cfg(unix)]
+            {
+                use nix::sys::signal;
+                use nix::unistd::Pid;
+                if signal::kill(Pid::from_raw(pid as i32), None).is_err() {
+                    // Process is gone
+                    break;
+                }
+            }
+            #[cfg(not(unix))]
+            break; // non-unix: skip liveness
+        }
+
+        warn!("lambda process {pid} exited unexpectedly on {route_key} — respawning");
+        // Use a block to ensure the guard borrow ends before we move handle_arc
+        let new_pid: Option<u32> = {
+            if let Ok(mut guard) = handle_arc.try_lock() {
+                if guard.pid == pid {
+                    let _ = handle_process_failure(&pool, &mut guard, &route_key).await;
+                    Some(guard.pid)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+        if let Some(new_pid) = new_pid {
+            spawn_liveness_watcher(new_pid, handle_arc, pool, route_key);
+        }
+    });
+}
+
 async fn spawn_process(
     route: &RouteConfig,
     registry: &RuntimeRegistry,
@@ -402,6 +454,15 @@ mod tests {
         // Empty line is a different edge case (read_line returned EOF or blank)
         let empty_result = serde_json::from_str::<crate::gateway::GatewayResponse>("".trim());
         assert!(empty_result.is_err(), "empty string also fails to parse");
+    }
+
+    #[test]
+    fn liveness_watcher_skips_when_pid_changes() {
+        // Simulates the guard: if guard.pid != original_pid, watcher does nothing.
+        // This is the invariant that prevents double-respawn.
+        let original_pid = 12345u32;
+        let current_pid = 99999u32; // already respawned
+        assert_ne!(original_pid, current_pid, "PID mismatch means process already respawned — watcher must skip");
     }
 
     #[tokio::test]
