@@ -254,6 +254,59 @@ impl ProcessManager {
         Ok(first_pid)
     }
 
+    pub async fn drain_pool(&self, route_key: &str) {
+        let pool = {
+            let pools = self.pools.read().await;
+            pools.get(route_key).cloned()
+        };
+        if let Some(pool) = pool {
+            let concurrency = pool.route.concurrency as u32;
+            // Drain: wait for in-flight requests to complete
+            if let Ok(_drain) = pool.semaphore.acquire_many(concurrency).await {
+                let mut handles = pool.handles.write().await;
+                for h in handles.iter() {
+                    if let Ok(g) = h.try_lock() {
+                        kill_process_group(g.pid);
+                    }
+                }
+                handles.clear();
+            }
+        }
+        // Remove from map
+        self.pools.write().await.remove(route_key);
+    }
+
+    pub async fn spawn_route(
+        &self,
+        route: &RouteConfig,
+        registry: &Arc<RuntimeRegistry>,
+        log_tx: mpsc::Sender<LogEntry>,
+    ) -> anyhow::Result<()> {
+        let key = crate::router::Router::route_key(&route.method, &route.path);
+        let pool = Arc::new(RoutePool {
+            route: route.clone(),
+            handles: RwLock::new(Vec::new()),
+            semaphore: Arc::new(Semaphore::new(route.concurrency)),
+            restart_count: AtomicU32::new(0),
+            consecutive_crashes: AtomicU32::new(0),
+            healthy: AtomicBool::new(true),
+            runtime_registry: registry.clone(),
+            log_tx: log_tx.clone(),
+        });
+        let mut handle_vec = pool.handles.write().await;
+        for _ in 0..route.concurrency {
+            let handle = spawn_process(route, registry, &log_tx).await
+                .with_context(|| format!("failed to spawn lambda for {key}"))?;
+            let handle_arc = Arc::new(Mutex::new(handle));
+            let pid = handle_arc.lock().await.pid;
+            spawn_liveness_watcher(pid, handle_arc.clone(), pool.clone(), key.clone());
+            handle_vec.push(handle_arc);
+        }
+        drop(handle_vec);
+        self.pools.write().await.insert(key, pool);
+        Ok(())
+    }
+
     pub async fn pool_stats(&self) -> Vec<PoolStats> {
         let pools = self.pools.read().await;
 
