@@ -12,6 +12,9 @@ mod state;
 mod system;
 mod tui;
 
+#[cfg(test)]
+mod test_helpers;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 use clap::{Parser, Subcommand};

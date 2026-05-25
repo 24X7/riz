@@ -3,13 +3,13 @@ use std::time::{Duration, Instant};
 use moka::future::Cache;
 use moka::Expiry;
 use crate::config::CacheConfig;
-use crate::gateway::GatewayResponse;
+use crate::gateway::ApiGatewayV2httpResponse;
 
 /// The value stored in the underlying moka cache.
 /// We bundle the TTL so the `Expiry` implementation can read it per entry.
 #[derive(Clone)]
 struct CacheEntry {
-    response: Arc<GatewayResponse>,
+    response: Arc<ApiGatewayV2httpResponse>,
     ttl: Duration,
 }
 
@@ -38,8 +38,11 @@ impl CacheLayer {
             .max_capacity(max_bytes)
             .weigher(|_key: &String, value: &CacheEntry| -> u32 {
                 // Weight = approximate byte size of the cached response body
-                let body_bytes = value.response.body.as_deref().map(|b| b.len()).unwrap_or(0);
-                // Cap at u32::MAX to avoid overflow; real responses are much smaller
+                let body_bytes = match value.response.body.as_ref() {
+                    Some(crate::gateway::Body::Text(s)) => s.len(),
+                    Some(crate::gateway::Body::Binary(b)) => b.len(),
+                    Some(crate::gateway::Body::Empty) | None => 0,
+                };
                 body_bytes.min(u32::MAX as usize) as u32
             })
             .expire_after(EntryExpiry)
@@ -51,11 +54,11 @@ impl CacheLayer {
         format!("{}:{}?{}", method.to_uppercase(), path, query)
     }
 
-    pub async fn get(&self, key: &str) -> Option<Arc<GatewayResponse>> {
+    pub async fn get(&self, key: &str) -> Option<Arc<ApiGatewayV2httpResponse>> {
         self.inner.get(key).await.map(|e| e.response)
     }
 
-    pub async fn set(&self, key: String, response: GatewayResponse, ttl_secs: u64) {
+    pub async fn set(&self, key: String, response: ApiGatewayV2httpResponse, ttl_secs: u64) {
         if ttl_secs == 0 {
             return;
         }
@@ -112,12 +115,14 @@ mod tests {
         CacheConfig { default_ttl_secs: 0, max_size_mb: 16 }
     }
 
-    fn ok_response() -> GatewayResponse {
-        GatewayResponse {
+    fn ok_response() -> ApiGatewayV2httpResponse {
+        ApiGatewayV2httpResponse {
             status_code: 200,
-            headers: None,
-            body: Some("hello".into()),
-            is_base64_encoded: None,
+            headers: http::HeaderMap::new(),
+            multi_value_headers: http::HeaderMap::new(),
+            body: Some(crate::gateway::Body::Text("hello".into())),
+            is_base64_encoded: false,
+            cookies: Vec::new(),
         }
     }
 

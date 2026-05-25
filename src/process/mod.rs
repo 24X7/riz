@@ -13,8 +13,9 @@ use tokio::time::{timeout, Duration};
 use anyhow::Context;
 use tracing::{error, warn};
 use crate::config::RouteConfig;
-use crate::gateway::{GatewayRequest, GatewayResponse};
+use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
 use crate::process::runtime::RuntimeRegistry;
+use crate::runtime::error_response;
 use crate::state::{LogEntry, RizState};
 
 struct ProcessHandle {
@@ -119,9 +120,9 @@ impl ProcessManager {
     pub async fn invoke(
         &self,
         route_key: &str,
-        request: &GatewayRequest,
+        request: &ApiGatewayV2httpRequest,
         timeout_ms: u64,
-    ) -> anyhow::Result<GatewayResponse> {
+    ) -> anyhow::Result<ApiGatewayV2httpResponse> {
         let pools = self.pools.read().await;
         let pool = pools.get(route_key)
             .ok_or_else(|| anyhow::anyhow!("no pool for route {route_key}"))?
@@ -129,14 +130,14 @@ impl ProcessManager {
         drop(pools);
 
         if !pool.healthy.load(Ordering::Relaxed) {
-            return Ok(GatewayResponse::error(503, "lambda unhealthy"));
+            return Ok(error_response(503, "lambda unhealthy"));
         }
 
         // Fail fast when all slots are busy — don't queue indefinitely
         let _permit = match pool.semaphore.try_acquire() {
             Ok(p) => p,
             Err(tokio::sync::TryAcquireError::NoPermits) => {
-                return Ok(GatewayResponse::error(429, "too many concurrent requests"))
+                return Ok(error_response(429, "too many concurrent requests"))
             }
             Err(tokio::sync::TryAcquireError::Closed) => {
                 return Err(anyhow::anyhow!("concurrency semaphore closed for {route_key}"))
@@ -158,7 +159,7 @@ impl ProcessManager {
 
         let arc = match free_arc {
             Some(a) => a,
-            None => return Ok(GatewayResponse::error(503, "no free process handle")),
+            None => return Ok(error_response(503, "no free process handle")),
         };
         let mut handle = arc.lock().await;
 
@@ -201,7 +202,7 @@ impl ProcessManager {
                         warn!("malformed lambda response on {route_key}: {line:?} — killing and restarting");
                         handle_process_failure(&pool, &mut handle, route_key).await;
                         spawn_liveness_watcher(handle.pid, arc.clone(), pool.clone(), route_key.to_string());
-                        Ok(GatewayResponse::error(502, "malformed lambda response"))
+                        Ok(error_response(502, "malformed lambda response"))
                     }
                 }
             }
@@ -209,7 +210,7 @@ impl ProcessManager {
                 warn!("lambda crash on {route_key}: {e} — restarting");
                 handle_process_failure(&pool, &mut handle, route_key).await;
                 spawn_liveness_watcher(handle.pid, arc.clone(), pool.clone(), route_key.to_string());
-                Ok(GatewayResponse::error(502, "lambda error"))
+                Ok(error_response(502, "lambda error"))
             }
             Err(_) => {
                 warn!("lambda timeout on {route_key} after {timeout_ms}ms — killing and restarting");
@@ -228,7 +229,7 @@ impl ProcessManager {
                     }
                 }
                 pool.restart_count.fetch_add(1, Ordering::Relaxed);
-                Ok(GatewayResponse::error(504, "lambda timeout"))
+                Ok(error_response(504, "lambda timeout"))
             }
         }
     }
@@ -578,10 +579,10 @@ mod tests {
         // This test validates the data shape we rely on: a non-empty, non-JSON string
         // is what triggers the desync bug that this fix addresses.
         let bad_line = "not valid json at all\n";
-        let result = serde_json::from_str::<crate::gateway::GatewayResponse>(bad_line.trim());
+        let result = serde_json::from_str::<crate::gateway::ApiGatewayV2httpResponse>(bad_line.trim());
         assert!(result.is_err(), "non-JSON line must fail to parse — this is the trigger condition for BUG-01");
         // Empty line is a different edge case (read_line returned EOF or blank)
-        let empty_result = serde_json::from_str::<crate::gateway::GatewayResponse>("".trim());
+        let empty_result = serde_json::from_str::<crate::gateway::ApiGatewayV2httpResponse>("".trim());
         assert!(empty_result.is_err(), "empty string also fails to parse");
     }
 

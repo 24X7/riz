@@ -4,9 +4,10 @@
 pub mod process;
 
 use async_trait::async_trait;
+use http::HeaderMap;
 use serde::Serialize;
 use std::collections::HashMap;
-use crate::gateway::{GatewayRequest, GatewayResponse};
+use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse, Body};
 
 #[async_trait]
 pub trait LambdaHandler: Send + Sync {
@@ -23,7 +24,30 @@ pub trait LambdaHandler: Send + Sync {
 
     /// Process one event. Returns Ok(response) on success, Err for runtime
     /// failures (which the router converts to a 4xx/5xx response).
-    async fn invoke(&self, event: GatewayRequest) -> Result<GatewayResponse, HandlerError>;
+    async fn invoke(&self, event: ApiGatewayV2httpRequest) -> Result<ApiGatewayV2httpResponse, HandlerError>;
+}
+
+/// Canonical error-shape response builder. Replaces the old
+/// `GatewayResponse::error` constructor. Body is a JSON `{"message": "..."}`
+/// so it round-trips through the AWS Body::Text encoding.
+pub fn error_response(status_code: u16, message: &str) -> ApiGatewayV2httpResponse {
+    #[derive(Serialize)]
+    struct E<'a> { message: &'a str }
+    let body = serde_json::to_string(&E { message })
+        .unwrap_or_else(|_| String::from(r#"{"message":"internal"}"#));
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        http::header::CONTENT_TYPE,
+        http::HeaderValue::from_static("application/json"),
+    );
+    ApiGatewayV2httpResponse {
+        status_code: status_code as i64,
+        headers,
+        multi_value_headers: HeaderMap::new(),
+        body: Some(Body::Text(body)),
+        is_base64_encoded: false,
+        cookies: Vec::new(),
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,32 +58,55 @@ pub struct RouteEntry {
 
 impl RouteEntry {
     /// Returns Some(params) if the entry matches the given request — the map
-    /// contains any path parameters extracted from `:name`-style segments
-    /// (empty when the pattern has no params). Returns None on mismatch.
+    /// contains any path parameters extracted from `{name}` or `{name+}`
+    /// segments (empty when the pattern has no params). Returns None on
+    /// mismatch.
+    ///
+    /// Pattern syntax matches AWS API Gateway v2:
+    /// - `/users` — exact match
+    /// - `/users/{id}` — single-segment capture into `id`
+    /// - `/files/{proxy+}` — greedy capture: matches the rest of the path
+    ///   (one or more segments), joined with `/` and stored in `proxy`
     pub fn match_path(&self, method: &str, path: &str) -> Option<HashMap<String, String>> {
         if !self.method.matches(method) {
             return None;
         }
-        // Fast path: no `:` segments → exact compare.
-        if !self.path.contains(':') {
+        // Fast path: no `{` → exact compare.
+        if !self.path.contains('{') {
             if self.path == path {
                 return Some(HashMap::new());
             }
             return None;
         }
-        // Pattern path: split by `/` and compare segment-by-segment.
         let pattern_parts: Vec<&str> = self.path.trim_matches('/').split('/').collect();
         let path_parts: Vec<&str> = path.trim_matches('/').split('/').collect();
-        if pattern_parts.len() != path_parts.len() {
-            return None;
-        }
         let mut params = HashMap::new();
-        for (pat, seg) in pattern_parts.iter().zip(path_parts.iter()) {
-            if let Some(name) = pat.strip_prefix(':') {
-                params.insert(name.to_string(), crate::router::percent_decode(seg));
-            } else if pat != seg {
+        for (idx, pat) in pattern_parts.iter().enumerate() {
+            // Greedy `{name+}` — consumes all remaining path segments.
+            if let Some(inner) = pat.strip_prefix('{').and_then(|s| s.strip_suffix("+}")) {
+                if idx >= path_parts.len() {
+                    return None;
+                }
+                let tail = path_parts[idx..].join("/");
+                params.insert(inner.to_string(), crate::router::percent_decode(&tail));
+                return Some(params);
+            }
+            // Single-segment `{name}` capture.
+            if let Some(inner) = pat.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
+                if idx >= path_parts.len() {
+                    return None;
+                }
+                params.insert(inner.to_string(), crate::router::percent_decode(path_parts[idx]));
+                continue;
+            }
+            // Literal segment.
+            if idx >= path_parts.len() || *pat != path_parts[idx] {
                 return None;
             }
+        }
+        // No greedy capture consumed the rest — segment counts must match.
+        if pattern_parts.len() != path_parts.len() {
+            return None;
         }
         Some(params)
     }
@@ -138,19 +185,8 @@ impl HandlerError {
         }
     }
 
-    pub fn to_response(&self) -> GatewayResponse {
-        #[derive(Serialize)]
-        struct Body<'a> { message: &'a str }
-        let body = serde_json::to_string(&Body { message: &self.to_string() })
-            .unwrap_or_else(|_| String::from(r#"{"message":"internal"}"#));
-        let mut headers = HashMap::new();
-        headers.insert("content-type".into(), "application/json".into());
-        GatewayResponse {
-            status_code: self.status_code(),
-            headers: Some(headers),
-            body: Some(body),
-            is_base64_encoded: None,
-        }
+    pub fn to_response(&self) -> ApiGatewayV2httpResponse {
+        error_response(self.status_code(), &self.to_string())
     }
 }
 
@@ -199,14 +235,14 @@ mod tests {
 
     #[test]
     fn route_entry_extracts_single_path_param() {
-        let e = RouteEntry { method: RouteMethod::Get, path: "/accounts/:id".into() };
+        let e = RouteEntry { method: RouteMethod::Get, path: "/accounts/{id}".into() };
         let params = e.match_path("GET", "/accounts/42").unwrap();
         assert_eq!(params.get("id").map(String::as_str), Some("42"));
     }
 
     #[test]
     fn route_entry_extracts_multiple_path_params() {
-        let e = RouteEntry { method: RouteMethod::Get, path: "/orgs/:org/repos/:repo".into() };
+        let e = RouteEntry { method: RouteMethod::Get, path: "/orgs/{org}/repos/{repo}".into() };
         let params = e.match_path("GET", "/orgs/anthropic/repos/riz").unwrap();
         assert_eq!(params.get("org").map(String::as_str), Some("anthropic"));
         assert_eq!(params.get("repo").map(String::as_str), Some("riz"));
@@ -214,22 +250,43 @@ mod tests {
 
     #[test]
     fn route_entry_pattern_rejects_segment_count_mismatch() {
-        let e = RouteEntry { method: RouteMethod::Get, path: "/accounts/:id".into() };
+        let e = RouteEntry { method: RouteMethod::Get, path: "/accounts/{id}".into() };
         assert!(e.match_path("GET", "/accounts").is_none());
         assert!(e.match_path("GET", "/accounts/42/profile").is_none());
     }
 
     #[test]
     fn route_entry_pattern_rejects_method_mismatch() {
-        let e = RouteEntry { method: RouteMethod::Get, path: "/accounts/:id".into() };
+        let e = RouteEntry { method: RouteMethod::Get, path: "/accounts/{id}".into() };
         assert!(e.match_path("POST", "/accounts/42").is_none());
     }
 
     #[test]
     fn route_entry_pattern_percent_decodes_params() {
-        let e = RouteEntry { method: RouteMethod::Get, path: "/files/:name".into() };
+        let e = RouteEntry { method: RouteMethod::Get, path: "/files/{name}".into() };
         let params = e.match_path("GET", "/files/hello%20world").unwrap();
         assert_eq!(params.get("name").map(String::as_str), Some("hello world"));
+    }
+
+    #[test]
+    fn route_entry_greedy_proxy_captures_rest_of_path() {
+        let e = RouteEntry { method: RouteMethod::Any, path: "/api/{proxy+}".into() };
+        let p = e.match_path("GET", "/api/users/42/profile").unwrap();
+        assert_eq!(p.get("proxy").map(String::as_str), Some("users/42/profile"));
+    }
+
+    #[test]
+    fn route_entry_greedy_requires_at_least_one_segment() {
+        let e = RouteEntry { method: RouteMethod::Any, path: "/api/{proxy+}".into() };
+        // /api alone does not match /api/{proxy+}
+        assert!(e.match_path("GET", "/api").is_none());
+    }
+
+    #[test]
+    fn route_entry_greedy_extracts_when_only_one_segment_follows() {
+        let e = RouteEntry { method: RouteMethod::Any, path: "/api/{proxy+}".into() };
+        let p = e.match_path("GET", "/api/users").unwrap();
+        assert_eq!(p.get("proxy").map(String::as_str), Some("users"));
     }
 
     #[test]
@@ -246,8 +303,11 @@ mod tests {
         let err = HandlerError::Timeout(30);
         let resp = err.to_response();
         assert_eq!(resp.status_code, 504);
-        let body = resp.body.unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let body_text = match resp.body.expect("body should be set") {
+            Body::Text(s) => s,
+            other => panic!("expected text body, got {other:?}"),
+        };
+        let parsed: serde_json::Value = serde_json::from_str(&body_text).unwrap();
         assert!(parsed["message"].as_str().unwrap().contains("timeout"));
     }
 }

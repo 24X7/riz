@@ -1,11 +1,11 @@
 //! /_riz/metrics handler — emits Prometheus text format 0.0.4.
 
 use async_trait::async_trait;
-use std::collections::HashMap;
 use std::fmt::Write;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use crate::gateway::{GatewayRequest, GatewayResponse};
+use http::{header, HeaderMap, HeaderValue};
+use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse, Body};
 use crate::runtime::{HandlerError, LambdaHandler, RouteEntry, RouteMethod};
 use crate::state::{FunctionKind, RizState};
 
@@ -32,7 +32,7 @@ impl LambdaHandler for MetricsHandler {
     fn name(&self) -> &str { "GET /_riz/metrics" }
     fn routes(&self) -> &[RouteEntry] { &self.routes }
 
-    async fn invoke(&self, _event: GatewayRequest) -> Result<GatewayResponse, HandlerError> {
+    async fn invoke(&self, _event: ApiGatewayV2httpRequest) -> Result<ApiGatewayV2httpResponse, HandlerError> {
         let now = std::time::Instant::now();
         let functions = self.riz_state.functions.read().await;
         let mut out = String::with_capacity(4096);
@@ -88,13 +88,18 @@ impl LambdaHandler for MetricsHandler {
         let _ = writeln!(out, "# TYPE riz_uptime_seconds gauge");
         let _ = writeln!(out, "riz_uptime_seconds {}", self.riz_state.uptime_secs());
 
-        let mut headers = HashMap::new();
-        headers.insert("content-type".into(), "text/plain; version=0.0.4".into());
-        Ok(GatewayResponse {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("text/plain; version=0.0.4"),
+        );
+        Ok(ApiGatewayV2httpResponse {
             status_code: 200,
-            headers: Some(headers),
-            body: Some(out),
-            is_base64_encoded: None,
+            headers,
+            multi_value_headers: HeaderMap::new(),
+            body: Some(Body::Text(out)),
+            is_base64_encoded: false,
+            cookies: Vec::new(),
         })
     }
 }
@@ -102,29 +107,15 @@ impl LambdaHandler for MetricsHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gateway::{HttpContext, RequestContext};
     use crate::state::FunctionState;
+    use crate::test_helpers::make_event;
 
-    fn evt() -> GatewayRequest {
-        GatewayRequest {
-            version: "2.0".into(),
-            route_key: "GET /_riz/metrics".into(),
-            raw_path: "/_riz/metrics".into(),
-            raw_query_string: "".into(),
-            headers: HashMap::new(),
-            request_context: RequestContext {
-                http: HttpContext {
-                    method: "GET".into(),
-                    path: "/_riz/metrics".into(),
-                    protocol: "HTTP/1.1".into(),
-                    source_ip: "127.0.0.1".into(),
-                },
-                request_id: "r".into(),
-                time_epoch: 0,
-            },
-            path_parameters: None,
-            body: None,
-            is_base64_encoded: false,
+    fn evt() -> ApiGatewayV2httpRequest { make_event("GET", "/_riz/metrics") }
+
+    fn body_text(resp: &ApiGatewayV2httpResponse) -> String {
+        match resp.body.as_ref().expect("body") {
+            Body::Text(s) => s.clone(),
+            other => panic!("expected Text body, got {other:?}"),
         }
     }
 
@@ -147,7 +138,7 @@ mod tests {
         let h = MetricsHandler::new(s);
         let resp = h.invoke(evt()).await.unwrap();
         assert_eq!(resp.status_code, 200);
-        let ct = resp.headers.unwrap().get("content-type").unwrap().clone();
+        let ct = resp.headers.get(http::header::CONTENT_TYPE).unwrap().to_str().unwrap().to_string();
         assert!(ct.starts_with("text/plain; version=0.0.4"));
     }
 
@@ -156,7 +147,7 @@ mod tests {
         let s = Arc::new(RizState::new());
         let h = MetricsHandler::new(s);
         let resp = h.invoke(evt()).await.unwrap();
-        let body = resp.body.unwrap();
+        let body = body_text(&resp);
         assert!(body.contains("# HELP riz_invocations_total"));
         assert!(body.contains("# TYPE riz_invocations_total counter"));
         assert!(body.contains("# TYPE riz_latency_ms summary"));
@@ -171,7 +162,7 @@ mod tests {
         s.record_invocation("GET /api", 10.0, false, false).await;
         let h = MetricsHandler::new(s);
         let resp = h.invoke(evt()).await.unwrap();
-        let body = resp.body.unwrap();
+        let body = body_text(&resp);
         assert!(body.contains("riz_invocations_total{route=\"GET /api\"} 2"), "body was:\n{body}");
         assert!(body.contains("riz_errors_total{route=\"GET /api\"} 1"));
     }
@@ -182,7 +173,7 @@ mod tests {
         s.register(FunctionState::system("GET /_riz/health")).await;
         let h = MetricsHandler::new(s);
         let resp = h.invoke(evt()).await.unwrap();
-        let body = resp.body.unwrap();
+        let body = body_text(&resp);
         assert!(!body.contains("/_riz/health"), "system functions must not appear in metrics");
     }
 }

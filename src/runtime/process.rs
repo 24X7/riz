@@ -5,7 +5,7 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 use crate::config::RouteConfig;
-use crate::gateway::{GatewayRequest, GatewayResponse};
+use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
 use crate::process::ProcessManager;
 use crate::router::Router;
 use crate::runtime::{HandlerError, LambdaHandler, RouteEntry, RouteMethod};
@@ -41,7 +41,7 @@ impl LambdaHandler for ProcessHandler {
     fn name(&self) -> &str { &self.name }
     fn routes(&self) -> &[RouteEntry] { &self.routes }
 
-    async fn invoke(&self, event: GatewayRequest) -> Result<GatewayResponse, HandlerError> {
+    async fn invoke(&self, event: ApiGatewayV2httpRequest) -> Result<ApiGatewayV2httpResponse, HandlerError> {
         self.process_manager
             .invoke(&self.route_key, &event, self.timeout_ms)
             .await

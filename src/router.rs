@@ -1,6 +1,6 @@
 use std::sync::Arc;
-use crate::gateway::{GatewayRequest, GatewayResponse};
-use crate::runtime::{HandlerError, LambdaHandler};
+use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
+use crate::runtime::{error_response, HandlerError, LambdaHandler};
 
 pub struct Router {
     handlers: Vec<Arc<dyn LambdaHandler>>,
@@ -11,7 +11,7 @@ pub struct Router {
 /// not the raw incoming path ("GET /accounts/42").
 pub struct DispatchOutcome {
     pub route_key: String,
-    pub response: GatewayResponse,
+    pub response: ApiGatewayV2httpResponse,
 }
 
 impl Router {
@@ -38,15 +38,20 @@ impl Router {
     /// synthetic 404 response if nothing matched).
     pub async fn dispatch(
         &self,
-        mut event: GatewayRequest,
+        mut event: ApiGatewayV2httpRequest,
     ) -> Result<DispatchOutcome, HandlerError> {
-        let method = event.request_context.http.method.clone();
-        let path = event.request_context.http.path.clone();
+        // The AWS event's authoritative method/path live in requestContext.http.
+        let method = event.request_context.http.method.as_str().to_string();
+        let path = event.request_context.http.path.clone().unwrap_or_default();
+
         for h in &self.handlers {
             for r in h.routes() {
                 if let Some(params) = r.match_path(&method, &path) {
-                    if !params.is_empty() {
-                        event.path_parameters = Some(params);
+                    // Inject path params into event.path_parameters. The AWS
+                    // type's path_parameters is `HashMap<String, String>`
+                    // (not Option), so we extend it in place.
+                    for (k, v) in params {
+                        event.path_parameters.insert(k, v);
                     }
                     let matched_route_key = Self::route_key(r.method.as_str(), &r.path);
                     let response = h.invoke(event).await?;
@@ -59,7 +64,7 @@ impl Router {
         }
         Ok(DispatchOutcome {
             route_key: Self::route_key(&method, &path),
-            response: GatewayResponse::error(404, "not found"),
+            response: error_response(404, "not found"),
         })
     }
 }
@@ -105,10 +110,10 @@ fn hex_val(b: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gateway::{HttpContext, RequestContext};
+    use crate::gateway::{ApiGatewayV2httpRequestContext, ApiGatewayV2httpRequestContextHttpDescription, Body};
     use crate::runtime::{LambdaHandler, RouteEntry, RouteMethod};
     use async_trait::async_trait;
-    use std::collections::HashMap;
+    use http::{HeaderMap, Method};
 
     struct StubHandler {
         name: String,
@@ -120,36 +125,45 @@ mod tests {
     impl LambdaHandler for StubHandler {
         fn name(&self) -> &str { &self.name }
         fn routes(&self) -> &[RouteEntry] { &self.routes }
-        async fn invoke(&self, _event: GatewayRequest) -> Result<GatewayResponse, HandlerError> {
-            Ok(GatewayResponse {
+        async fn invoke(&self, _event: ApiGatewayV2httpRequest) -> Result<ApiGatewayV2httpResponse, HandlerError> {
+            Ok(ApiGatewayV2httpResponse {
                 status_code: 200,
-                headers: None,
-                body: Some(self.body.clone()),
-                is_base64_encoded: None,
+                headers: HeaderMap::new(),
+                multi_value_headers: HeaderMap::new(),
+                body: Some(Body::Text(self.body.clone())),
+                is_base64_encoded: false,
+                cookies: Vec::new(),
             })
         }
     }
 
-    fn make_event(method: &str, path: &str) -> GatewayRequest {
-        GatewayRequest {
-            version: "2.0".into(),
-            route_key: format!("{method} {path}"),
-            raw_path: path.into(),
-            raw_query_string: "".into(),
-            headers: HashMap::new(),
-            request_context: RequestContext {
-                http: HttpContext {
-                    method: method.into(),
-                    path: path.into(),
-                    protocol: "HTTP/1.1".into(),
-                    source_ip: "127.0.0.1".into(),
-                },
-                request_id: "req-1".into(),
-                time_epoch: 0,
-            },
-            path_parameters: None,
+    pub(crate) fn make_event(method: &str, path: &str) -> ApiGatewayV2httpRequest {
+        let mut ctx = ApiGatewayV2httpRequestContext::default();
+        ctx.http = ApiGatewayV2httpRequestContextHttpDescription {
+            method: Method::from_bytes(method.as_bytes()).unwrap_or(Method::GET),
+            path: Some(path.to_string()),
+            protocol: Some("HTTP/1.1".into()),
+            source_ip: Some("127.0.0.1".into()),
+            user_agent: Some("riz-test".into()),
+        };
+        ctx.request_id = Some("req-1".into());
+        ctx.time_epoch = 0;
+        ApiGatewayV2httpRequest {
+            version: Some("2.0".into()),
+            route_key: Some(format!("{method} {path}")),
+            raw_path: Some(path.into()),
+            raw_query_string: Some(String::new()),
+            cookies: None,
+            headers: HeaderMap::new(),
+            query_string_parameters: Default::default(),
+            path_parameters: Default::default(),
+            request_context: ctx,
+            stage_variables: Default::default(),
             body: None,
             is_base64_encoded: false,
+            kind: None, method_arn: None,
+            http_method: Method::from_bytes(method.as_bytes()).unwrap_or(Method::GET),
+            identity_source: None, authorization_token: None, resource: None,
         }
     }
 
@@ -172,7 +186,10 @@ mod tests {
         });
         let router = Router::new(vec![h1, h2]);
         let outcome = router.dispatch(make_event("GET", "/api")).await.unwrap();
-        assert_eq!(outcome.response.body.as_deref(), Some("from-first"));
+        match outcome.response.body.expect("body should be set") {
+            Body::Text(s) => assert_eq!(s, "from-first"),
+            other => panic!("expected Text body, got {other:?}"),
+        }
         assert_eq!(outcome.route_key, "GET /api");
     }
 
@@ -211,44 +228,64 @@ mod tests {
 
     struct CapturingHandler {
         routes: Vec<RouteEntry>,
-        captured: std::sync::Mutex<Option<std::collections::HashMap<String, String>>>,
+        captured: std::sync::Mutex<std::collections::HashMap<String, String>>,
     }
 
     #[async_trait::async_trait]
     impl LambdaHandler for CapturingHandler {
         fn name(&self) -> &str { "capturing" }
         fn routes(&self) -> &[RouteEntry] { &self.routes }
-        async fn invoke(&self, event: GatewayRequest) -> Result<GatewayResponse, HandlerError> {
+        async fn invoke(&self, event: ApiGatewayV2httpRequest) -> Result<ApiGatewayV2httpResponse, HandlerError> {
             *self.captured.lock().unwrap() = event.path_parameters.clone();
-            Ok(GatewayResponse { status_code: 200, headers: None, body: None, is_base64_encoded: None })
+            Ok(ApiGatewayV2httpResponse {
+                status_code: 200,
+                headers: HeaderMap::new(),
+                multi_value_headers: HeaderMap::new(),
+                body: None,
+                is_base64_encoded: false,
+                cookies: Vec::new(),
+            })
         }
     }
 
     #[tokio::test]
     async fn dispatch_injects_path_params_into_event() {
         let h = Arc::new(CapturingHandler {
-            routes: vec![RouteEntry { method: RouteMethod::Get, path: "/accounts/:id".into() }],
-            captured: std::sync::Mutex::new(None),
+            routes: vec![RouteEntry { method: RouteMethod::Get, path: "/accounts/{id}".into() }],
+            captured: std::sync::Mutex::new(Default::default()),
         });
         let router = Router::new(vec![h.clone()]);
         let outcome = router.dispatch(make_event("GET", "/accounts/42")).await.unwrap();
         assert_eq!(outcome.response.status_code, 200);
-        assert_eq!(outcome.route_key, "GET /accounts/:id");
+        assert_eq!(outcome.route_key, "GET /accounts/{id}");
         let captured = h.captured.lock().unwrap();
-        let params = captured.as_ref().unwrap();
-        assert_eq!(params.get("id").map(String::as_str), Some("42"));
+        assert_eq!(captured.get("id").map(String::as_str), Some("42"));
     }
 
     #[tokio::test]
     async fn dispatch_uses_matched_pattern_for_route_key_not_raw_path() {
         let h = Arc::new(CapturingHandler {
-            routes: vec![RouteEntry { method: RouteMethod::Get, path: "/orgs/:org/repos/:repo".into() }],
-            captured: std::sync::Mutex::new(None),
+            routes: vec![RouteEntry { method: RouteMethod::Get, path: "/orgs/{org}/repos/{repo}".into() }],
+            captured: std::sync::Mutex::new(Default::default()),
         });
         let router = Router::new(vec![h]);
         let outcome = router.dispatch(make_event("GET", "/orgs/anthropic/repos/riz")).await.unwrap();
-        assert_eq!(outcome.route_key, "GET /orgs/:org/repos/:repo",
+        assert_eq!(outcome.route_key, "GET /orgs/{org}/repos/{repo}",
             "metrics must attribute to the pattern, not the incoming path");
+    }
+
+    #[tokio::test]
+    async fn dispatch_supports_greedy_proxy_wildcard() {
+        let h = Arc::new(CapturingHandler {
+            routes: vec![RouteEntry { method: RouteMethod::Any, path: "/api/{proxy+}".into() }],
+            captured: std::sync::Mutex::new(Default::default()),
+        });
+        let router = Router::new(vec![h.clone()]);
+        let outcome = router.dispatch(make_event("GET", "/api/users/42/profile")).await.unwrap();
+        assert_eq!(outcome.response.status_code, 200);
+        assert_eq!(outcome.route_key, "ANY /api/{proxy+}");
+        let captured = h.captured.lock().unwrap();
+        assert_eq!(captured.get("proxy").map(String::as_str), Some("users/42/profile"));
     }
 
     #[test]

@@ -2,9 +2,9 @@
 
 use async_trait::async_trait;
 use serde::Serialize;
-use std::collections::HashMap;
 use std::sync::Arc;
-use crate::gateway::{GatewayRequest, GatewayResponse};
+use http::{header, HeaderMap, HeaderValue};
+use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse, Body};
 use crate::runtime::{HandlerError, LambdaHandler, RouteEntry, RouteMethod};
 use crate::state::{FunctionKind, RizState};
 
@@ -46,7 +46,7 @@ impl LambdaHandler for RegistryHandler {
     fn name(&self) -> &str { "GET /_riz/registry" }
     fn routes(&self) -> &[RouteEntry] { &self.routes }
 
-    async fn invoke(&self, _event: GatewayRequest) -> Result<GatewayResponse, HandlerError> {
+    async fn invoke(&self, _event: ApiGatewayV2httpRequest) -> Result<ApiGatewayV2httpResponse, HandlerError> {
         let functions = self.riz_state.functions.read().await;
         let mut out: Vec<RegistryFunction> = Vec::with_capacity(functions.len());
         for (_, f) in functions.iter() {
@@ -83,13 +83,15 @@ impl LambdaHandler for RegistryHandler {
         let body = RegistryBody { version: self.riz_state.version, functions: out };
         let json = serde_json::to_string(&body)
             .map_err(|e| HandlerError::Internal(e.to_string()))?;
-        let mut headers = HashMap::new();
-        headers.insert("content-type".into(), "application/json".into());
-        Ok(GatewayResponse {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        Ok(ApiGatewayV2httpResponse {
             status_code: 200,
-            headers: Some(headers),
-            body: Some(json),
-            is_base64_encoded: None,
+            headers,
+            multi_value_headers: HeaderMap::new(),
+            body: Some(Body::Text(json)),
+            is_base64_encoded: false,
+            cookies: Vec::new(),
         })
     }
 }
@@ -97,29 +99,15 @@ impl LambdaHandler for RegistryHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gateway::{HttpContext, RequestContext};
     use crate::state::FunctionState;
+    use crate::test_helpers::make_event;
 
-    fn evt() -> GatewayRequest {
-        GatewayRequest {
-            version: "2.0".into(),
-            route_key: "GET /_riz/registry".into(),
-            raw_path: "/_riz/registry".into(),
-            raw_query_string: "".into(),
-            headers: HashMap::new(),
-            request_context: RequestContext {
-                http: HttpContext {
-                    method: "GET".into(),
-                    path: "/_riz/registry".into(),
-                    protocol: "HTTP/1.1".into(),
-                    source_ip: "127.0.0.1".into(),
-                },
-                request_id: "r".into(),
-                time_epoch: 0,
-            },
-            path_parameters: None,
-            body: None,
-            is_base64_encoded: false,
+    fn evt() -> ApiGatewayV2httpRequest { make_event("GET", "/_riz/registry") }
+
+    fn body_text(resp: &ApiGatewayV2httpResponse) -> String {
+        match resp.body.as_ref().expect("body") {
+            Body::Text(s) => s.clone(),
+            other => panic!("expected Text body, got {other:?}"),
         }
     }
 
@@ -141,7 +129,7 @@ mod tests {
         let s = Arc::new(RizState::new());
         let h = RegistryHandler::new(s);
         let resp = h.invoke(evt()).await.unwrap();
-        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         assert!(body["version"].is_string());
         assert!(body["functions"].is_array());
     }
@@ -152,7 +140,7 @@ mod tests {
         s.register(user_state()).await;
         let h = RegistryHandler::new(s);
         let resp = h.invoke(evt()).await.unwrap();
-        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         let f = &body["functions"][0];
         assert_eq!(f["kind"], "user");
         assert_eq!(f["method"], "GET");
@@ -168,7 +156,7 @@ mod tests {
         s.register(FunctionState::system("GET /_riz/health")).await;
         let h = RegistryHandler::new(s);
         let resp = h.invoke(evt()).await.unwrap();
-        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         let f = &body["functions"][0];
         assert_eq!(f["kind"], "system");
         assert_eq!(f["method"], "GET");

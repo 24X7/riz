@@ -36,6 +36,8 @@ base64 = "0.22"
 async-trait = "0.1"
 thiserror = "1"
 indexmap = { version = "2", features = ["serde"] }
+aws_lambda_events = { version = "0.15", default-features = false, features = ["apigw"] }
+http = "1"
 
 [profile.release]
 opt-level = 3

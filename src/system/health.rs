@@ -2,10 +2,10 @@
 
 use async_trait::async_trait;
 use serde::Serialize;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use crate::gateway::{GatewayRequest, GatewayResponse};
+use http::{header, HeaderMap, HeaderValue};
+use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse, Body};
 use crate::runtime::{HandlerError, LambdaHandler, RouteEntry, RouteMethod};
 use crate::state::{FunctionKind, RizState};
 
@@ -47,7 +47,7 @@ impl LambdaHandler for HealthHandler {
     fn name(&self) -> &str { "GET /_riz/health" }
     fn routes(&self) -> &[RouteEntry] { &self.routes }
 
-    async fn invoke(&self, _event: GatewayRequest) -> Result<GatewayResponse, HandlerError> {
+    async fn invoke(&self, _event: ApiGatewayV2httpRequest) -> Result<ApiGatewayV2httpResponse, HandlerError> {
         let now = std::time::Instant::now();
         let functions = self.riz_state.functions.read().await;
         let mut out: Vec<FunctionHealth> = Vec::with_capacity(functions.len());
@@ -80,13 +80,15 @@ impl LambdaHandler for HealthHandler {
         };
         let json = serde_json::to_string(&body)
             .map_err(|e| HandlerError::Internal(e.to_string()))?;
-        let mut headers = HashMap::new();
-        headers.insert("content-type".into(), "application/json".into());
-        Ok(GatewayResponse {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        Ok(ApiGatewayV2httpResponse {
             status_code: 200,
-            headers: Some(headers),
-            body: Some(json),
-            is_base64_encoded: None,
+            headers,
+            multi_value_headers: HeaderMap::new(),
+            body: Some(Body::Text(json)),
+            is_base64_encoded: false,
+            cookies: Vec::new(),
         })
     }
 }
@@ -94,29 +96,17 @@ impl LambdaHandler for HealthHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gateway::{HttpContext, RequestContext};
     use crate::state::FunctionState;
+    use crate::test_helpers::make_event;
 
-    fn evt() -> GatewayRequest {
-        GatewayRequest {
-            version: "2.0".into(),
-            route_key: "GET /_riz/health".into(),
-            raw_path: "/_riz/health".into(),
-            raw_query_string: "".into(),
-            headers: HashMap::new(),
-            request_context: RequestContext {
-                http: HttpContext {
-                    method: "GET".into(),
-                    path: "/_riz/health".into(),
-                    protocol: "HTTP/1.1".into(),
-                    source_ip: "127.0.0.1".into(),
-                },
-                request_id: "r".into(),
-                time_epoch: 0,
-            },
-            path_parameters: None,
-            body: None,
-            is_base64_encoded: false,
+    fn evt() -> ApiGatewayV2httpRequest {
+        make_event("GET", "/_riz/health")
+    }
+
+    fn body_text(resp: &ApiGatewayV2httpResponse) -> String {
+        match resp.body.as_ref().expect("body") {
+            Body::Text(s) => s.clone(),
+            other => panic!("expected Text body, got {other:?}"),
         }
     }
 
@@ -139,7 +129,7 @@ mod tests {
         let h = HealthHandler::new(s);
         let resp = h.invoke(evt()).await.unwrap();
         assert_eq!(resp.status_code, 200);
-        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         assert_eq!(body["status"], "ok");
         assert!(body["functions"].as_array().unwrap().is_empty());
     }
@@ -150,7 +140,7 @@ mod tests {
         s.register(user_state()).await;
         let h = HealthHandler::new(s);
         let resp = h.invoke(evt()).await.unwrap();
-        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         let functions = body["functions"].as_array().unwrap();
         assert_eq!(functions.len(), 1);
         assert_eq!(functions[0]["route_key"], "GET /api");
@@ -164,7 +154,7 @@ mod tests {
         s.register(user_state()).await;
         let h = HealthHandler::new(s);
         let resp = h.invoke(evt()).await.unwrap();
-        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         let functions = body["functions"].as_array().unwrap();
         assert_eq!(functions.len(), 1, "system functions must be excluded");
         assert_eq!(functions[0]["route_key"], "GET /api");
@@ -178,7 +168,7 @@ mod tests {
         s.record_invocation("GET /api", 20.0, true, false).await;
         let h = HealthHandler::new(s);
         let resp = h.invoke(evt()).await.unwrap();
-        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         assert_eq!(body["functions"][0]["invocations"], 2);
     }
 }

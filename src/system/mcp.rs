@@ -5,7 +5,7 @@
 //! `resources/list` + `prompts/list` so probing clients don't error.
 //!
 //! Each user function in the riz.toml becomes one MCP tool. tools/call
-//! assembles a GatewayRequest from the supplied arguments and dispatches it
+//! assembles a ApiGatewayV2httpRequest from the supplied arguments and dispatches it
 //! through the Router — so any function becomes MCP-callable with no changes
 //! to the function's own code.
 //!
@@ -19,10 +19,14 @@
 //! otherwise responds with the baseline (client may choose to disconnect).
 
 use async_trait::async_trait;
+use http::{header, HeaderMap, HeaderValue, Method};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::gateway::{GatewayRequest, GatewayResponse, HttpContext, RequestContext};
+use crate::gateway::{
+    ApiGatewayV2httpRequest, ApiGatewayV2httpRequestContext,
+    ApiGatewayV2httpRequestContextHttpDescription, ApiGatewayV2httpResponse, Body,
+};
 use crate::router::Router;
 use crate::runtime::{HandlerError, LambdaHandler, RouteEntry, RouteMethod};
 use crate::state::{FunctionKind, RizState};
@@ -141,7 +145,7 @@ impl LambdaHandler for McpHandler {
     fn name(&self) -> &str { "POST /_riz/mcp" }
     fn routes(&self) -> &[RouteEntry] { &self.routes }
 
-    async fn invoke(&self, event: GatewayRequest) -> Result<GatewayResponse, HandlerError> {
+    async fn invoke(&self, event: ApiGatewayV2httpRequest) -> Result<ApiGatewayV2httpResponse, HandlerError> {
         let body = event.body.as_deref().unwrap_or("{}");
         // Parse as raw JSON first to detect batch (array) vs single (object)
         let raw: serde_json::Value = match serde_json::from_str(body) {
@@ -319,8 +323,8 @@ impl McpHandler {
             message: format!("unknown tool: {}", parsed.name),
         })?;
 
-        // Build a GatewayRequest. If the matched route is a pattern like
-        // `/accounts/:id`, substitute `:id` with the caller-supplied
+        // Build an AWS v2 event. If the matched route is a pattern like
+        // `/accounts/{id}`, substitute `{id}` with the caller-supplied
         // pathParams.id; the Router re-extracts params during dispatch.
         let args = parsed.arguments;
         let concrete_path = substitute_path_params(&path, &args.path_params);
@@ -328,28 +332,52 @@ impl McpHandler {
             .map(|(k, v)| format!("{}={}", urlencode(k), urlencode(v)))
             .collect::<Vec<_>>()
             .join("&");
-        let event = GatewayRequest {
-            version: "2.0".into(),
-            route_key: route_key.clone(),
-            raw_path: concrete_path.clone(),
-            raw_query_string: raw_qs,
-            headers: args.headers,
-            request_context: RequestContext {
-                http: HttpContext {
-                    method: method.clone(),
-                    path: concrete_path,
-                    protocol: "HTTP/1.1".into(),
-                    source_ip: "127.0.0.1".into(),
-                },
-                request_id: uuid::Uuid::new_v4().to_string(),
-                time_epoch: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64,
-            },
-            path_parameters: None,
+        let method_typed = Method::from_bytes(method.as_bytes()).unwrap_or(Method::GET);
+        let mut hmap = HeaderMap::new();
+        for (k, v) in args.headers.iter() {
+            if let (Ok(name), Ok(value)) = (
+                http::HeaderName::from_bytes(k.as_bytes()),
+                HeaderValue::from_str(v),
+            ) {
+                hmap.insert(name, value);
+            }
+        }
+        let qmap: aws_lambda_events::query_map::QueryMap = args.query_params.clone().into();
+        let mut ctx = ApiGatewayV2httpRequestContext::default();
+        ctx.route_key = Some(route_key.clone());
+        ctx.account_id = Some("riz".into());
+        ctx.stage = Some("$default".into());
+        ctx.request_id = Some(uuid::Uuid::new_v4().to_string());
+        ctx.time_epoch = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        ctx.http = ApiGatewayV2httpRequestContextHttpDescription {
+            method: method_typed.clone(),
+            path: Some(concrete_path.clone()),
+            protocol: Some("HTTP/1.1".into()),
+            source_ip: Some("127.0.0.1".into()),
+            user_agent: Some("riz-mcp".into()),
+        };
+        let event = ApiGatewayV2httpRequest {
+            version: Some("2.0".into()),
+            route_key: Some(route_key.clone()),
+            raw_path: Some(concrete_path.clone()),
+            raw_query_string: Some(raw_qs),
+            cookies: None,
+            headers: hmap,
+            query_string_parameters: qmap,
+            path_parameters: Default::default(),
+            request_context: ctx,
+            stage_variables: Default::default(),
             body: args.body,
             is_base64_encoded: args.is_base64_encoded,
+            kind: None,
+            method_arn: None,
+            http_method: method_typed,
+            identity_source: None,
+            authorization_token: None,
+            resource: None,
         };
 
         // Reentrant dispatch through the same Router.
@@ -398,11 +426,11 @@ fn generic_envelope_schema() -> serde_json::Value {
     })
 }
 
-/// Substitute `:name` segments in `pattern` with values from `params`.
-/// Segments without a matching param key are left as-is (caller error,
-/// the Router's match will then reject the request as a 404).
+/// Substitute `{name}` and `{name+}` segments in `pattern` with values from
+/// `params`. Segments without a matching param key are left as-is (caller
+/// error — the Router's match will then reject the request as a 404).
 fn substitute_path_params(pattern: &str, params: &HashMap<String, String>) -> String {
-    if !pattern.contains(':') {
+    if !pattern.contains('{') {
         return pattern.to_string();
     }
     let mut out = String::with_capacity(pattern.len());
@@ -410,11 +438,21 @@ fn substitute_path_params(pattern: &str, params: &HashMap<String, String>) -> St
     for seg in pattern.trim_start_matches('/').split('/') {
         if !first { out.push('/'); }
         first = false;
-        if let Some(name) = seg.strip_prefix(':') {
-            if let Some(v) = params.get(name) {
+        // `{name+}` greedy
+        if let Some(inner) = seg.strip_prefix('{').and_then(|s| s.strip_suffix("+}")) {
+            if let Some(v) = params.get(inner) {
                 out.push_str(v);
             } else {
-                out.push_str(seg);  // unresolved param — Router will 404
+                out.push_str(seg);
+            }
+            continue;
+        }
+        // `{name}` single
+        if let Some(inner) = seg.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
+            if let Some(v) = params.get(inner) {
+                out.push_str(v);
+            } else {
+                out.push_str(seg);
             }
         } else {
             out.push_str(seg);
@@ -450,31 +488,35 @@ fn urlencode(s: &str) -> String {
 }
 
 /// Wrap any JSON value in a 200 response with content-type application/json.
-fn json_response(value: serde_json::Value) -> GatewayResponse {
+fn json_response(value: serde_json::Value) -> ApiGatewayV2httpResponse {
     let json = serde_json::to_string(&value).unwrap_or_else(|_| String::from("{}"));
-    let mut headers = HashMap::new();
-    headers.insert("content-type".into(), "application/json".into());
-    GatewayResponse {
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    ApiGatewayV2httpResponse {
         status_code: 200,
-        headers: Some(headers),
-        body: Some(json),
-        is_base64_encoded: None,
+        headers,
+        multi_value_headers: HeaderMap::new(),
+        body: Some(Body::Text(json)),
+        is_base64_encoded: false,
+        cookies: Vec::new(),
     }
 }
 
 /// 204 No Content — used when the entire request was notifications.
-fn no_content_response() -> GatewayResponse {
-    GatewayResponse {
+fn no_content_response() -> ApiGatewayV2httpResponse {
+    ApiGatewayV2httpResponse {
         status_code: 204,
-        headers: None,
+        headers: HeaderMap::new(),
+        multi_value_headers: HeaderMap::new(),
         body: None,
-        is_base64_encoded: None,
+        is_base64_encoded: false,
+        cookies: Vec::new(),
     }
 }
 
 /// Build a JSON-RPC error envelope around a single id, return as a full HTTP
 /// response. Used at the top of `invoke` for parse/batch-shape failures.
-fn jsonrpc_error_response(id: serde_json::Value, code: i32, message: &str) -> GatewayResponse {
+fn jsonrpc_error_response(id: serde_json::Value, code: i32, message: &str) -> ApiGatewayV2httpResponse {
     json_response(jsonrpc_error_value(id, code, message))
 }
 
@@ -492,27 +534,16 @@ fn jsonrpc_error_value(id: serde_json::Value, code: i32, message: &str) -> serde
 mod tests {
     use super::*;
     use crate::state::FunctionState;
+    use crate::test_helpers::make_event_with_body;
 
-    fn evt(body: &str) -> GatewayRequest {
-        GatewayRequest {
-            version: "2.0".into(),
-            route_key: "POST /_riz/mcp".into(),
-            raw_path: "/_riz/mcp".into(),
-            raw_query_string: "".into(),
-            headers: HashMap::new(),
-            request_context: RequestContext {
-                http: HttpContext {
-                    method: "POST".into(),
-                    path: "/_riz/mcp".into(),
-                    protocol: "HTTP/1.1".into(),
-                    source_ip: "127.0.0.1".into(),
-                },
-                request_id: "r".into(),
-                time_epoch: 0,
-            },
-            path_parameters: None,
-            body: Some(body.to_string()),
-            is_base64_encoded: false,
+    fn evt(body: &str) -> ApiGatewayV2httpRequest {
+        make_event_with_body("POST", "/_riz/mcp", body)
+    }
+
+    fn body_text(resp: &ApiGatewayV2httpResponse) -> String {
+        match resp.body.as_ref().expect("body") {
+            Body::Text(s) => s.clone(),
+            other => panic!("expected Text body, got {other:?}"),
         }
     }
 
@@ -536,7 +567,7 @@ mod tests {
         let h = McpHandler::new(s);
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
-        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         let tools = body["result"]["tools"].as_array().unwrap();
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0]["name"], "GET_api");
@@ -551,7 +582,7 @@ mod tests {
         let h = McpHandler::new(s);
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
-        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         let tools = body["result"]["tools"].as_array().unwrap();
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0]["name"], "GET_api");
@@ -563,7 +594,7 @@ mod tests {
         let h = McpHandler::new(s);
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"unknown/method"}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
-        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         assert_eq!(body["error"]["code"], -32601);
     }
 
@@ -573,7 +604,7 @@ mod tests {
         let h = McpHandler::new(s);
         let req = "not json";
         let resp = h.invoke(evt(req)).await.unwrap();
-        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         assert_eq!(body["error"]["code"], -32700);
     }
 
@@ -584,7 +615,7 @@ mod tests {
         let h = McpHandler::new(s);
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"GET_api","arguments":{}}}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
-        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         assert_eq!(body["error"]["code"], -32603);
     }
 
@@ -595,7 +626,7 @@ mod tests {
         h.set_router(Arc::new(Router::empty())).await;
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"GET_nope","arguments":{}}}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
-        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         assert_eq!(body["error"]["code"], -32602);
     }
 
@@ -603,7 +634,7 @@ mod tests {
     fn substitute_path_params_replaces_segments() {
         let mut params = HashMap::new();
         params.insert("id".to_string(), "42".to_string());
-        assert_eq!(substitute_path_params("/accounts/:id", &params), "/accounts/42");
+        assert_eq!(substitute_path_params("/accounts/{id}", &params), "/accounts/42");
     }
 
     #[test]
@@ -612,7 +643,7 @@ mod tests {
         params.insert("org".to_string(), "anthropic".to_string());
         params.insert("repo".to_string(), "riz".to_string());
         assert_eq!(
-            substitute_path_params("/orgs/:org/repos/:repo", &params),
+            substitute_path_params("/orgs/{org}/repos/{repo}", &params),
             "/orgs/anthropic/repos/riz"
         );
     }
@@ -628,7 +659,7 @@ mod tests {
         // Caller forgot to provide a value — substitution leaves the literal
         // ":id" in place; the Router will 404 on that path.
         let params = HashMap::new();
-        assert_eq!(substitute_path_params("/accounts/:id", &params), "/accounts/:id");
+        assert_eq!(substitute_path_params("/accounts/{id}", &params), "/accounts/{id}");
     }
 
     // ─── MCP spec compliance ───────────────────────────────────────────────
@@ -640,7 +671,7 @@ mod tests {
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
         assert_eq!(resp.status_code, 200);
-        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         assert_eq!(body["jsonrpc"], "2.0");
         assert_eq!(body["id"], 1);
         assert_eq!(body["result"]["protocolVersion"], "2024-11-05");
@@ -655,7 +686,7 @@ mod tests {
         let h = McpHandler::new(s);
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
-        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         assert_eq!(body["result"]["protocolVersion"], "2025-03-26");
     }
 
@@ -665,7 +696,7 @@ mod tests {
         let h = McpHandler::new(s);
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"9999-99-99"}}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
-        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         assert_eq!(body["result"]["protocolVersion"], SERVER_DEFAULT_PROTOCOL_VERSION);
     }
 
@@ -676,7 +707,7 @@ mod tests {
         let req = r#"{"jsonrpc":"2.0","id":42,"method":"ping"}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
         assert_eq!(resp.status_code, 200);
-        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         assert_eq!(body["id"], 42);
         assert!(body["result"].is_object());
         assert_eq!(body["result"], serde_json::json!({}));
@@ -689,7 +720,7 @@ mod tests {
         let req = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
         assert_eq!(resp.status_code, 204, "notifications must not produce a body");
-        assert!(resp.body.is_none() || resp.body.as_deref() == Some(""));
+        assert!(matches!(resp.body, None | Some(Body::Empty)));
     }
 
     #[tokio::test]
@@ -708,7 +739,7 @@ mod tests {
         let h = McpHandler::new(s);
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"resources/list"}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
-        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         assert_eq!(body["result"]["resources"], serde_json::json!([]));
     }
 
@@ -718,7 +749,7 @@ mod tests {
         let h = McpHandler::new(s);
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"prompts/list"}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
-        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         assert_eq!(body["result"]["prompts"], serde_json::json!([]));
     }
 
@@ -728,7 +759,7 @@ mod tests {
         let h = McpHandler::new(s);
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"resources/templates/list"}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
-        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         assert_eq!(body["result"]["resourceTemplates"], serde_json::json!([]));
     }
 
@@ -742,7 +773,7 @@ mod tests {
         ]"#;
         let resp = h.invoke(evt(req)).await.unwrap();
         assert_eq!(resp.status_code, 200);
-        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         let arr = body.as_array().unwrap();
         assert_eq!(arr.len(), 2);
         assert_eq!(arr[0]["id"], 1);
@@ -771,7 +802,7 @@ mod tests {
             {"jsonrpc":"2.0","id":7,"method":"ping"}
         ]"#;
         let resp = h.invoke(evt(req)).await.unwrap();
-        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         let arr = body.as_array().unwrap();
         assert_eq!(arr.len(), 1, "only the ping request should appear");
         assert_eq!(arr[0]["id"], 7);
@@ -783,7 +814,7 @@ mod tests {
         let h = McpHandler::new(s);
         let req = r#"[]"#;
         let resp = h.invoke(evt(req)).await.unwrap();
-        let body: serde_json::Value = serde_json::from_str(resp.body.as_deref().unwrap()).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         assert_eq!(body["error"]["code"], -32600);
     }
 }

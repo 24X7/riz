@@ -11,3 +11,6 @@ pub mod server;
 pub mod state;
 pub mod system;
 pub mod tui;
+
+#[cfg(test)]
+pub mod test_helpers;
