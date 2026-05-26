@@ -1,0 +1,40 @@
+{
+  "headers": {},
+  "multiValueHeaders": {},
+  "queryStringParameters": {},
+  "multiValueQueryStringParameters": {},
+  "pathParameters": {},
+  "stageVariables": {},
+  "requestContext": {
+    "routeKey": "$disconnect",
+    "eventType": "DISCONNECT",
+    "extendedRequestId": "req-id-disc",
+    "requestTime": "12/Mar/2020:19:03:58 +0000",
+    "messageDirection": "IN",
+    "stage": "production",
+    "connectedAt": 1583348638123,
+    "requestTimeEpoch": 1583348640000,
+    "requestId": "request-id-disc",
+    "domainName": "abcdef.execute-api.us-east-1.amazonaws.com",
+    "connectionId": "abcdef-conn-id",
+    "apiId": "abcdefghij",
+    "disconnectStatusCode": 1001,
+    "disconnectReason": "Going Away",
+    "identity": {
+      "cognitoIdentityPoolId": null,
+      "accountId": null,
+      "cognitoIdentityId": null,
+      "caller": null,
+      "apiKey": null,
+      "apiKeyId": null,
+      "accessKey": null,
+      "sourceIp": "192.0.2.1",
+      "cognitoAuthenticationType": null,
+      "cognitoAuthenticationProvider": null,
+      "userArn": null,
+      "userAgent": null,
+      "user": null
+    }
+  },
+  "isBase64Encoded": false
+}

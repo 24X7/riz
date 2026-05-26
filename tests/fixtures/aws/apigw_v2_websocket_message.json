@@ -1,0 +1,40 @@
+{
+  "headers": {},
+  "multiValueHeaders": {},
+  "queryStringParameters": {},
+  "multiValueQueryStringParameters": {},
+  "pathParameters": {},
+  "stageVariables": {},
+  "requestContext": {
+    "routeKey": "$default",
+    "eventType": "MESSAGE",
+    "extendedRequestId": "req-id-msg",
+    "requestTime": "12/Mar/2020:19:03:58 +0000",
+    "messageDirection": "IN",
+    "messageId": "msg-id-001",
+    "stage": "production",
+    "connectedAt": 1583348638123,
+    "requestTimeEpoch": 1583348638500,
+    "requestId": "request-id-msg",
+    "domainName": "abcdef.execute-api.us-east-1.amazonaws.com",
+    "connectionId": "abcdef-conn-id",
+    "apiId": "abcdefghij",
+    "identity": {
+      "cognitoIdentityPoolId": null,
+      "accountId": null,
+      "cognitoIdentityId": null,
+      "caller": null,
+      "apiKey": null,
+      "apiKeyId": null,
+      "accessKey": null,
+      "sourceIp": "192.0.2.1",
+      "cognitoAuthenticationType": null,
+      "cognitoAuthenticationProvider": null,
+      "userArn": null,
+      "userAgent": "Mozilla/5.0",
+      "user": null
+    }
+  },
+  "body": "{\"action\":\"message\",\"text\":\"Hello from WebSocket\"}",
+  "isBase64Encoded": false
+}
