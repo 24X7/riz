@@ -2845,6 +2845,7 @@ dependencies = [
  "nix",
  "notify",
  "ratatui",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",
