@@ -11,6 +11,7 @@ mod server;
 mod state;
 mod system;
 mod tui;
+mod ws;
 
 #[cfg(test)]
 mod test_helpers;
