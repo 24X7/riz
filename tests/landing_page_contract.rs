@@ -116,3 +116,96 @@ fn pills_match_truth_slice() {
          In PILLS but not on page: {only_in_code:?}\n\
          Fix one or the other.");
 }
+
+struct Claim {
+    page_text: &'static str,
+    proof: &'static str, // test fn name (Works now) or wave heading (Coming)
+}
+
+const WORKS_NOW: &[Claim] = &[
+    Claim { page_text: "AWS API Gateway v2 HTTP payload — exact aws_lambda_events types",
+            proof: "fixture_apigw_v2_http_simple_get_round_trips" },
+    Claim { page_text: "Bun (TypeScript / JavaScript) handlers",
+            proof: "runtime_registry_registers_bun" },
+    Claim { page_text: "Function-centric config: [function.<name>] + N routes per function",
+            proof: "function_centric_config_parses" },
+    Claim { page_text: "AWS path syntax: {id}, {proxy+}, $default",
+            proof: "router_matches_aws_path_syntax" },
+    Claim { page_text: "AWS handler syntax: handler = \"index.handler\"",
+            proof: "handler_export_syntax_resolves" },
+    Claim { page_text: "Hot-swap deploys from S3 with in-flight request drain",
+            proof: "hot_swap_drains_in_flight_requests" },
+    Claim { page_text: "riz.toml hot-reload on save",
+            proof: "hotreload_picks_up_riz_toml_changes" },
+    Claim { page_text: "/_riz/health · /_riz/metrics · /_riz/registry",
+            proof: "system_endpoints_respond_with_aws_shape" },
+    Claim { page_text: "MCP server (spec 2024-11-05, JSON-RPC, batches, lifecycle)",
+            proof: "mcp_spec_2024_11_05_lifecycle" },
+    Claim { page_text: "Terminal dashboard: P50/P75/P90/P95/P99 over 5-min window",
+            proof: "latency_window_emits_all_percentiles" },
+    Claim { page_text: "Datadog metrics emitter",
+            proof: "datadog_emitter_constructs_from_config" },
+];
+
+const COMING: &[Claim] = &[
+    Claim { page_text: "Python runtime adapter",                          proof: "Wave 2" },
+    Claim { page_text: "Rust runtime adapter",                            proof: "Wave 6" },
+    Claim { page_text: "WebSocket APIs ($connect / $disconnect / connectionId)", proof: "Wave 1" },
+    Claim { page_text: "Lambda authorizers (REQUEST / JWT)",              proof: "Wave 3" },
+    Claim { page_text: "CORS auto-preflight",                             proof: "Wave 4" },
+    Claim { page_text: "Non-HTTP event sources (SQS, SNS, S3, EventBridge)", proof: "OutOfScope" },
+    Claim { page_text: "Bearer-token auth on /_riz/*",                    proof: "Wave 4.5" },
+];
+
+fn normalize_li(s: &str) -> String {
+    // Collapse internal whitespace so HTML formatting differences don't
+    // false-fail the comparison.
+    let s = html_decode_entities(s);
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[test]
+fn works_now_matches_truth_slice() {
+    let on_page: HashSet<String> = extract_status_lis(&html(), "Works now")
+        .into_iter().map(|s| normalize_li(&s)).collect();
+    let in_code: HashSet<String> = WORKS_NOW.iter()
+        .map(|c| normalize_li(c.page_text)).collect();
+
+    let only_on_page: Vec<_> = on_page.difference(&in_code).cloned().collect();
+    let only_in_code: Vec<_> = in_code.difference(&on_page).cloned().collect();
+
+    assert!(only_on_page.is_empty() && only_in_code.is_empty(),
+        "Works-now drift detected.\n\
+         On page but not in WORKS_NOW: {only_on_page:?}\n\
+         In WORKS_NOW but not on page: {only_in_code:?}");
+}
+
+#[test]
+fn coming_matches_truth_slice() {
+    let on_page: HashSet<String> = extract_status_lis(&html(), "Coming")
+        .into_iter().map(|s| normalize_li(&s)).collect();
+    let in_code: HashSet<String> = COMING.iter()
+        .map(|c| normalize_li(c.page_text)).collect();
+
+    let only_on_page: Vec<_> = on_page.difference(&in_code).cloned().collect();
+    let only_in_code: Vec<_> = in_code.difference(&on_page).cloned().collect();
+
+    assert!(only_on_page.is_empty() && only_in_code.is_empty(),
+        "Coming drift detected.\n\
+         On page but not in COMING: {only_on_page:?}\n\
+         In COMING but not on page: {only_in_code:?}");
+}
+
+#[test]
+fn coming_proofs_reference_real_waves() {
+    let roadmap = fs::read_to_string("docs/superpowers/plans/2026-05-26-v01-honest-ship-roadmap.md")
+        .expect("roadmap missing");
+    for claim in COMING {
+        if claim.proof == "OutOfScope" { continue; }
+        let needle = format!("## {}", claim.proof);
+        let needle_alt = format!("## {} —", claim.proof);
+        assert!(roadmap.contains(&needle) || roadmap.contains(&needle_alt),
+            "COMING claim {:?} points at proof {:?}, but the roadmap has no matching heading",
+            claim.page_text, claim.proof);
+    }
+}
