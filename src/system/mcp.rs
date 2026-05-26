@@ -694,7 +694,7 @@ mod tests {
     // ─── MCP spec compliance ───────────────────────────────────────────────
 
     #[tokio::test]
-    async fn initialize_returns_server_info_and_capabilities() {
+    async fn mcp_spec_2024_11_05_lifecycle() {
         let s = Arc::new(RizState::new());
         let h = McpHandler::new(s);
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
