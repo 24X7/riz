@@ -12,7 +12,8 @@ path = "src/main.rs"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-axum = { version = "0.7", features = ["macros"] }
+axum = { version = "0.7", features = ["macros", "ws"] }
+dashmap = "6"
 clap = { version = "4", features = ["derive"] }
 ratatui = "0.28"
 crossterm = "0.28"
@@ -52,6 +53,8 @@ lto = "thin"
 reqwest = { version = "0.12", features = ["json"] }
 tempfile = "3"
 tokio-test = "0.4"
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
 
 # Config for 'cargo dist'
 [workspace.metadata.dist]

@@ -9,5 +9,10 @@ pub use aws_lambda_events::apigw::{
     ApiGatewayV2httpRequestContext,
     ApiGatewayV2httpRequestContextHttpDescription,
     ApiGatewayV2httpResponse,
+    // WebSocket request envelope + per-route response shape (the AWS
+    // WebSocket return type happens to reuse the v1 REST response struct).
+    ApiGatewayWebsocketProxyRequest,
+    ApiGatewayWebsocketProxyRequestContext,
+    ApiGatewayProxyResponse,
 };
 pub use aws_lambda_events::encodings::Body;
