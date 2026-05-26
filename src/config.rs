@@ -386,7 +386,7 @@ concurrency = 2
     }
 
     #[test]
-    fn parses_function_with_explicit_routes() {
+    fn function_centric_config_parses() {
         let toml_str = r#"
 [server]
 port = 8080
