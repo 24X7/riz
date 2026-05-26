@@ -72,6 +72,24 @@ git commit -m "chore: drop Start subcommand alias — Run is the only public nam
 
 ---
 
+## Wave 0.5 — Drift-prevention automation (layered parallel with Wave 1)
+
+**Why here:** three incidents have already shipped where the landing page advertised features that code didn't deliver (`max_concurrent` vs `concurrency`, Python/Rust silently falling back to Bun, `riz start` vs `riz run`). A v0.1 viral OSS launch cannot afford a fourth. Wedge a small automation surface in *before* Wave 1 lands more features so every future wave inherits the guardrails for free.
+
+**Acceptance criteria:**
+- `tests/landing_page_contract.rs` passes against the current `web/index.html` + a `PILLS` / `WORKS_NOW` / `COMING` truth slice that exactly matches the page.
+- `tests/aws_contract.rs` round-trips five canonical AWS event fixtures (HTTP simple GET, HTTP POST w/ body, WS `$connect`, WS message, WS `$disconnect`) byte-for-byte modulo documented exclusions.
+- `tests/wave_<N>_acceptance.rs` exists for every wave (0.5, 1, 2, 3, 4, 4.5, 5, 6, 7, 8, 9), each populated with `#[ignore]`-gated tests for every acceptance criterion in the wave.
+- `.github/workflows/ci.yml` runs build + test + clippy + fmt on every push and a separate informational job for the `#[ignore]`-gated future-wave tests.
+- Removing a feature pill from `web/index.html` without removing it from the truth slice fails CI.
+- Bun integration tests in `tests/integration_test.rs` are no longer `#[ignore]`-gated (CI installs Bun).
+
+**Tactical implementation plan:** `docs/superpowers/plans/2026-05-26-wave-0p5-drift-prevention.md`. 10 tasks.
+
+**Effort:** half a day.
+
+---
+
 ## Wave 1 — WebSocket APIs (biggest user-flagged gap)
 
 **Why first:** the user explicitly called this out as missing. WebSocket APIs are a first-class API Gateway type in AWS, not a fringe feature.
@@ -164,6 +182,24 @@ git commit -m "chore: drop Start subcommand alias — Run is the only public nam
 **Tactical implementation plan:** `docs/superpowers/plans/2026-05-26-cors-preflight.md`. Estimated 6–8 tasks. Single new file `src/cors.rs` plus axum middleware wiring in `src/server.rs::build_app`.
 
 **Effort:** half a day.
+
+---
+
+## Wave 4.5 — Bearer-token auth on `/_riz/*`
+
+**Why here:** the landing page promises this under "Coming." It's a real prod-grade concern (`/_riz/metrics` and `/_riz/registry` leak request volume + handler topology to anyone who can reach the box), and it's trivial — single shared-secret header check + one config field. Slotting it after CORS so the auth-shaped concerns ship together.
+
+**Acceptance criteria:**
+- New `[auth]` config block with field `bearer_token: Option<String>` (env-var sourceable: `RIZ_AUTH_BEARER_TOKEN`).
+- When unset, `/_riz/*` endpoints behave exactly as today (open).
+- When set, `/_riz/metrics`, `/_riz/registry`, `/_riz/mcp` require `Authorization: Bearer <token>`; missing/wrong → 401.
+- `/_riz/health` remains open regardless of `bearer_token` (liveness probes from reverse-proxies / k8s must not require credentials).
+- Constant-time comparison on the token (use `subtle::ConstantTimeEq` or equivalent — no `==` on user-controlled input).
+- Auth check runs *before* MCP body parsing so a malformed body with a wrong token still returns 401, not 400.
+
+**Tactical implementation plan:** `docs/superpowers/plans/2026-05-26-bearer-auth.md`. Estimated 4–6 tasks. New file `src/auth/bearer.rs`. Axum extractor wired into each `/_riz/*` handler.
+
+**Effort:** 2 hours.
 
 ---
 
@@ -373,20 +409,25 @@ Replace with something that survives a "what about my SQS handler?" comment:
 
 ```
 PF (cleanup)
-  └─→ Wave 1 (WebSocket)            ──┐
-                                       ├─→ Wave 8 (Tests) ──→ Wave 9 (Marketing)
-  └─→ Wave 2 (Python)        ──┐      │
-  └─→ Wave 3 (Authorizers)   ──┤      │
-  └─→ Wave 4 (CORS)          ──┼──────┤
-  └─→ Wave 5 (Context)       ──┤      │
-  └─→ Wave 6 (Rust)          ──┘      │
-                                       │
-  └─→ Wave 7 (Code debt) ──────────────┘   [can run in parallel with any of 2-6]
+  └─→ Wave 0.5 (Drift automation) ────┐
+        │                               │
+        └─→ Wave 1 (WebSocket)        ──┤
+                                         │
+  └─→ Wave 2 (Python)          ──┐      ├─→ Wave 8 (Tests) ──→ Wave 9 (Marketing)
+  └─→ Wave 3 (Authorizers)     ──┤      │
+  └─→ Wave 4 (CORS)            ──┼──────┤
+  └─→ Wave 4.5 (Bearer auth)   ──┤      │
+  └─→ Wave 5 (Context)         ──┤      │
+  └─→ Wave 6 (Rust)            ──┘      │
+                                         │
+  └─→ Wave 7 (Code debt) ────────────────┘   [can run in parallel with any of 2-6]
 ```
+
+Wave 0.5 (drift automation) lands FIRST — every other wave inherits its CI guardrails and acceptance-test oracle.
 
 Wave 1 (WebSocket) is the most invasive and benefits from a clean codebase. Doing Wave 7 (debt) BEFORE Wave 1 is optional but reduces merge conflicts.
 
-Waves 2–6 are mutually independent and can be parallelized across multiple subagent sessions.
+Waves 2–6 + 4.5 are mutually independent and can be parallelized across multiple subagent sessions.
 
 Wave 8 (tests) waits on at least Waves 1 + 7 because it tests their output. Wave 9 (marketing) waits on enough features being shipped to demo against.
 
@@ -397,19 +438,21 @@ Wave 8 (tests) waits on at least Waves 1 + 7 because it tests their output. Wave
 | Wave | Effort | Cumulative |
 |---|---|---|
 | PF — Cleanup | 0.1 day | 0.1 |
-| 1 — WebSocket | 2.5 days | 2.6 |
-| 2 — Python | 1 day | 3.6 |
-| 3 — Authorizers | 1.5 days | 5.1 |
-| 4 — CORS | 0.5 day | 5.6 |
-| 5 — Lambda context | 0.5 day | 6.1 |
-| 6 — Rust | 1 day | 7.1 |
-| 7 — Code debt | 1.5 days (parallel) | 8.6 |
-| 8 — Test coverage | 1 day | 9.6 |
-| 9 — Marketing | 0.5 day | 10.1 |
+| 0.5 — Drift-prevention automation | 0.5 day | 0.6 |
+| 1 — WebSocket | 2.5 days | 3.1 |
+| 2 — Python | 1 day | 4.1 |
+| 3 — Authorizers | 1.5 days | 5.6 |
+| 4 — CORS | 0.5 day | 6.1 |
+| 4.5 — Bearer-token auth | 0.25 day | 6.35 |
+| 5 — Lambda context | 0.5 day | 6.85 |
+| 6 — Rust | 1 day | 7.85 |
+| 7 — Code debt | 1.5 days (parallel) | 9.35 |
+| 8 — Test coverage | 1 day | 10.35 |
+| 9 — Marketing | 0.5 day | 10.85 |
 
-**Total: ~10 days of focused work to ship a credible v0.1.**
+**Total: ~11 days of focused work to ship a credible v0.1.**
 
-Subagent parallelism can compress 2–6 + 7 into ~3 calendar days if multiple agent sessions run concurrently. WebSocket (Wave 1) is on the critical path and can't be shortened that way.
+Subagent parallelism can compress 2–6 + 4.5 + 7 into ~3 calendar days if multiple agent sessions run concurrently. WebSocket (Wave 1) is on the critical path and can't be shortened that way. Wave 0.5 (~half a day) is on the critical path *ahead* of Wave 1 — it's wedged in first so every subsequent wave inherits the drift-prevention CI gates.
 
 ---
 
