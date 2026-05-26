@@ -25,7 +25,6 @@ fn aws_contract_fixtures_exist() {
 }
 
 #[test]
-#[ignore = "wave 0.5 not yet shipped: .github/workflows/ci.yml (Task 8)"]
 fn ci_workflow_exists() {
     assert!(std::path::Path::new(".github/workflows/ci.yml").exists());
 }
