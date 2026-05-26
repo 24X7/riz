@@ -134,7 +134,7 @@ mod tests {
     }
 
     #[test]
-    fn disabled_emitter_does_not_panic() {
+    fn datadog_emitter_constructs_from_config() {
         let emitter = MetricsEmitter::new(&disabled_config());
         emitter.record_request("GET /foo", "GET", 200, 12.5);
         emitter.record_cache_hit("GET /foo");
