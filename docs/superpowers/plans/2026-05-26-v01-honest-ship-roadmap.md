@@ -72,7 +72,7 @@ git commit -m "chore: drop Start subcommand alias — Run is the only public nam
 
 ---
 
-## Wave 0.5 — Drift-prevention automation (layered parallel with Wave 1)
+## Wave 0.5 — Drift-prevention automation (layered parallel with Wave 1) ✅
 
 **Why here:** three incidents have already shipped where the landing page advertised features that code didn't deliver (`max_concurrent` vs `concurrency`, Python/Rust silently falling back to Bun, `riz start` vs `riz run`). A v0.1 viral OSS launch cannot afford a fourth. Wedge a small automation surface in *before* Wave 1 lands more features so every future wave inherits the guardrails for free.
 
