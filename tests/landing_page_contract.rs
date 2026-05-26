@@ -209,3 +209,19 @@ fn coming_proofs_reference_real_waves() {
             claim.page_text, claim.proof);
     }
 }
+
+#[test]
+fn works_now_proof_tests_exist() {
+    let output = std::process::Command::new(env!("CARGO"))
+        .args(["test", "--workspace", "--all-targets", "--", "--list", "--format=terse"])
+        .output()
+        .expect("failed to run `cargo test --list`");
+    let listing = String::from_utf8_lossy(&output.stdout);
+    let missing: Vec<_> = WORKS_NOW.iter()
+        .filter(|c| !listing.contains(c.proof))
+        .map(|c| c.proof)
+        .collect();
+    assert!(missing.is_empty(),
+        "WORKS_NOW claims point at proof tests that do not exist:\n  {missing:?}\n\
+         Either rename the test, change the proof field, or write the missing test.");
+}
