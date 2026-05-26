@@ -14,13 +14,15 @@ pub struct ProcessHandler {
     name: String,
     routes: Vec<RouteEntry>,
     timeout_ms: u64,
+    integration_timeout_ms: u64,
+    /// Stage variables injected into the event before handler invocation.
+    /// Matches AWS API GW v2's `stageVariables` field — per-deployment-stage
+    /// config the handler reads at runtime.
+    stage_variables: std::collections::HashMap<String, String>,
     process_manager: Arc<ProcessManager>,
 }
 
 impl ProcessHandler {
-    /// Build one ProcessHandler from a function config. The handler declares
-    /// every route the function serves (using effective_routes, which falls
-    /// back to `ANY /<name>` if no routes block is present).
     pub fn for_function(
         name: &str,
         cfg: &FunctionConfig,
@@ -37,6 +39,8 @@ impl ProcessHandler {
             name: name.to_string(),
             routes,
             timeout_ms: cfg.timeout_ms,
+            integration_timeout_ms: cfg.integration_timeout_ms,
+            stage_variables: cfg.stage_variables.clone(),
             process_manager,
         }
     }
@@ -51,20 +55,37 @@ impl LambdaHandler for ProcessHandler {
     fn name(&self) -> &str { &self.name }
     fn routes(&self) -> &[RouteEntry] { &self.routes }
 
-    async fn invoke(&self, event: ApiGatewayV2httpRequest) -> Result<ApiGatewayV2httpResponse, HandlerError> {
-        self.process_manager
-            .invoke(&self.name, &event, self.timeout_ms)
-            .await
-            .map_err(|e| {
+    async fn invoke(&self, mut event: ApiGatewayV2httpRequest) -> Result<ApiGatewayV2httpResponse, HandlerError> {
+        // Inject this function's stage variables before the handler sees the event.
+        for (k, v) in &self.stage_variables {
+            event.stage_variables.insert(k.clone(), v.clone());
+        }
+
+        // Two timeouts here, matching AWS:
+        // - integration_timeout_ms: wraps the whole call. If exceeded, we
+        //   return 504 to the client without waiting for the handler.
+        // - timeout_ms: enforced INSIDE process_manager.invoke; if exceeded,
+        //   the child process is killed and respawned.
+        let invoke = self.process_manager.invoke(&self.name, &event, self.timeout_ms);
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_millis(self.integration_timeout_ms),
+            invoke,
+        ).await;
+
+        match outcome {
+            Ok(Ok(resp)) => Ok(resp),
+            Ok(Err(e)) => {
                 let msg = e.to_string();
                 if msg.contains("timeout") {
-                    HandlerError::Timeout(self.timeout_ms)
+                    Err(HandlerError::Timeout(self.timeout_ms))
                 } else if msg.contains("no pool") || msg.contains("semaphore closed") {
-                    HandlerError::Internal(msg)
+                    Err(HandlerError::Internal(msg))
                 } else {
-                    HandlerError::Process(msg)
+                    Err(HandlerError::Process(msg))
                 }
-            })
+            }
+            Err(_elapsed) => Err(HandlerError::Timeout(self.integration_timeout_ms)),
+        }
     }
 }
 
@@ -77,6 +98,8 @@ mod tests {
             runtime: crate::config::RuntimeKind::Bun,
             handler: std::path::PathBuf::from("./does-not-exist.ts"),
             timeout_ms: 5000,
+            integration_timeout_ms: 30000,
+            stage_variables: Default::default(),
             cache_ttl_secs: None,
             concurrency: 1,
             routes: vec![],

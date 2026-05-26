@@ -29,13 +29,16 @@ fn home_dir() -> PathBuf {
 }
 
 impl LambdaRuntime for BunRuntime {
-    fn spawn_command(&self, route: &FunctionConfig) -> Command {
-        let handler = route.handler.canonicalize()
-            .unwrap_or_else(|_| route.handler.clone());
+    fn spawn_command(&self, cfg: &FunctionConfig) -> Command {
+        // Resolve AWS-style `file.export` (e.g. `index.handler`) into a
+        // concrete module path and export name. The adapter takes both as args.
+        let (module, export_name) = cfg.module_and_export();
+        let module = module.canonicalize().unwrap_or(module);
         let mut cmd = Command::new("bun");
         cmd.arg("run")
            .arg(&self.adapter_path)
-           .arg(handler);
+           .arg(module)
+           .arg(export_name);
         cmd
     }
 

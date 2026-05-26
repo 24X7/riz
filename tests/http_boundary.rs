@@ -122,6 +122,8 @@ async fn oversized_body_returns_413_for_routed_request() {
         runtime: RuntimeKind::Bun,
         handler: std::path::PathBuf::from("./does-not-exist.ts"),
         timeout_ms: 1000,
+        integration_timeout_ms: 30000,
+            stage_variables: Default::default(),
         cache_ttl_secs: None,
         concurrency: 1,
         routes: vec![riz::config::RouteSpec {

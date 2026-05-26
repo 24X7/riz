@@ -29,13 +29,26 @@ pub struct ServerConfig {
     pub port: u16,
     #[serde(default = "default_host")]
     pub host: String,
+    /// API Gateway stage name. Surfaced as `requestContext.stage` on every
+    /// event. AWS API GW v2 uses `$default` as the implicit deployment stage;
+    /// custom stages like `prod` or `v1` go into the request URL (and thus
+    /// the path) by convention. Riz mirrors this verbatim.
+    #[serde(default = "default_stage")]
+    pub stage: String,
 }
 
 fn default_port() -> u16 { 3000 }
 fn default_host() -> String { "0.0.0.0".into() }
+fn default_stage() -> String { "$default".into() }
 
 impl Default for ServerConfig {
-    fn default() -> Self { Self { port: default_port(), host: default_host() } }
+    fn default() -> Self {
+        Self {
+            port: default_port(),
+            host: default_host(),
+            stage: default_stage(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -113,11 +126,29 @@ impl Default for AwsConfig {
 pub struct FunctionConfig {
     pub runtime: RuntimeKind,
     pub handler: PathBuf,
+    /// Handler timeout: how long the spawned process is allowed to take to
+    /// produce a response before riz kills it and respawns. Matches AWS
+    /// Lambda's per-function `Timeout` setting (max 900 s on AWS, no cap
+    /// in riz). Defaults to 30 s.
     #[serde(default = "default_timeout")]
     pub timeout_ms: u64,
+    /// API-Gateway-side wait limit: how long the gateway will hold a request
+    /// open waiting for the integration. Matches AWS API Gateway v2's
+    /// `IntegrationTimeoutInMillis` (max 30 s on AWS HTTP APIs). If the
+    /// integration exceeds this, the gateway returns 504 to the client
+    /// without killing the handler process (the handler may still complete
+    /// and emit its response into the void). Defaults to 30 s.
+    #[serde(default = "default_integration_timeout")]
+    pub integration_timeout_ms: u64,
     #[serde(default = "default_concurrency")]
     pub concurrency: usize,
     pub cache_ttl_secs: Option<u64>,
+    /// Stage variables — surfaced on the event as `stageVariables`. AWS uses
+    /// these for per-deployment-stage config that the handler reads at
+    /// runtime (e.g. backend URLs, feature flags). Riz makes them per-
+    /// function for simplicity.
+    #[serde(default)]
+    pub stage_variables: std::collections::HashMap<String, String>,
     /// Explicit routes this function serves. If empty, defaults to
     /// `[{ path: "/<name>", method: "ANY" }]`.
     #[serde(default)]
@@ -137,6 +168,65 @@ impl FunctionConfig {
             self.routes.clone()
         }
     }
+
+    /// Parse the `handler` field into (module_path, export_name) following
+    /// AWS Lambda's `file.export` convention, with Riz extensions for paths
+    /// that already include a file extension.
+    ///
+    /// Forms:
+    /// - `"index.handler"` → file `index.<ext>`, export `handler`  (AWS-style)
+    /// - `"src/api/index.handler"` → file `src/api/index.<ext>`, export `handler`
+    /// - `"./api/index.ts"` → file `./api/index.ts`, export `handler` (default)
+    /// - `"./api/index.ts:myFunc"` → file `./api/index.ts`, export `myFunc`
+    ///   (Riz-native escape hatch when the file path needs to be explicit)
+    ///
+    /// Runtime extensions auto-detected by `RuntimeKind`:
+    /// - Bun → `.ts`
+    /// - Python → `.py`
+    /// - Rust → handler is a compiled binary path; export name is meaningless
+    ///   and ignored (handler returned verbatim)
+    pub fn module_and_export(&self) -> (PathBuf, String) {
+        let s = self.handler.to_string_lossy().to_string();
+        if matches!(self.runtime, RuntimeKind::Rust) {
+            // Rust handlers are compiled binaries — the path IS the executable,
+            // no module/export split.
+            return (self.handler.clone(), String::new());
+        }
+        // Explicit Riz-native form: "file:exportName"
+        if let Some((file, exp)) = s.rsplit_once(':') {
+            // But not on Windows where `C:\path` would split — `:` only when
+            // it's not preceded by a single drive letter. Conservative: if
+            // the part after `:` contains `/` or `\`, it's not an export name.
+            if !exp.contains('/') && !exp.contains('\\') {
+                return (PathBuf::from(file), exp.to_string());
+            }
+        }
+        // Determine whether the handler already has a known runtime extension.
+        let ext = self.handler.extension().and_then(|e| e.to_str());
+        let has_known_ext = matches!(ext, Some("ts" | "js" | "mjs" | "cjs" | "py"));
+        if has_known_ext {
+            // File path already includes the extension — export defaults to "handler"
+            // (matches AWS default function name).
+            return (self.handler.clone(), "handler".into());
+        }
+        // AWS-style: last segment after `.` is the export, the rest is the module path.
+        if let Some((module, exp)) = s.rsplit_once('.') {
+            let runtime_ext = match self.runtime {
+                RuntimeKind::Bun => "ts",
+                RuntimeKind::Python => "py",
+                RuntimeKind::Rust => unreachable!("handled above"),
+            };
+            return (PathBuf::from(format!("{module}.{runtime_ext}")), exp.to_string());
+        }
+        // Fallback: file path with no extension and no dot — treat as bare module,
+        // append runtime extension, default export name "handler".
+        let runtime_ext = match self.runtime {
+            RuntimeKind::Bun => "ts",
+            RuntimeKind::Python => "py",
+            RuntimeKind::Rust => unreachable!("handled above"),
+        };
+        (PathBuf::from(format!("{s}.{runtime_ext}")), "handler".into())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -148,6 +238,7 @@ pub struct RouteSpec {
 
 fn default_method() -> String { "ANY".into() }
 fn default_timeout() -> u64 { 30_000 }
+fn default_integration_timeout() -> u64 { 30_000 }
 fn default_concurrency() -> usize { 1 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -293,16 +384,18 @@ path = "/api"
         assert_eq!(config.cache.default_ttl_secs, 0);
     }
 
+    /// Merged into one test because env vars are process-global and parallel
+    /// tests would otherwise race on RIZ_DEPLOY_KEY. Covers all three cases:
+    /// env wins over file, file fills in when env absent, None when both absent.
     #[test]
-    fn deploy_key_env_wins() {
-        let config: Config = toml::from_str(SAMPLE).unwrap();
+    fn deploy_key_resolution_priority() {
+        // 1. env wins
         std::env::set_var("RIZ_DEPLOY_KEY", "envkey");
+        let config: Config = toml::from_str(SAMPLE).unwrap();
         assert_eq!(config.effective_deploy_key(), Some("envkey".into()));
-        std::env::remove_var("RIZ_DEPLOY_KEY");
-    }
 
-    #[test]
-    fn deploy_key_falls_back_to_file() {
+        // 2. file fills in when env absent
+        std::env::remove_var("RIZ_DEPLOY_KEY");
         let toml_with_key = r#"
 [server]
 port = 3000
@@ -311,14 +404,10 @@ port = 3000
 deploy_key = "filekey"
 "#;
         let config: Config = toml::from_str(toml_with_key).unwrap();
-        std::env::remove_var("RIZ_DEPLOY_KEY"); // ensure env is clean
         assert_eq!(config.effective_deploy_key(), Some("filekey".into()));
-    }
 
-    #[test]
-    fn deploy_key_none_when_both_absent() {
-        let config: Config = toml::from_str(SAMPLE).unwrap(); // SAMPLE has no deploy_key
-        std::env::remove_var("RIZ_DEPLOY_KEY");
+        // 3. None when both absent
+        let config: Config = toml::from_str(SAMPLE).unwrap();
         assert_eq!(config.effective_deploy_key(), None);
     }
 
@@ -379,6 +468,67 @@ handler = "./h.ts"
         let c: Config = toml::from_str(toml_str).unwrap();
         let err = c.validate().unwrap_err();
         assert!(err.contains("_riz"));
+    }
+
+    fn fc(runtime: RuntimeKind, handler: &str) -> FunctionConfig {
+        FunctionConfig {
+            runtime,
+            handler: PathBuf::from(handler),
+            timeout_ms: 1000,
+            integration_timeout_ms: 30000,
+            stage_variables: Default::default(),
+            concurrency: 1,
+            cache_ttl_secs: None,
+            routes: vec![],
+        }
+    }
+
+    #[test]
+    fn handler_aws_style_index_handler_resolves_to_ts_file_and_handler_export() {
+        let c = fc(RuntimeKind::Bun, "src/api/index.handler");
+        let (module, export) = c.module_and_export();
+        assert_eq!(module, PathBuf::from("src/api/index.ts"));
+        assert_eq!(export, "handler");
+    }
+
+    #[test]
+    fn handler_aws_style_with_custom_export_name() {
+        let c = fc(RuntimeKind::Bun, "src/api/index.myHandler");
+        let (module, export) = c.module_and_export();
+        assert_eq!(module, PathBuf::from("src/api/index.ts"));
+        assert_eq!(export, "myHandler");
+    }
+
+    #[test]
+    fn handler_with_explicit_ts_extension_keeps_default_handler_export() {
+        let c = fc(RuntimeKind::Bun, "./examples/api/index.ts");
+        let (module, export) = c.module_and_export();
+        assert_eq!(module, PathBuf::from("./examples/api/index.ts"));
+        assert_eq!(export, "handler");
+    }
+
+    #[test]
+    fn handler_with_explicit_extension_and_riz_colon_export_override() {
+        let c = fc(RuntimeKind::Bun, "./examples/api/index.ts:myFunc");
+        let (module, export) = c.module_and_export();
+        assert_eq!(module, PathBuf::from("./examples/api/index.ts"));
+        assert_eq!(export, "myFunc");
+    }
+
+    #[test]
+    fn handler_python_aws_style() {
+        let c = fc(RuntimeKind::Python, "app.lambda_handler");
+        let (module, export) = c.module_and_export();
+        assert_eq!(module, PathBuf::from("app.py"));
+        assert_eq!(export, "lambda_handler");
+    }
+
+    #[test]
+    fn handler_rust_returns_handler_path_verbatim() {
+        let c = fc(RuntimeKind::Rust, "./target/release/my-handler");
+        let (module, export) = c.module_and_export();
+        assert_eq!(module, PathBuf::from("./target/release/my-handler"));
+        assert_eq!(export, "");
     }
 
     #[test]

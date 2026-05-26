@@ -596,6 +596,8 @@ mod riz_state_tests {
             runtime: crate::config::RuntimeKind::Bun,
             handler: std::path::PathBuf::from("./handler.ts"),
             timeout_ms: 5000,
+            integration_timeout_ms: 30000,
+            stage_variables: Default::default(),
             cache_ttl_secs: None,
             concurrency: 1,
             routes: vec![],

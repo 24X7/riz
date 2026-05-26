@@ -67,7 +67,19 @@ impl RouteEntry {
     /// - `/users/{id}` — single-segment capture into `id`
     /// - `/files/{proxy+}` — greedy capture: matches the rest of the path
     ///   (one or more segments), joined with `/` and stored in `proxy`
+    /// - `$default` — AWS API GW v2's catch-all route key. Matches any
+    ///   method + any path that no more-specific route claimed. The router
+    ///   evaluates routes in mount order, so `$default` should be declared
+    ///   last on its function (and that function mounted after others).
     pub fn match_path(&self, method: &str, path: &str) -> Option<HashMap<String, String>> {
+        // $default — AWS API GW v2 catch-all. Method must still match (or be Any),
+        // any path matches.
+        if self.path == "$default" {
+            if self.method.matches(method) {
+                return Some(HashMap::new());
+            }
+            return None;
+        }
         if !self.method.matches(method) {
             return None;
         }
@@ -287,6 +299,30 @@ mod tests {
         let e = RouteEntry { method: RouteMethod::Any, path: "/api/{proxy+}".into() };
         let p = e.match_path("GET", "/api/users").unwrap();
         assert_eq!(p.get("proxy").map(String::as_str), Some("users"));
+    }
+
+    // ─── $default catch-all (AWS v2) ────────────────────────────────────────
+
+    #[test]
+    fn route_entry_default_matches_any_path() {
+        let e = RouteEntry { method: RouteMethod::Any, path: "$default".into() };
+        assert!(e.match_path("GET", "/anything").is_some());
+        assert!(e.match_path("POST", "/api/users/42").is_some());
+        assert!(e.match_path("DELETE", "/").is_some());
+    }
+
+    #[test]
+    fn route_entry_default_respects_method() {
+        let e = RouteEntry { method: RouteMethod::Get, path: "$default".into() };
+        assert!(e.match_path("GET", "/anything").is_some());
+        assert!(e.match_path("POST", "/anything").is_none());
+    }
+
+    #[test]
+    fn route_entry_default_extracts_no_params() {
+        let e = RouteEntry { method: RouteMethod::Any, path: "$default".into() };
+        let p = e.match_path("GET", "/foo/bar/baz").unwrap();
+        assert!(p.is_empty());
     }
 
     #[test]

@@ -14,17 +14,22 @@ import { createInterface } from "readline";
 const _toStderr = (...args) => process.stderr.write(args.map(String).join(' ') + '\n');
 console.log = console.info = console.debug = _toStderr;
 
+// argv: [bun, adapter.mjs, modulePath, exportName]
+// AWS Lambda's `handler` field is `<file>.<export>`. Riz parses it into a
+// module path + export name and passes both here so the lookup is explicit.
 const handlerPath = process.argv[2];
+const exportName = process.argv[3] || "handler";
 if (!handlerPath) {
   process.stderr.write("riz bun-adapter: missing handler path\n");
   process.exit(1);
 }
 
 const mod = await import(handlerPath);
-const handler = mod.handler ?? mod.default;
+// Try the named export first (AWS contract), fall back to `handler`, then to default.
+const handler = mod[exportName] ?? mod.handler ?? mod.default;
 if (typeof handler !== "function") {
   process.stderr.write(
-    `riz bun-adapter: no exported 'handler' function in ${handlerPath}\n`
+    `riz bun-adapter: no exported '${exportName}' function in ${handlerPath}\n`
   );
   process.exit(1);
 }

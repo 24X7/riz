@@ -109,9 +109,9 @@ async fn dispatch_lambda(
     // BUG-12: skip cache for authenticated/personalized requests
     let has_auth = req.headers().contains_key("authorization") || req.headers().contains_key("cookie");
 
-    let default_ttl = {
+    let (default_ttl, stage) = {
         let cfg = state.config.read().await;
-        cfg.cache.default_ttl_secs
+        (cfg.cache.default_ttl_secs, cfg.server.stage.clone())
     };
 
     // Cache check — only when no auth headers present. The cache is keyed
@@ -188,7 +188,7 @@ async fn dispatch_lambda(
     let mut ctx = ApiGatewayV2httpRequestContext::default();
     ctx.route_key = Some(route_key_for_logs.clone());
     ctx.account_id = Some("riz".into());
-    ctx.stage = Some("$default".into());
+    ctx.stage = Some(stage);
     ctx.request_id = Some(request_id.clone());
     ctx.time = Some(time_str);
     ctx.time_epoch = time_epoch as i64;

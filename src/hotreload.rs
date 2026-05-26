@@ -162,6 +162,8 @@ mod tests {
             runtime: RuntimeKind::Bun,
             handler: PathBuf::from(handler),
             timeout_ms: 5000,
+            integration_timeout_ms: 30000,
+            stage_variables: Default::default(),
             cache_ttl_secs: None,
             concurrency,
             routes: vec![],
