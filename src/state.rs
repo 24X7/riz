@@ -310,7 +310,7 @@ mod latency_window_tests {
     }
 
     #[test]
-    fn identical_samples_return_that_value() {
+    fn latency_window_emits_all_percentiles() {
         let mut w = LatencyWindow::new();
         let now = Instant::now();
         for _ in 0..100 { w.push(now, 7.5); }
