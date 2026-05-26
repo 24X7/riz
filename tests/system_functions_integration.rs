@@ -85,6 +85,7 @@ async fn make_state() -> Arc<riz::state::AppState> {
         log_tx,
         log_rx: tokio::sync::Mutex::new(log_rx),
         riz_state,
+        ws_connections: riz::ws::ConnectionStore::new(),
     })
 }
 

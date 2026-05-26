@@ -21,6 +21,7 @@ pub struct AppState {
     pub log_tx: mpsc::Sender<LogEntry>,
     pub log_rx: Mutex<mpsc::Receiver<LogEntry>>,
     pub riz_state: Arc<RizState>,
+    pub ws_connections: crate::ws::ConnectionStore,
 }
 
 /// Per-route counters stored as atomics so the hot path only needs a READ lock

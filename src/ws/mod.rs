@@ -3,6 +3,7 @@
 pub mod connection;
 pub mod event;
 pub mod store;
+pub mod upgrade;
 
 #[allow(unused_imports)]
 pub use connection::{Connection, ConnectionId, OutboundMessage};

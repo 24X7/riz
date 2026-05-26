@@ -219,6 +219,7 @@ async fn main() -> anyhow::Result<()> {
         log_tx,
         log_rx: tokio::sync::Mutex::new(log_rx),
         riz_state,
+        ws_connections: crate::ws::ConnectionStore::new(),
     });
 
     // Dev mode forces TUI on regardless of --no-tui and atty check.

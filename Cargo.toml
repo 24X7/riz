@@ -39,6 +39,7 @@ thiserror = "1"
 indexmap = { version = "2", features = ["serde"] }
 aws_lambda_events = { version = "0.15", default-features = false, features = ["apigw"] }
 http = "1"
+futures-util = "0.3"
 
 [profile.release]
 opt-level = 3
@@ -54,7 +55,6 @@ reqwest = { version = "0.12", features = ["json"] }
 tempfile = "3"
 tokio-test = "0.4"
 tokio-tungstenite = "0.24"
-futures-util = "0.3"
 regex = "1"
 
 # Config for 'cargo dist'
