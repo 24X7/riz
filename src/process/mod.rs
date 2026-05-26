@@ -1,22 +1,22 @@
-pub mod runtime;
 pub mod bun;
+pub mod runtime;
 
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
-use std::time::Instant;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout};
-use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
-use tokio::time::{timeout, Duration};
-use anyhow::Context;
-use tracing::{error, warn};
 use crate::config::FunctionConfig;
 use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
 use crate::process::runtime::RuntimeRegistry;
 use crate::runtime::error_response;
 use crate::state::{LogEntry, RizState};
+use anyhow::Context;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Arc;
+use std::time::Instant;
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, ChildStdin, ChildStdout};
+use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
+use tokio::time::{timeout, Duration};
+use tracing::{error, warn};
 
 struct ProcessHandle {
     pid: u32,
@@ -33,6 +33,7 @@ struct ProcessHandle {
 struct RoutePool {
     /// Function name (`api`, `users`) — used as the map key in
     /// ProcessManager.pools and as the cold_starts attribution key.
+    #[allow(dead_code)]
     name: String,
     config: FunctionConfig,
     handles: RwLock<Vec<Arc<Mutex<ProcessHandle>>>>,
@@ -110,7 +111,8 @@ impl ProcessManager {
             });
             let mut handle_vec = pool.handles.write().await;
             for _ in 0..cfg.concurrency {
-                let handle = spawn_process(cfg, registry, &log_tx).await
+                let handle = spawn_process(cfg, registry, &log_tx)
+                    .await
                     .with_context(|| format!("failed to spawn lambda for {name}"))?;
                 self.riz_state.note_cold_start(name).await;
                 let handle_arc = Arc::new(Mutex::new(handle));
@@ -133,7 +135,8 @@ impl ProcessManager {
         timeout_ms: u64,
     ) -> anyhow::Result<ApiGatewayV2httpResponse> {
         let pools = self.pools.read().await;
-        let pool = pools.get(function_name)
+        let pool = pools
+            .get(function_name)
             .ok_or_else(|| anyhow::anyhow!("no pool for function {function_name}"))?
             .clone();
         drop(pools);
@@ -148,7 +151,9 @@ impl ProcessManager {
                 return Ok(error_response(429, "too many concurrent requests"))
             }
             Err(tokio::sync::TryAcquireError::Closed) => {
-                return Err(anyhow::anyhow!("concurrency semaphore closed for {function_name}"))
+                return Err(anyhow::anyhow!(
+                    "concurrency semaphore closed for {function_name}"
+                ))
             }
         };
 
@@ -192,27 +197,36 @@ impl ProcessManager {
             handle.stdout.read_line(&mut line).await?;
             guard_pid_inner.store(0, std::sync::atomic::Ordering::Relaxed);
             Ok::<String, anyhow::Error>(line)
-        }).await;
+        })
+        .await;
 
         match result {
-            Ok(Ok(line)) => {
-                match serde_json::from_str(line.trim()) {
-                    Ok(resp) => {
-                        pool.consecutive_crashes.store(0, Ordering::Relaxed);
-                        Ok(resp)
-                    }
-                    Err(_) => {
-                        warn!("malformed lambda response on {function_name}: {line:?} — killing and restarting");
-                        handle_process_failure(&pool, &mut handle, function_name).await;
-                        spawn_liveness_watcher(handle.pid, arc.clone(), pool.clone(), function_name.to_string());
-                        Ok(error_response(502, "malformed lambda response"))
-                    }
+            Ok(Ok(line)) => match serde_json::from_str(line.trim()) {
+                Ok(resp) => {
+                    pool.consecutive_crashes.store(0, Ordering::Relaxed);
+                    Ok(resp)
                 }
-            }
+                Err(_) => {
+                    warn!("malformed lambda response on {function_name}: {line:?} — killing and restarting");
+                    handle_process_failure(&pool, &mut handle, function_name).await;
+                    spawn_liveness_watcher(
+                        handle.pid,
+                        arc.clone(),
+                        pool.clone(),
+                        function_name.to_string(),
+                    );
+                    Ok(error_response(502, "malformed lambda response"))
+                }
+            },
             Ok(Err(e)) => {
                 warn!("lambda crash on {function_name}: {e} — restarting");
                 handle_process_failure(&pool, &mut handle, function_name).await;
-                spawn_liveness_watcher(handle.pid, arc.clone(), pool.clone(), function_name.to_string());
+                spawn_liveness_watcher(
+                    handle.pid,
+                    arc.clone(),
+                    pool.clone(),
+                    function_name.to_string(),
+                );
                 Ok(error_response(502, "lambda error"))
             }
             Err(_) => {
@@ -223,7 +237,12 @@ impl ProcessManager {
                     Ok(new_handle) => {
                         *handle = new_handle;
                         pool.riz_state.note_cold_start(function_name).await;
-                        spawn_liveness_watcher(handle.pid, arc.clone(), pool.clone(), function_name.to_string());
+                        spawn_liveness_watcher(
+                            handle.pid,
+                            arc.clone(),
+                            pool.clone(),
+                            function_name.to_string(),
+                        );
                     }
                     Err(spawn_err) => {
                         error!("failed to respawn {function_name}: {spawn_err}");
@@ -246,7 +265,8 @@ impl ProcessManager {
         registry: &RuntimeRegistry,
     ) -> anyhow::Result<u32> {
         let pools = self.pools.read().await;
-        let pool = pools.get(function_name)
+        let pool = pools
+            .get(function_name)
             .ok_or_else(|| anyhow::anyhow!("unknown function {function_name}"))?
             .clone();
         drop(pools);
@@ -265,11 +285,18 @@ impl ProcessManager {
         let mut first_pid = 0;
         for _ in 0..new_config.concurrency {
             let h = spawn_process(&new_config, registry, &pool.log_tx).await?;
-            if first_pid == 0 { first_pid = h.pid; }
+            if first_pid == 0 {
+                first_pid = h.pid;
+            }
             pool.riz_state.note_cold_start(function_name).await;
             let handle_arc = Arc::new(Mutex::new(h));
             let pid = handle_arc.lock().await.pid;
-            spawn_liveness_watcher(pid, handle_arc.clone(), pool.clone(), function_name.to_string());
+            spawn_liveness_watcher(
+                pid,
+                handle_arc.clone(),
+                pool.clone(),
+                function_name.to_string(),
+            );
             handles.push(handle_arc);
         }
 
@@ -323,7 +350,8 @@ impl ProcessManager {
         });
         let mut handle_vec = pool.handles.write().await;
         for _ in 0..cfg.concurrency {
-            let handle = spawn_process(cfg, registry, &log_tx).await
+            let handle = spawn_process(cfg, registry, &log_tx)
+                .await
                 .with_context(|| format!("failed to spawn lambda for {name}"))?;
             self.riz_state.note_cold_start(name).await;
             let handle_arc = Arc::new(Mutex::new(handle));
@@ -372,7 +400,8 @@ impl ProcessManager {
         let mut raw: Vec<RawStat> = Vec::new();
         for (name, pool) in pools.iter() {
             let handles = pool.handles.read().await;
-            let pids = handles.iter()
+            let pids = handles
+                .iter()
                 .filter_map(|h| h.try_lock().ok().map(|g| g.pid))
                 .collect();
             raw.push(RawStat {
@@ -388,7 +417,8 @@ impl ProcessManager {
         // Refresh sysinfo (sync — no await points here)
         // Collect all PIDs first, then pass them to ProcessesToUpdate::Some
         // so sysinfo only scans the specific PIDs we care about
-        let all_pids: Vec<sysinfo::Pid> = raw.iter()
+        let all_pids: Vec<sysinfo::Pid> = raw
+            .iter()
             .flat_map(|r| r.pids.iter().map(|&p| sysinfo::Pid::from_u32(p)))
             .collect();
 
@@ -398,23 +428,25 @@ impl ProcessManager {
             ProcessRefreshKind::new().with_memory().with_cpu(),
         );
 
-        raw.into_iter().map(|r| {
-            let (mem_bytes, cpu) = r.pids.iter().fold((0u64, 0f32), |(m, c), &pid| {
-                match sys.process(Pid::from_u32(pid)) {
-                    Some(p) => (m + p.memory(), c + p.cpu_usage()),
-                    None => (m, c),
+        raw.into_iter()
+            .map(|r| {
+                let (mem_bytes, cpu) = r.pids.iter().fold((0u64, 0f32), |(m, c), &pid| {
+                    match sys.process(Pid::from_u32(pid)) {
+                        Some(p) => (m + p.memory(), c + p.cpu_usage()),
+                        None => (m, c),
+                    }
+                });
+                PoolStats {
+                    name: r.name,
+                    pids: r.pids,
+                    restart_count: r.restarts,
+                    healthy: r.healthy,
+                    concurrency: r.concurrency,
+                    memory_rss_mb: mem_bytes as f64 / (1024.0 * 1024.0),
+                    cpu_percent: cpu,
                 }
-            });
-            PoolStats {
-                name: r.name,
-                pids: r.pids,
-                restart_count: r.restarts,
-                healthy: r.healthy,
-                concurrency: r.concurrency,
-                memory_rss_mb: mem_bytes as f64 / (1024.0 * 1024.0),
-                cpu_percent: cpu,
-            }
-        }).collect()
+            })
+            .collect()
     }
 }
 
@@ -446,7 +478,9 @@ async fn handle_process_failure(
 
 #[cfg(unix)]
 pub(crate) fn kill_process_group(pid: u32) {
-    if pid == 0 { return; }
+    if pid == 0 {
+        return;
+    }
     let _ = nix::sys::signal::killpg(
         nix::unistd::Pid::from_raw(pid as i32),
         nix::sys::signal::Signal::SIGKILL,
@@ -462,9 +496,13 @@ fn spawn_liveness_watcher(
     pool: Arc<RoutePool>,
     function_name: String,
 ) {
-    if pid == 0 { return; }
+    if pid == 0 {
+        return;
+    }
     #[cfg(not(unix))]
-    { return; }
+    {
+        return;
+    }
     #[cfg(unix)]
     tokio::spawn(async move {
         loop {
@@ -503,13 +541,14 @@ async fn spawn_process(
     let runtime = registry.get(&cfg.runtime);
     let mut cmd = runtime.spawn_command(cfg);
     cmd.stdin(std::process::Stdio::piped())
-       .stdout(std::process::Stdio::piped())
-       .stderr(std::process::Stdio::piped());
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
 
     #[cfg(unix)]
     cmd.process_group(0);
 
-    let mut child = cmd.spawn()
+    let mut child = cmd
+        .spawn()
         .with_context(|| format!("failed to spawn {:?}", cfg.handler))?;
 
     let pid = child.id().unwrap_or(0);
@@ -519,14 +558,18 @@ async fn spawn_process(
     if let Some(stderr) = child.stderr.take() {
         // Tag stderr logs with the handler filename — best signal we have
         // about which function it came from at this layer.
-        let tag = cfg.handler.file_name()
+        let tag = cfg
+            .handler
+            .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "lambda".into());
         let tx = log_tx.clone();
         tokio::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                if line.trim().is_empty() { continue; }
+                if line.trim().is_empty() {
+                    continue;
+                }
                 let _ = tx.try_send(LogEntry {
                     timestamp: std::time::SystemTime::now(),
                     level: "WARN".into(),
@@ -537,7 +580,13 @@ async fn spawn_process(
         });
     }
 
-    Ok(ProcessHandle { pid, stdin, stdout, spawned_at: Instant::now(), _child: child })
+    Ok(ProcessHandle {
+        pid,
+        stdin,
+        stdout,
+        spawned_at: Instant::now(),
+        _child: child,
+    })
 }
 
 #[cfg(test)]
@@ -579,10 +628,15 @@ mod tests {
         // This test validates the data shape we rely on: a non-empty, non-JSON string
         // is what triggers the desync bug that this fix addresses.
         let bad_line = "not valid json at all\n";
-        let result = serde_json::from_str::<crate::gateway::ApiGatewayV2httpResponse>(bad_line.trim());
-        assert!(result.is_err(), "non-JSON line must fail to parse — this is the trigger condition for BUG-01");
+        let result =
+            serde_json::from_str::<crate::gateway::ApiGatewayV2httpResponse>(bad_line.trim());
+        assert!(
+            result.is_err(),
+            "non-JSON line must fail to parse — this is the trigger condition for BUG-01"
+        );
         // Empty line is a different edge case (read_line returned EOF or blank)
-        let empty_result = serde_json::from_str::<crate::gateway::ApiGatewayV2httpResponse>("".trim());
+        let empty_result =
+            serde_json::from_str::<crate::gateway::ApiGatewayV2httpResponse>("".trim());
         assert!(empty_result.is_err(), "empty string also fails to parse");
     }
 
@@ -592,7 +646,10 @@ mod tests {
         // This is the invariant that prevents double-respawn.
         let original_pid = 12345u32;
         let current_pid = 99999u32; // already respawned
-        assert_ne!(original_pid, current_pid, "PID mismatch means process already respawned — watcher must skip");
+        assert_ne!(
+            original_pid, current_pid,
+            "PID mismatch means process already respawned — watcher must skip"
+        );
     }
 
     #[test]
@@ -612,7 +669,10 @@ mod tests {
         let sem = tokio::sync::Semaphore::new(1);
         let _p = sem.try_acquire().expect("first permit");
         assert!(
-            matches!(sem.try_acquire(), Err(tokio::sync::TryAcquireError::NoPermits)),
+            matches!(
+                sem.try_acquire(),
+                Err(tokio::sync::TryAcquireError::NoPermits)
+            ),
             "exhausted semaphore must return NoPermits"
         );
 
@@ -620,7 +680,10 @@ mod tests {
         let sem2 = tokio::sync::Semaphore::new(1);
         sem2.close();
         assert!(
-            matches!(sem2.try_acquire(), Err(tokio::sync::TryAcquireError::Closed)),
+            matches!(
+                sem2.try_acquire(),
+                Err(tokio::sync::TryAcquireError::Closed)
+            ),
             "closed semaphore must return Closed, not NoPermits"
         );
     }
@@ -655,6 +718,8 @@ mod tests {
 
         // Release the in-flight permit — drain_task can now complete.
         drop(_in_flight);
-        drain_task.await.expect("drain task must complete after in-flight releases");
+        drain_task
+            .await
+            .expect("drain task must complete after in-flight releases");
     }
 }

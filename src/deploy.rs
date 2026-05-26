@@ -1,6 +1,4 @@
-use std::net::IpAddr;
-use std::path::PathBuf;
-use std::sync::Arc;
+use crate::state::AppState;
 use axum::{
     extract::{ConnectInfo, Json, State},
     http::{HeaderMap, StatusCode},
@@ -8,9 +6,10 @@ use axum::{
 };
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
+use std::net::IpAddr;
+use std::path::PathBuf;
+use std::sync::Arc;
 use tracing::{error, info};
-use crate::router::Router;
-use crate::state::AppState;
 
 #[derive(Deserialize)]
 pub struct DeployRequest {
@@ -48,19 +47,33 @@ pub async fn deploy_handler(
     if expected_key.is_none() && !has_cidr_restriction {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(ErrorResponse { error: "deploy endpoint requires auth configuration (deploy_key or allowed_cidrs)".into() })
-        ).into_response();
+            Json(ErrorResponse {
+                error: "deploy endpoint requires auth configuration (deploy_key or allowed_cidrs)"
+                    .into(),
+            }),
+        )
+            .into_response();
     }
 
     // IP allowlist check (empty = allow all)
     if !deploy_cfg.allowed_cidrs.is_empty() {
         let client_ip = addr.ip();
         let allowed = deploy_cfg.allowed_cidrs.iter().any(|cidr| {
-            cidr.parse::<IpNet>().map(|net| net.contains(&client_ip)).unwrap_or(false)
-                || cidr.parse::<IpAddr>().map(|ip| ip == client_ip).unwrap_or(false)
+            cidr.parse::<IpNet>()
+                .map(|net| net.contains(&client_ip))
+                .unwrap_or(false)
+                || cidr
+                    .parse::<IpAddr>()
+                    .map(|ip| ip == client_ip)
+                    .unwrap_or(false)
         });
         if !allowed {
-            return (StatusCode::FORBIDDEN, Json(ErrorResponse { error: "forbidden".into() }))
+            return (
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    error: "forbidden".into(),
+                }),
+            )
                 .into_response();
         }
     }
@@ -71,14 +84,25 @@ pub async fn deploy_handler(
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "));
         if provided != Some(expected.as_str()) {
-            return (StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: "unauthorized".into() }))
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "unauthorized".into(),
+                }),
+            )
                 .into_response();
         }
     }
 
     // Validate lambda name is a safe identifier
     if body.lambda.contains('/') || body.lambda.contains('.') {
-        return (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "invalid lambda name".into() })).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "invalid lambda name".into(),
+            }),
+        )
+            .into_response();
     }
 
     // Find the matching FUNCTION by name. The deploy "lambda" identifier
@@ -90,66 +114,104 @@ pub async fn deploy_handler(
     let mut function_cfg = match function_cfg {
         Some(c) => c,
         None => {
-            return (StatusCode::NOT_FOUND, Json(ErrorResponse {
-                error: format!("no function found for '{}'", body.lambda),
-            })).into_response();
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: format!("no function found for '{}'", body.lambda),
+                }),
+            )
+                .into_response();
         }
     };
 
     // Download zip from S3 and unpack to staging dir.
     // UUID suffix ensures concurrent deploys for the same lambda never share a path (BUG-18).
-    let staging_dir = PathBuf::from(format!("/tmp/riz-deploy/{}-{}", body.lambda, uuid::Uuid::new_v4()));
-    if let Err(e) = download_and_unpack_s3(&body.s3_bucket, &body.s3_key, &staging_dir, &aws_region).await {
+    let staging_dir = PathBuf::from(format!(
+        "/tmp/riz-deploy/{}-{}",
+        body.lambda,
+        uuid::Uuid::new_v4()
+    ));
+    if let Err(e) =
+        download_and_unpack_s3(&body.s3_bucket, &body.s3_key, &staging_dir, &aws_region).await
+    {
         error!("deploy download failed for {}: {e}", body.lambda);
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse {
-            error: format!("download failed: {e}"),
-        })).into_response();
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("download failed: {e}"),
+            }),
+        )
+            .into_response();
     }
 
     let handler_name = match function_cfg.handler.file_name() {
         Some(name) => name.to_os_string(),
         None => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse {
-                error: format!("function handler has no filename: {:?}", function_cfg.handler),
-            })).into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!(
+                        "function handler has no filename: {:?}",
+                        function_cfg.handler
+                    ),
+                }),
+            )
+                .into_response();
         }
     };
     function_cfg.handler = staging_dir.join(&handler_name);
 
-    match state.process_manager.hot_swap(&body.lambda, function_cfg, &state.runtime_registry).await {
+    match state
+        .process_manager
+        .hot_swap(&body.lambda, function_cfg, &state.runtime_registry)
+        .await
+    {
         Ok(pid) => {
             tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
             let stats = state.process_manager.pool_stats().await;
-            let still_healthy = stats.iter()
+            let still_healthy = stats
+                .iter()
                 .find(|s| s.name == body.lambda)
                 .map(|s| s.healthy)
                 .unwrap_or(false);
 
             if !still_healthy {
-                info!("deploy {} pid={pid} crashed on startup — returning 422", body.lambda);
-                return (StatusCode::UNPROCESSABLE_ENTITY, Json(ErrorResponse {
-                    error: "handler crashed immediately after deploy — check handler code".into(),
-                })).into_response();
+                info!(
+                    "deploy {} pid={pid} crashed on startup — returning 422",
+                    body.lambda
+                );
+                return (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(ErrorResponse {
+                        error: "handler crashed immediately after deploy — check handler code"
+                            .into(),
+                    }),
+                )
+                    .into_response();
             }
 
             info!("deployed {} pid={pid}", body.lambda);
-            (StatusCode::OK, Json(DeployResponse {
-                status: "ok".into(),
-                lambda: body.lambda,
-                pid,
-            })).into_response()
+            (
+                StatusCode::OK,
+                Json(DeployResponse {
+                    status: "ok".into(),
+                    lambda: body.lambda,
+                    pid,
+                }),
+            )
+                .into_response()
         }
         Err(e) => {
             error!("hot_swap failed for {}: {e}", body.lambda);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse {
-                error: format!("swap failed: {e}"),
-            })).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("swap failed: {e}"),
+                }),
+            )
+                .into_response()
         }
     }
-}
-
-fn route_name_matches(path: &str, name: &str) -> bool {
-    path.trim_matches('/').split('/').any(|seg| seg == name)
 }
 
 async fn download_and_unpack_s3(
@@ -175,14 +237,18 @@ async fn download_and_unpack_s3(
         .await
         .map_err(|e| anyhow::anyhow!("S3 GetObject failed: {e}"))?;
 
-    let bytes = resp.body.collect().await
-        .map_err(|e| anyhow::anyhow!("S3 body read failed: {e}"))?.into_bytes();
+    let bytes = resp
+        .body
+        .collect()
+        .await
+        .map_err(|e| anyhow::anyhow!("S3 body read failed: {e}"))?
+        .into_bytes();
 
     // No need to remove the dir first — the UUID-suffixed path is always fresh (BUG-18).
     std::fs::create_dir_all(dest)?;
     let cursor = std::io::Cursor::new(bytes);
-    let mut archive = zip::ZipArchive::new(cursor)
-        .map_err(|e| anyhow::anyhow!("zip open failed: {e}"))?;
+    let mut archive =
+        zip::ZipArchive::new(cursor).map_err(|e| anyhow::anyhow!("zip open failed: {e}"))?;
 
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
@@ -216,24 +282,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn route_name_matches_segment() {
-        assert!(route_name_matches("/auth/signin", "signin"));
-        assert!(route_name_matches("/signin", "signin"));
-        assert!(!route_name_matches("/auth/login", "signin"));
-    }
-
-    #[test]
-    fn route_name_no_match_on_empty() {
-        assert!(!route_name_matches("/auth/signin", ""));
-    }
-
-    #[test]
     fn deploy_refuses_when_no_auth_configured() {
         // Verify the logic: no deploy_key + empty allowed_cidrs = refuse
         let deploy_key: Option<String> = None;
         let allowed_cidrs: Vec<String> = vec![];
         let should_refuse = deploy_key.is_none() && allowed_cidrs.is_empty();
-        assert!(should_refuse, "must refuse deploy when no auth is configured");
+        assert!(
+            should_refuse,
+            "must refuse deploy when no auth is configured"
+        );
     }
 
     #[test]
@@ -258,7 +315,10 @@ mod tests {
         let lambda = "my-fn";
         let path_a = format!("/tmp/riz-deploy/{}-{}", lambda, uuid::Uuid::new_v4());
         let path_b = format!("/tmp/riz-deploy/{}-{}", lambda, uuid::Uuid::new_v4());
-        assert_ne!(path_a, path_b, "staging paths must be unique across deploy attempts");
+        assert_ne!(
+            path_a, path_b,
+            "staging paths must be unique across deploy attempts"
+        );
         // Both paths must still share the expected prefix so ops tooling can find them.
         assert!(path_a.starts_with("/tmp/riz-deploy/my-fn-"));
         assert!(path_b.starts_with("/tmp/riz-deploy/my-fn-"));

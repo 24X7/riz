@@ -7,7 +7,8 @@ use std::time::Duration;
 
 #[tokio::test]
 async fn echo_lambda_returns_200() {
-    let config_toml = format!(r#"
+    let config_toml = format!(
+        r#"
 [server]
 port = 0
 host = "127.0.0.1"
@@ -21,7 +22,12 @@ concurrency = 1
 [[function.echo.routes]]
 path = "/echo"
 method = "GET"
-"#, handler = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/echo-lambda/index.ts"));
+"#,
+        handler = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/echo-lambda/index.ts"
+        )
+    );
 
     let config: riz::config::Config = toml::from_str(&config_toml).unwrap();
 
@@ -32,16 +38,27 @@ method = "GET"
 
     let riz_state = Arc::new(riz::state::RizState::new());
     for (name, cfg) in &config.functions {
-        riz_state.register(riz::state::FunctionState::user(name.clone(), cfg.clone())).await;
+        riz_state
+            .register(riz::state::FunctionState::user(name.clone(), cfg.clone()))
+            .await;
     }
 
     let process_manager = Arc::new(riz::process::ProcessManager::new(riz_state.clone()));
-    process_manager.spawn_all(&config.functions, &registry, log_tx.clone()).await.unwrap();
+    process_manager
+        .spawn_all(&config.functions, &registry, log_tx.clone())
+        .await
+        .unwrap();
 
-    let handlers: Vec<Arc<dyn riz::runtime::LambdaHandler>> = config.functions.iter()
-        .map(|(name, cfg)| Arc::new(
-            riz::runtime::process::ProcessHandler::for_function(name, cfg, process_manager.clone())
-        ) as Arc<dyn riz::runtime::LambdaHandler>)
+    let handlers: Vec<Arc<dyn riz::runtime::LambdaHandler>> = config
+        .functions
+        .iter()
+        .map(|(name, cfg)| {
+            Arc::new(riz::runtime::process::ProcessHandler::for_function(
+                name,
+                cfg,
+                process_manager.clone(),
+            )) as Arc<dyn riz::runtime::LambdaHandler>
+        })
         .collect();
     let router = riz::router::Router::new(handlers);
 
@@ -62,16 +79,21 @@ method = "GET"
     let bound_addr: SocketAddr = listener.local_addr().unwrap();
 
     tokio::spawn(async move {
-        let app = riz::server::build_app(app_state)
-            .into_make_service_with_connect_info::<SocketAddr>();
+        let app =
+            riz::server::build_app(app_state).into_make_service_with_connect_info::<SocketAddr>();
         axum::serve(listener, app).await.unwrap();
     });
 
     let url = format!("http://{bound_addr}/echo");
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
-        if reqwest::get(&url).await.is_ok() { break; }
-        assert!(tokio::time::Instant::now() < deadline, "server did not start within 10s");
+        if reqwest::get(&url).await.is_ok() {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "server did not start within 10s"
+        );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
@@ -85,7 +107,8 @@ method = "GET"
 
 #[tokio::test]
 async fn cache_returns_hit_on_second_request() {
-    let config_toml = format!(r#"
+    let config_toml = format!(
+        r#"
 [server]
 port = 0
 host = "127.0.0.1"
@@ -100,7 +123,12 @@ concurrency = 1
 [[function.cached.routes]]
 path = "/cached"
 method = "GET"
-"#, handler = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/echo-lambda/index.ts"));
+"#,
+        handler = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/echo-lambda/index.ts"
+        )
+    );
 
     let config: riz::config::Config = toml::from_str(&config_toml).unwrap();
     let registry = Arc::new(riz::process::runtime::RuntimeRegistry::new().unwrap());
@@ -110,16 +138,27 @@ method = "GET"
 
     let riz_state = Arc::new(riz::state::RizState::new());
     for (name, cfg) in &config.functions {
-        riz_state.register(riz::state::FunctionState::user(name.clone(), cfg.clone())).await;
+        riz_state
+            .register(riz::state::FunctionState::user(name.clone(), cfg.clone()))
+            .await;
     }
 
     let process_manager = Arc::new(riz::process::ProcessManager::new(riz_state.clone()));
-    process_manager.spawn_all(&config.functions, &registry, log_tx.clone()).await.unwrap();
+    process_manager
+        .spawn_all(&config.functions, &registry, log_tx.clone())
+        .await
+        .unwrap();
 
-    let handlers: Vec<Arc<dyn riz::runtime::LambdaHandler>> = config.functions.iter()
-        .map(|(name, cfg)| Arc::new(
-            riz::runtime::process::ProcessHandler::for_function(name, cfg, process_manager.clone())
-        ) as Arc<dyn riz::runtime::LambdaHandler>)
+    let handlers: Vec<Arc<dyn riz::runtime::LambdaHandler>> = config
+        .functions
+        .iter()
+        .map(|(name, cfg)| {
+            Arc::new(riz::runtime::process::ProcessHandler::for_function(
+                name,
+                cfg,
+                process_manager.clone(),
+            )) as Arc<dyn riz::runtime::LambdaHandler>
+        })
         .collect();
     let router = riz::router::Router::new(handlers);
 
@@ -141,16 +180,20 @@ method = "GET"
     let state_for_check = state.clone();
 
     tokio::spawn(async move {
-        let app = riz::server::build_app(state)
-            .into_make_service_with_connect_info::<SocketAddr>();
+        let app = riz::server::build_app(state).into_make_service_with_connect_info::<SocketAddr>();
         axum::serve(listener, app).await.unwrap();
     });
 
     let url = format!("http://{bound_addr}/cached");
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
-        if reqwest::get(&url).await.is_ok() { break; }
-        assert!(tokio::time::Instant::now() < deadline, "server did not start within 10s");
+        if reqwest::get(&url).await.is_ok() {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "server did not start within 10s"
+        );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 

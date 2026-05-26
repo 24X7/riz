@@ -4,7 +4,13 @@
 //! on Riz unchanged — same crate (`aws_lambda_events`), same field names,
 //! same serde JSON format on the wire to the child process.
 
+// WebSocket types are consumed only from integration tests (tests/aws_contract.rs)
+// today; library code starts using them when WS Task 7 (upgrade handler) lands.
+// Keep the re-exports stable so handler authors and tests can rely on
+// `riz::gateway::*` regardless of which feature has shipped.
+#[allow(unused_imports)]
 pub use aws_lambda_events::apigw::{
+    ApiGatewayProxyResponse,
     ApiGatewayV2httpRequest,
     ApiGatewayV2httpRequestContext,
     ApiGatewayV2httpRequestContextHttpDescription,
@@ -13,6 +19,5 @@ pub use aws_lambda_events::apigw::{
     // WebSocket return type happens to reuse the v1 REST response struct).
     ApiGatewayWebsocketProxyRequest,
     ApiGatewayWebsocketProxyRequestContext,
-    ApiGatewayProxyResponse,
 };
 pub use aws_lambda_events::encodings::Body;

@@ -13,27 +13,36 @@ use std::fs;
 const LANDING_PAGE: &str = "web/index.html";
 
 fn html() -> String {
-    fs::read_to_string(LANDING_PAGE)
-        .unwrap_or_else(|e| panic!("could not read {LANDING_PAGE}: {e} \
-            — the landing page is part of the repo and missing it is a build break"))
+    fs::read_to_string(LANDING_PAGE).unwrap_or_else(|e| {
+        panic!(
+            "could not read {LANDING_PAGE}: {e} \
+            — the landing page is part of the repo and missing it is a build break"
+        )
+    })
 }
 
 /// Extracts the inner text of the first `<pre>` block inside the section
 /// with id="config". Strips HTML tags so the result is parseable TOML.
 fn extract_config_toml_block(html: &str) -> String {
     let re = Regex::new(r#"(?s)<section[^>]*id="config".*?<pre>(.*?)</pre>"#).unwrap();
-    let caps = re.captures(html).expect("could not locate the #config <pre> block");
+    let caps = re
+        .captures(html)
+        .expect("could not locate the #config <pre> block");
     strip_html_tags(&caps[1])
 }
 
 /// Extracts every `<span class="pill">…</span>` inside the section with
 /// id="config" .pills container.
 fn extract_pills(html: &str) -> Vec<String> {
-    let re_section = Regex::new(r#"(?s)<section[^>]*id="config".*?<div class="pills">(.*?)</div>"#).unwrap();
-    let pills_block = re_section.captures(html)
-        .expect("could not locate the #config .pills block")[1].to_string();
+    let re_section =
+        Regex::new(r#"(?s)<section[^>]*id="config".*?<div class="pills">(.*?)</div>"#).unwrap();
+    let pills_block = re_section
+        .captures(html)
+        .expect("could not locate the #config .pills block")[1]
+        .to_string();
     let re_pill = Regex::new(r#"<span class="pill">(.*?)</span>"#).unwrap();
-    re_pill.captures_iter(&pills_block)
+    re_pill
+        .captures_iter(&pills_block)
         .map(|c| c[1].trim().to_string())
         .collect()
 }
@@ -42,13 +51,16 @@ fn extract_pills(html: &str) -> Vec<String> {
 /// heading that matches `heading_contains`.
 fn extract_status_lis(html: &str, heading_contains: &str) -> Vec<String> {
     let re_section = Regex::new(r#"(?s)<section[^>]*id="status".*?</section>"#).unwrap();
-    let status_block = re_section.find(html)
-        .expect("could not locate the #status section").as_str();
+    let status_block = re_section
+        .find(html)
+        .expect("could not locate the #status section")
+        .as_str();
     let re_col = Regex::new(r#"(?s)<div class="status-col">\s*<h3>(.*?)</h3>(.*?)</div>"#).unwrap();
+    let re_li = Regex::new(r#"<li>(.*?)</li>"#).unwrap();
     for caps in re_col.captures_iter(status_block) {
         if caps[1].contains(heading_contains) {
-            let re_li = Regex::new(r#"<li>(.*?)</li>"#).unwrap();
-            return re_li.captures_iter(&caps[2])
+            return re_li
+                .captures_iter(&caps[2])
                 .map(|c| strip_html_tags(&c[1]).trim().to_string())
                 .collect();
         }
@@ -62,14 +74,19 @@ fn strip_html_tags(s: &str) -> String {
 }
 
 fn html_decode_entities(s: &str) -> String {
-    s.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
 }
 
 #[test]
 fn extractors_smoke() {
     let h = html();
     let toml = extract_config_toml_block(&h);
-    assert!(toml.contains("[function.api]"), "config block missing function header: {toml}");
+    assert!(
+        toml.contains("[function.api]"),
+        "config block missing function header: {toml}"
+    );
     let pills = extract_pills(&h);
     assert!(!pills.is_empty(), "expected at least one pill");
     let works = extract_status_lis(&h, "Works now");
@@ -88,8 +105,8 @@ fn embedded_riz_toml_parses_and_validates() {
     let full = format!("[server]\nport = 3000\nhost = \"0.0.0.0\"\n\n{raw}");
     let cfg: riz::config::Config = toml::from_str(&full)
         .unwrap_or_else(|e| panic!("landing-page riz.toml does not parse:\n{e}\n---\n{full}"));
-    cfg.validate().unwrap_or_else(|e|
-        panic!("landing-page riz.toml fails validation: {e}\n---\n{full}"));
+    cfg.validate()
+        .unwrap_or_else(|e| panic!("landing-page riz.toml fails validation: {e}\n---\n{full}"));
 }
 
 /// Source-of-truth for every feature pill on the landing page.
@@ -110,11 +127,13 @@ fn pills_match_truth_slice() {
     let only_on_page: Vec<_> = on_page.difference(&in_code).cloned().collect();
     let only_in_code: Vec<_> = in_code.difference(&on_page).cloned().collect();
 
-    assert!(only_on_page.is_empty() && only_in_code.is_empty(),
+    assert!(
+        only_on_page.is_empty() && only_in_code.is_empty(),
         "Landing-page pills drift detected.\n\
          On page but not in PILLS truth slice: {only_on_page:?}\n\
          In PILLS but not on page: {only_in_code:?}\n\
-         Fix one or the other.");
+         Fix one or the other."
+    );
 }
 
 struct Claim {
@@ -123,38 +142,81 @@ struct Claim {
 }
 
 const WORKS_NOW: &[Claim] = &[
-    Claim { page_text: "AWS API Gateway v2 HTTP payload — exact aws_lambda_events types",
-            proof: "fixture_apigw_v2_http_simple_get_round_trips" },
-    Claim { page_text: "Bun (TypeScript / JavaScript) handlers",
-            proof: "runtime_registry_registers_bun" },
-    Claim { page_text: "Function-centric config: [function.<name>] + N routes per function",
-            proof: "function_centric_config_parses" },
-    Claim { page_text: "AWS path syntax: {id}, {proxy+}, $default",
-            proof: "router_matches_aws_path_syntax" },
-    Claim { page_text: "AWS handler syntax: handler = \"index.handler\"",
-            proof: "handler_export_syntax_resolves" },
-    Claim { page_text: "Hot-swap deploys from S3 with in-flight request drain",
-            proof: "hot_swap_drains_in_flight_requests" },
-    Claim { page_text: "riz.toml hot-reload on save",
-            proof: "hotreload_picks_up_riz_toml_changes" },
-    Claim { page_text: "/_riz/health · /_riz/metrics · /_riz/registry",
-            proof: "system_endpoints_respond_with_aws_shape" },
-    Claim { page_text: "MCP server (spec 2024-11-05, JSON-RPC, batches, lifecycle)",
-            proof: "mcp_spec_2024_11_05_lifecycle" },
-    Claim { page_text: "Terminal dashboard: P50/P75/P90/P95/P99 over 5-min window",
-            proof: "latency_window_emits_all_percentiles" },
-    Claim { page_text: "Datadog metrics emitter",
-            proof: "datadog_emitter_constructs_from_config" },
+    Claim {
+        page_text: "AWS API Gateway v2 HTTP payload — exact aws_lambda_events types",
+        proof: "fixture_apigw_v2_http_simple_get_round_trips",
+    },
+    Claim {
+        page_text: "Bun (TypeScript / JavaScript) handlers",
+        proof: "runtime_registry_registers_bun",
+    },
+    Claim {
+        page_text: "Function-centric config: [function.<name>] + N routes per function",
+        proof: "function_centric_config_parses",
+    },
+    Claim {
+        page_text: "AWS path syntax: {id}, {proxy+}, $default",
+        proof: "router_matches_aws_path_syntax",
+    },
+    Claim {
+        page_text: "AWS handler syntax: handler = \"index.handler\"",
+        proof: "handler_export_syntax_resolves",
+    },
+    Claim {
+        page_text: "Hot-swap deploys from S3 with in-flight request drain",
+        proof: "hot_swap_drains_in_flight_requests",
+    },
+    Claim {
+        page_text: "riz.toml hot-reload on save",
+        proof: "hotreload_picks_up_riz_toml_changes",
+    },
+    Claim {
+        page_text: "/_riz/health · /_riz/metrics · /_riz/registry",
+        proof: "system_endpoints_respond_with_aws_shape",
+    },
+    Claim {
+        page_text: "MCP server (spec 2024-11-05, JSON-RPC, batches, lifecycle)",
+        proof: "mcp_spec_2024_11_05_lifecycle",
+    },
+    Claim {
+        page_text: "Terminal dashboard: P50/P75/P90/P95/P99 over 5-min window",
+        proof: "latency_window_emits_all_percentiles",
+    },
+    Claim {
+        page_text: "Datadog metrics emitter",
+        proof: "datadog_emitter_constructs_from_config",
+    },
 ];
 
 const COMING: &[Claim] = &[
-    Claim { page_text: "Python runtime adapter",                          proof: "Wave 2" },
-    Claim { page_text: "Rust runtime adapter",                            proof: "Wave 6" },
-    Claim { page_text: "WebSocket APIs ($connect / $disconnect / connectionId)", proof: "Wave 1" },
-    Claim { page_text: "Lambda authorizers (REQUEST / JWT)",              proof: "Wave 3" },
-    Claim { page_text: "CORS auto-preflight",                             proof: "Wave 4" },
-    Claim { page_text: "Non-HTTP event sources (SQS, SNS, S3, EventBridge)", proof: "OutOfScope" },
-    Claim { page_text: "Bearer-token auth on /_riz/*",                    proof: "Wave 4.5" },
+    Claim {
+        page_text: "Python runtime adapter",
+        proof: "Wave 2",
+    },
+    Claim {
+        page_text: "Rust runtime adapter",
+        proof: "Wave 6",
+    },
+    Claim {
+        page_text: "WebSocket APIs ($connect / $disconnect / connectionId)",
+        proof: "Wave 1",
+    },
+    Claim {
+        page_text: "Lambda authorizers (REQUEST / JWT)",
+        proof: "Wave 3",
+    },
+    Claim {
+        page_text: "CORS auto-preflight",
+        proof: "Wave 4",
+    },
+    Claim {
+        page_text: "Non-HTTP event sources (SQS, SNS, S3, EventBridge)",
+        proof: "OutOfScope",
+    },
+    Claim {
+        page_text: "Bearer-token auth on /_riz/*",
+        proof: "Wave 4.5",
+    },
 ];
 
 fn normalize_li(s: &str) -> String {
@@ -167,61 +229,86 @@ fn normalize_li(s: &str) -> String {
 #[test]
 fn works_now_matches_truth_slice() {
     let on_page: HashSet<String> = extract_status_lis(&html(), "Works now")
-        .into_iter().map(|s| normalize_li(&s)).collect();
-    let in_code: HashSet<String> = WORKS_NOW.iter()
-        .map(|c| normalize_li(c.page_text)).collect();
+        .into_iter()
+        .map(|s| normalize_li(&s))
+        .collect();
+    let in_code: HashSet<String> = WORKS_NOW
+        .iter()
+        .map(|c| normalize_li(c.page_text))
+        .collect();
 
     let only_on_page: Vec<_> = on_page.difference(&in_code).cloned().collect();
     let only_in_code: Vec<_> = in_code.difference(&on_page).cloned().collect();
 
-    assert!(only_on_page.is_empty() && only_in_code.is_empty(),
+    assert!(
+        only_on_page.is_empty() && only_in_code.is_empty(),
         "Works-now drift detected.\n\
          On page but not in WORKS_NOW: {only_on_page:?}\n\
-         In WORKS_NOW but not on page: {only_in_code:?}");
+         In WORKS_NOW but not on page: {only_in_code:?}"
+    );
 }
 
 #[test]
 fn coming_matches_truth_slice() {
     let on_page: HashSet<String> = extract_status_lis(&html(), "Coming")
-        .into_iter().map(|s| normalize_li(&s)).collect();
-    let in_code: HashSet<String> = COMING.iter()
-        .map(|c| normalize_li(c.page_text)).collect();
+        .into_iter()
+        .map(|s| normalize_li(&s))
+        .collect();
+    let in_code: HashSet<String> = COMING.iter().map(|c| normalize_li(c.page_text)).collect();
 
     let only_on_page: Vec<_> = on_page.difference(&in_code).cloned().collect();
     let only_in_code: Vec<_> = in_code.difference(&on_page).cloned().collect();
 
-    assert!(only_on_page.is_empty() && only_in_code.is_empty(),
+    assert!(
+        only_on_page.is_empty() && only_in_code.is_empty(),
         "Coming drift detected.\n\
          On page but not in COMING: {only_on_page:?}\n\
-         In COMING but not on page: {only_in_code:?}");
+         In COMING but not on page: {only_in_code:?}"
+    );
 }
 
 #[test]
 fn coming_proofs_reference_real_waves() {
-    let roadmap = fs::read_to_string("docs/superpowers/plans/2026-05-26-v01-honest-ship-roadmap.md")
-        .expect("roadmap missing");
+    let roadmap =
+        fs::read_to_string("docs/superpowers/plans/2026-05-26-v01-honest-ship-roadmap.md")
+            .expect("roadmap missing");
     for claim in COMING {
-        if claim.proof == "OutOfScope" { continue; }
+        if claim.proof == "OutOfScope" {
+            continue;
+        }
         let needle = format!("## {}", claim.proof);
         let needle_alt = format!("## {} —", claim.proof);
-        assert!(roadmap.contains(&needle) || roadmap.contains(&needle_alt),
+        assert!(
+            roadmap.contains(&needle) || roadmap.contains(&needle_alt),
             "COMING claim {:?} points at proof {:?}, but the roadmap has no matching heading",
-            claim.page_text, claim.proof);
+            claim.page_text,
+            claim.proof
+        );
     }
 }
 
 #[test]
 fn works_now_proof_tests_exist() {
     let output = std::process::Command::new(env!("CARGO"))
-        .args(["test", "--workspace", "--all-targets", "--", "--list", "--format=terse"])
+        .args([
+            "test",
+            "--workspace",
+            "--all-targets",
+            "--",
+            "--list",
+            "--format=terse",
+        ])
         .output()
         .expect("failed to run `cargo test --list`");
     let listing = String::from_utf8_lossy(&output.stdout);
-    let missing: Vec<_> = WORKS_NOW.iter()
+    let missing: Vec<_> = WORKS_NOW
+        .iter()
         .filter(|c| !listing.contains(c.proof))
         .map(|c| c.proof)
         .collect();
-    assert!(missing.is_empty(),
+    assert!(
+        missing.is_empty(),
         "WORKS_NOW claims point at proof tests that do not exist:\n  {missing:?}\n\
-         Either rename the test, change the proof field, or write the missing test.");
+         Either rename the test, change the proof field, or write the missing test."
+    );
 }

@@ -1,12 +1,12 @@
 //! /_riz/registry handler — JSON manifest of all mounted routes (user + system).
 
-use async_trait::async_trait;
-use serde::Serialize;
-use std::sync::Arc;
-use http::{header, HeaderMap, HeaderValue};
 use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse, Body};
 use crate::runtime::{HandlerError, LambdaHandler, RouteEntry, RouteMethod};
 use crate::state::{FunctionKind, RizState};
+use async_trait::async_trait;
+use http::{header, HeaderMap, HeaderValue};
+use serde::Serialize;
+use std::sync::Arc;
 
 pub struct RegistryHandler {
     routes: Vec<RouteEntry>,
@@ -16,7 +16,10 @@ pub struct RegistryHandler {
 impl RegistryHandler {
     pub fn new(riz_state: Arc<RizState>) -> Self {
         Self {
-            routes: vec![RouteEntry { method: RouteMethod::Get, path: "/_riz/registry".into() }],
+            routes: vec![RouteEntry {
+                method: RouteMethod::Get,
+                path: "/_riz/registry".into(),
+            }],
             riz_state,
         }
     }
@@ -44,10 +47,17 @@ struct RegistryFunction {
 
 #[async_trait]
 impl LambdaHandler for RegistryHandler {
-    fn name(&self) -> &str { "GET /_riz/registry" }
-    fn routes(&self) -> &[RouteEntry] { &self.routes }
+    fn name(&self) -> &str {
+        "GET /_riz/registry"
+    }
+    fn routes(&self) -> &[RouteEntry] {
+        &self.routes
+    }
 
-    async fn invoke(&self, _event: ApiGatewayV2httpRequest) -> Result<ApiGatewayV2httpResponse, HandlerError> {
+    async fn invoke(
+        &self,
+        _event: ApiGatewayV2httpRequest,
+    ) -> Result<ApiGatewayV2httpResponse, HandlerError> {
         let functions = self.riz_state.functions.read().await;
         let mut out: Vec<RegistryFunction> = Vec::with_capacity(functions.len());
         for (_, f) in functions.iter() {
@@ -76,11 +86,17 @@ impl LambdaHandler for RegistryHandler {
                 cache_ttl_secs,
             });
         }
-        let body = RegistryBody { version: self.riz_state.version, functions: out };
-        let json = serde_json::to_string(&body)
-            .map_err(|e| HandlerError::Internal(e.to_string()))?;
+        let body = RegistryBody {
+            version: self.riz_state.version,
+            functions: out,
+        };
+        let json =
+            serde_json::to_string(&body).map_err(|e| HandlerError::Internal(e.to_string()))?;
         let mut headers = HeaderMap::new();
-        headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
         Ok(ApiGatewayV2httpResponse {
             status_code: 200,
             headers,
@@ -98,7 +114,9 @@ mod tests {
     use crate::state::FunctionState;
     use crate::test_helpers::make_event;
 
-    fn evt() -> ApiGatewayV2httpRequest { make_event("GET", "/_riz/registry") }
+    fn evt() -> ApiGatewayV2httpRequest {
+        make_event("GET", "/_riz/registry")
+    }
 
     fn body_text(resp: &ApiGatewayV2httpResponse) -> String {
         match resp.body.as_ref().expect("body") {
@@ -154,7 +172,11 @@ mod tests {
     #[tokio::test]
     async fn registry_lists_system_functions_with_nulls() {
         let s = Arc::new(RizState::new());
-        s.register(FunctionState::system("_riz_health", vec!["GET /_riz/health".into()])).await;
+        s.register(FunctionState::system(
+            "_riz_health",
+            vec!["GET /_riz/health".into()],
+        ))
+        .await;
         let h = RegistryHandler::new(s);
         let resp = h.invoke(evt()).await.unwrap();
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();

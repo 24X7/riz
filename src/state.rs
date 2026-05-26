@@ -1,14 +1,14 @@
-use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::{Duration, Instant, SystemTime};
-use tokio::sync::{mpsc, Mutex, RwLock};
 use crate::cache::CacheLayer;
 use crate::config::Config;
 use crate::metrics::MetricsEmitter;
-use crate::process::ProcessManager;
 use crate::process::runtime::RuntimeRegistry;
+use crate::process::ProcessManager;
 use crate::router::Router;
+use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime};
+use tokio::sync::{mpsc, Mutex, RwLock};
 
 pub struct AppState {
     pub config: RwLock<Config>,
@@ -133,7 +133,9 @@ impl AppState {
                 if !healthy {
                     entry.error_count.fetch_add(1, Ordering::Relaxed);
                 }
-                entry.total_latency_us.fetch_add(latency_us, Ordering::Relaxed);
+                entry
+                    .total_latency_us
+                    .fetch_add(latency_us, Ordering::Relaxed);
                 entry.healthy.store(healthy, Ordering::Relaxed);
                 true
             } else {
@@ -156,7 +158,9 @@ impl AppState {
             if !healthy {
                 entry.error_count.fetch_add(1, Ordering::Relaxed);
             }
-            entry.total_latency_us.fetch_add(latency_us, Ordering::Relaxed);
+            entry
+                .total_latency_us
+                .fetch_add(latency_us, Ordering::Relaxed);
             entry.healthy.store(healthy, Ordering::Relaxed);
         }
 
@@ -164,7 +168,9 @@ impl AppState {
         // and the TUI's future migration will read from. record_invocation
         // is a noop if the route_key isn't registered, so it's safe to call
         // unconditionally.
-        self.riz_state.record_invocation(route_key, latency_ms, healthy, cache_hit).await;
+        self.riz_state
+            .record_invocation(route_key, latency_ms, healthy, cache_hit)
+            .await;
     }
 }
 
@@ -245,7 +251,9 @@ impl LatencyWindow {
     pub const MAX_SAMPLES: usize = 100_000;
 
     pub fn new() -> Self {
-        Self { samples: VecDeque::new() }
+        Self {
+            samples: VecDeque::new(),
+        }
     }
 
     pub fn push(&mut self, now: Instant, latency_ms: f64) {
@@ -277,7 +285,9 @@ impl LatencyWindow {
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let n = sorted.len();
         let q = |p: f64| -> f64 {
-            let idx = ((p * n as f64).ceil() as usize).saturating_sub(1).min(n - 1);
+            let idx = ((p * n as f64).ceil() as usize)
+                .saturating_sub(1)
+                .min(n - 1);
             sorted[idx]
         };
         (q(0.50), q(0.75), q(0.90), q(0.95), q(0.99))
@@ -295,7 +305,9 @@ impl LatencyWindow {
 }
 
 impl Default for LatencyWindow {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
@@ -313,7 +325,9 @@ mod latency_window_tests {
     fn latency_window_emits_all_percentiles() {
         let mut w = LatencyWindow::new();
         let now = Instant::now();
-        for _ in 0..100 { w.push(now, 7.5); }
+        for _ in 0..100 {
+            w.push(now, 7.5);
+        }
         let (p50, p75, p90, p95, p99) = w.percentiles(now);
         assert_eq!(p50, 7.5);
         assert_eq!(p75, 7.5);
@@ -326,7 +340,9 @@ mod latency_window_tests {
     fn percentiles_are_monotonic() {
         let mut w = LatencyWindow::new();
         let now = Instant::now();
-        for i in 1..=100 { w.push(now, i as f64); }
+        for i in 1..=100 {
+            w.push(now, i as f64);
+        }
         let (p50, p75, p90, p95, p99) = w.percentiles(now);
         assert!(p50 <= p75);
         assert!(p75 <= p90);
@@ -338,7 +354,9 @@ mod latency_window_tests {
     fn linear_distribution_gives_expected_percentiles() {
         let mut w = LatencyWindow::new();
         let now = Instant::now();
-        for i in 1..=100 { w.push(now, i as f64); }
+        for i in 1..=100 {
+            w.push(now, i as f64);
+        }
         let (p50, _, _, p95, p99) = w.percentiles(now);
         assert!((p50 - 50.0).abs() < 1.0, "p50={p50}");
         assert!((p95 - 95.0).abs() < 1.0, "p95={p95}");
@@ -371,20 +389,28 @@ mod latency_window_tests {
     fn count_only_includes_live_samples() {
         let mut w = LatencyWindow::new();
         let old = Instant::now();
-        for _ in 0..5 { w.push(old, 1.0); }
+        for _ in 0..5 {
+            w.push(old, 1.0);
+        }
         let now = old + Duration::from_secs(301);
-        for _ in 0..3 { w.push(now, 2.0); }
+        for _ in 0..3 {
+            w.push(now, 2.0);
+        }
         assert_eq!(w.count(now), 3);
     }
 }
 
 // ─── FunctionState + RizState ──────────────────────────────────────────────
 
-use indexmap::IndexMap;
 use crate::config::FunctionConfig;
+use indexmap::IndexMap;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FunctionKind { User, System }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum FunctionKind {
+    #[default]
+    User,
+    System,
+}
 
 /// Per-function runtime state. One entry per FUNCTION (not per route) —
 /// matches AWS Lambda's CloudWatch metric shape where counters and latency
@@ -433,21 +459,25 @@ pub struct FunctionStateSnapshot {
 impl FunctionStateSnapshot {
     pub fn hit_rate_pct(&self) -> f64 {
         let total = self.cache_hits + self.cache_misses;
-        if total == 0 { 0.0 } else { self.cache_hits as f64 / total as f64 * 100.0 }
+        if total == 0 {
+            0.0
+        } else {
+            self.cache_hits as f64 / total as f64 * 100.0
+        }
     }
-}
-
-impl Default for FunctionKind {
-    fn default() -> Self { FunctionKind::User }
 }
 
 impl FunctionState {
     /// Capture an immutable snapshot.
     pub fn snapshot(&self, now: Instant) -> FunctionStateSnapshot {
-        let (p50, p75, p90, p95, p99) = self.latency.lock()
+        let (p50, p75, p90, p95, p99) = self
+            .latency
+            .lock()
             .map(|mut w| w.percentiles(now))
             .unwrap_or((0.0, 0.0, 0.0, 0.0, 0.0));
-        let last_invoked_secs_ago = self.last_invoked.lock()
+        let last_invoked_secs_ago = self
+            .last_invoked
+            .lock()
             .ok()
             .and_then(|l| l.map(|t| now.duration_since(t).as_secs_f64()));
         FunctionStateSnapshot {
@@ -471,7 +501,8 @@ impl FunctionState {
 
     pub fn user(name: impl Into<String>, config: FunctionConfig) -> Self {
         let name = name.into();
-        let routes = config.effective_routes(&name)
+        let routes = config
+            .effective_routes(&name)
             .into_iter()
             .map(|r| format!("{} {}", r.method.to_uppercase(), r.path))
             .collect();
@@ -583,7 +614,9 @@ impl RizState {
 }
 
 impl Default for RizState {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
@@ -630,7 +663,9 @@ mod riz_state_tests {
     #[tokio::test]
     async fn register_then_record_increments_counters() {
         let state = RizState::new();
-        state.register(FunctionState::user("api", make_function_config())).await;
+        state
+            .register(FunctionState::user("api", make_function_config()))
+            .await;
         state.record_invocation("api", 12.3, true, false).await;
         state.record_invocation("api", 7.5, true, false).await;
         let functions = state.functions.read().await;
@@ -642,13 +677,17 @@ mod riz_state_tests {
     #[tokio::test]
     async fn record_invocation_for_unknown_function_is_noop() {
         let state = RizState::new();
-        state.record_invocation("never-registered", 5.0, true, false).await;
+        state
+            .record_invocation("never-registered", 5.0, true, false)
+            .await;
     }
 
     #[tokio::test]
     async fn record_invocation_with_cache_hit_increments_cache_hits() {
         let state = RizState::new();
-        state.register(FunctionState::user("api", make_function_config())).await;
+        state
+            .register(FunctionState::user("api", make_function_config()))
+            .await;
         state.record_invocation("api", 1.0, true, true).await;
         let functions = state.functions.read().await;
         let f = functions.get("api").unwrap();
@@ -659,7 +698,9 @@ mod riz_state_tests {
     #[tokio::test]
     async fn unhealthy_invocation_increments_errors_and_flips_healthy() {
         let state = RizState::new();
-        state.register(FunctionState::user("api", make_function_config())).await;
+        state
+            .register(FunctionState::user("api", make_function_config()))
+            .await;
         state.record_invocation("api", 1.0, false, false).await;
         let functions = state.functions.read().await;
         let f = functions.get("api").unwrap();
@@ -670,9 +711,18 @@ mod riz_state_tests {
     #[tokio::test]
     async fn iter_preserves_registration_order() {
         let state = RizState::new();
-        state.register(FunctionState::user("b", make_function_config())).await;
-        state.register(FunctionState::user("a", make_function_config())).await;
-        state.register(FunctionState::system("_riz_health", vec!["GET /_riz/health".into()])).await;
+        state
+            .register(FunctionState::user("b", make_function_config()))
+            .await;
+        state
+            .register(FunctionState::user("a", make_function_config()))
+            .await;
+        state
+            .register(FunctionState::system(
+                "_riz_health",
+                vec!["GET /_riz/health".into()],
+            ))
+            .await;
         let functions = state.functions.read().await;
         let keys: Vec<&str> = functions.keys().map(|s| s.as_str()).collect();
         assert_eq!(keys, vec!["b", "a", "_riz_health"]);

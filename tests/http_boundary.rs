@@ -7,9 +7,13 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 use riz::config::{Config, FunctionConfig, RuntimeKind};
 
-fn make_state_with_functions(functions: IndexMap<String, FunctionConfig>) -> Arc<riz::state::AppState> {
-    let mut config = Config::default();
-    config.functions = functions;
+fn make_state_with_functions(
+    functions: IndexMap<String, FunctionConfig>,
+) -> Arc<riz::state::AppState> {
+    let config = Config {
+        functions,
+        ..Default::default()
+    };
     let registry = Arc::new(riz::process::runtime::RuntimeRegistry::new().unwrap());
     let cache = riz::cache::CacheLayer::new(&config.cache);
     let metrics = riz::metrics::MetricsEmitter::new(&config.datadog);
@@ -19,9 +23,15 @@ fn make_state_with_functions(functions: IndexMap<String, FunctionConfig>) -> Arc
 
     // Build one ProcessHandler per declared function (no spawn — these tests
     // exercise the routing surface and pre-invoke body/cache paths).
-    let handlers: Vec<Arc<dyn riz::runtime::LambdaHandler>> = config.functions.iter()
+    let handlers: Vec<Arc<dyn riz::runtime::LambdaHandler>> = config
+        .functions
+        .iter()
         .map(|(name, cfg)| {
-            let h = riz::runtime::process::ProcessHandler::for_function(name, cfg, process_manager.clone());
+            let h = riz::runtime::process::ProcessHandler::for_function(
+                name,
+                cfg,
+                process_manager.clone(),
+            );
             Arc::new(h) as Arc<dyn riz::runtime::LambdaHandler>
         })
         .collect();
@@ -45,8 +55,7 @@ async fn serve(state: Arc<riz::state::AppState>) -> SocketAddr {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
-        let app = riz::server::build_app(state)
-            .into_make_service_with_connect_info::<SocketAddr>();
+        let app = riz::server::build_app(state).into_make_service_with_connect_info::<SocketAddr>();
         axum::serve(listener, app).await.unwrap();
     });
     addr
@@ -74,7 +83,9 @@ async fn ready_returns_200_when_all_pools_healthy() {
 async fn unknown_path_returns_404() {
     let state = make_state_with_functions(IndexMap::new());
     let addr = serve(state).await;
-    let resp = reqwest::get(format!("http://{addr}/no-such-route")).await.unwrap();
+    let resp = reqwest::get(format!("http://{addr}/no-such-route"))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 404);
 }
 
@@ -118,20 +129,23 @@ async fn oversized_body_returns_413_for_routed_request() {
     // A request to a path with no route gets 404 before the body is read, so
     // we register a synthetic function and target its path with an oversized body.
     let mut functions = IndexMap::new();
-    functions.insert("sink".to_string(), FunctionConfig {
-        runtime: RuntimeKind::Bun,
-        protocol: Default::default(),
-        handler: std::path::PathBuf::from("./does-not-exist.ts"),
-        timeout_ms: 1000,
-        integration_timeout_ms: 30000,
+    functions.insert(
+        "sink".to_string(),
+        FunctionConfig {
+            runtime: RuntimeKind::Bun,
+            protocol: Default::default(),
+            handler: std::path::PathBuf::from("./does-not-exist.ts"),
+            timeout_ms: 1000,
+            integration_timeout_ms: 30000,
             stage_variables: Default::default(),
-        cache_ttl_secs: None,
-        concurrency: 1,
-        routes: vec![riz::config::RouteSpec {
-            path: "/sink".into(),
-            method: "POST".into(),
-        }],
-    });
+            cache_ttl_secs: None,
+            concurrency: 1,
+            routes: vec![riz::config::RouteSpec {
+                path: "/sink".into(),
+                method: "POST".into(),
+            }],
+        },
+    );
     let state = make_state_with_functions(functions);
     let addr = serve(state).await;
     let client = reqwest::Client::new();

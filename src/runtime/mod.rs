@@ -3,11 +3,11 @@
 
 pub mod process;
 
+use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse, Body};
 use async_trait::async_trait;
 use http::HeaderMap;
 use serde::Serialize;
 use std::collections::HashMap;
-use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse, Body};
 
 #[async_trait]
 pub trait LambdaHandler: Send + Sync {
@@ -24,7 +24,10 @@ pub trait LambdaHandler: Send + Sync {
 
     /// Process one event. Returns Ok(response) on success, Err for runtime
     /// failures (which the router converts to a 4xx/5xx response).
-    async fn invoke(&self, event: ApiGatewayV2httpRequest) -> Result<ApiGatewayV2httpResponse, HandlerError>;
+    async fn invoke(
+        &self,
+        event: ApiGatewayV2httpRequest,
+    ) -> Result<ApiGatewayV2httpResponse, HandlerError>;
 }
 
 /// Canonical error-shape response builder. Replaces the old
@@ -32,7 +35,9 @@ pub trait LambdaHandler: Send + Sync {
 /// so it round-trips through the AWS Body::Text encoding.
 pub fn error_response(status_code: u16, message: &str) -> ApiGatewayV2httpResponse {
     #[derive(Serialize)]
-    struct E<'a> { message: &'a str }
+    struct E<'a> {
+        message: &'a str,
+    }
     let body = serde_json::to_string(&E { message })
         .unwrap_or_else(|_| String::from(r#"{"message":"internal"}"#));
     let mut headers = HeaderMap::new();
@@ -108,7 +113,10 @@ impl RouteEntry {
                 if idx >= path_parts.len() {
                     return None;
                 }
-                params.insert(inner.to_string(), crate::router::percent_decode(path_parts[idx]));
+                params.insert(
+                    inner.to_string(),
+                    crate::router::percent_decode(path_parts[idx]),
+                );
                 continue;
             }
             // Literal segment.
@@ -132,7 +140,13 @@ impl RouteEntry {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RouteMethod {
     Any,
-    Get, Post, Put, Delete, Patch, Head, Options,
+    Get,
+    Post,
+    Put,
+    Delete,
+    Patch,
+    Head,
+    Options,
 }
 
 impl RouteMethod {
@@ -158,7 +172,7 @@ impl RouteMethod {
 
     /// Permissive parse — unknown verbs become Any. The verb usually comes
     /// from `riz.toml` so we never want to fail loading on a typo.
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_lenient(s: &str) -> Self {
         match s.to_ascii_uppercase().as_str() {
             "GET" => RouteMethod::Get,
             "POST" => RouteMethod::Post,
@@ -223,16 +237,19 @@ mod tests {
 
     #[test]
     fn route_method_from_str_parses_common_verbs() {
-        assert_eq!(RouteMethod::from_str("GET"), RouteMethod::Get);
-        assert_eq!(RouteMethod::from_str("get"), RouteMethod::Get);
-        assert_eq!(RouteMethod::from_str("PATCH"), RouteMethod::Patch);
-        assert_eq!(RouteMethod::from_str("ANY"), RouteMethod::Any);
-        assert_eq!(RouteMethod::from_str("UNKNOWN"), RouteMethod::Any);
+        assert_eq!(RouteMethod::parse_lenient("GET"), RouteMethod::Get);
+        assert_eq!(RouteMethod::parse_lenient("get"), RouteMethod::Get);
+        assert_eq!(RouteMethod::parse_lenient("PATCH"), RouteMethod::Patch);
+        assert_eq!(RouteMethod::parse_lenient("ANY"), RouteMethod::Any);
+        assert_eq!(RouteMethod::parse_lenient("UNKNOWN"), RouteMethod::Any);
     }
 
     #[test]
     fn route_entry_matches_exact_path() {
-        let e = RouteEntry { method: RouteMethod::Get, path: "/api".into() };
+        let e = RouteEntry {
+            method: RouteMethod::Get,
+            path: "/api".into(),
+        };
         assert!(e.matches("GET", "/api"));
         assert!(!e.matches("POST", "/api"));
         assert!(!e.matches("GET", "/api/users"));
@@ -240,21 +257,30 @@ mod tests {
 
     #[test]
     fn route_entry_match_path_returns_empty_params_for_exact() {
-        let e = RouteEntry { method: RouteMethod::Get, path: "/api".into() };
+        let e = RouteEntry {
+            method: RouteMethod::Get,
+            path: "/api".into(),
+        };
         let params = e.match_path("GET", "/api").unwrap();
         assert!(params.is_empty());
     }
 
     #[test]
     fn route_entry_extracts_single_path_param() {
-        let e = RouteEntry { method: RouteMethod::Get, path: "/accounts/{id}".into() };
+        let e = RouteEntry {
+            method: RouteMethod::Get,
+            path: "/accounts/{id}".into(),
+        };
         let params = e.match_path("GET", "/accounts/42").unwrap();
         assert_eq!(params.get("id").map(String::as_str), Some("42"));
     }
 
     #[test]
     fn route_entry_extracts_multiple_path_params() {
-        let e = RouteEntry { method: RouteMethod::Get, path: "/orgs/{org}/repos/{repo}".into() };
+        let e = RouteEntry {
+            method: RouteMethod::Get,
+            path: "/orgs/{org}/repos/{repo}".into(),
+        };
         let params = e.match_path("GET", "/orgs/anthropic/repos/riz").unwrap();
         assert_eq!(params.get("org").map(String::as_str), Some("anthropic"));
         assert_eq!(params.get("repo").map(String::as_str), Some("riz"));
@@ -262,41 +288,59 @@ mod tests {
 
     #[test]
     fn route_entry_pattern_rejects_segment_count_mismatch() {
-        let e = RouteEntry { method: RouteMethod::Get, path: "/accounts/{id}".into() };
+        let e = RouteEntry {
+            method: RouteMethod::Get,
+            path: "/accounts/{id}".into(),
+        };
         assert!(e.match_path("GET", "/accounts").is_none());
         assert!(e.match_path("GET", "/accounts/42/profile").is_none());
     }
 
     #[test]
     fn route_entry_pattern_rejects_method_mismatch() {
-        let e = RouteEntry { method: RouteMethod::Get, path: "/accounts/{id}".into() };
+        let e = RouteEntry {
+            method: RouteMethod::Get,
+            path: "/accounts/{id}".into(),
+        };
         assert!(e.match_path("POST", "/accounts/42").is_none());
     }
 
     #[test]
     fn route_entry_pattern_percent_decodes_params() {
-        let e = RouteEntry { method: RouteMethod::Get, path: "/files/{name}".into() };
+        let e = RouteEntry {
+            method: RouteMethod::Get,
+            path: "/files/{name}".into(),
+        };
         let params = e.match_path("GET", "/files/hello%20world").unwrap();
         assert_eq!(params.get("name").map(String::as_str), Some("hello world"));
     }
 
     #[test]
     fn route_entry_greedy_proxy_captures_rest_of_path() {
-        let e = RouteEntry { method: RouteMethod::Any, path: "/api/{proxy+}".into() };
+        let e = RouteEntry {
+            method: RouteMethod::Any,
+            path: "/api/{proxy+}".into(),
+        };
         let p = e.match_path("GET", "/api/users/42/profile").unwrap();
         assert_eq!(p.get("proxy").map(String::as_str), Some("users/42/profile"));
     }
 
     #[test]
     fn route_entry_greedy_requires_at_least_one_segment() {
-        let e = RouteEntry { method: RouteMethod::Any, path: "/api/{proxy+}".into() };
+        let e = RouteEntry {
+            method: RouteMethod::Any,
+            path: "/api/{proxy+}".into(),
+        };
         // /api alone does not match /api/{proxy+}
         assert!(e.match_path("GET", "/api").is_none());
     }
 
     #[test]
     fn route_entry_greedy_extracts_when_only_one_segment_follows() {
-        let e = RouteEntry { method: RouteMethod::Any, path: "/api/{proxy+}".into() };
+        let e = RouteEntry {
+            method: RouteMethod::Any,
+            path: "/api/{proxy+}".into(),
+        };
         let p = e.match_path("GET", "/api/users").unwrap();
         assert_eq!(p.get("proxy").map(String::as_str), Some("users"));
     }
@@ -305,7 +349,10 @@ mod tests {
 
     #[test]
     fn route_entry_default_matches_any_path() {
-        let e = RouteEntry { method: RouteMethod::Any, path: "$default".into() };
+        let e = RouteEntry {
+            method: RouteMethod::Any,
+            path: "$default".into(),
+        };
         assert!(e.match_path("GET", "/anything").is_some());
         assert!(e.match_path("POST", "/api/users/42").is_some());
         assert!(e.match_path("DELETE", "/").is_some());
@@ -313,14 +360,20 @@ mod tests {
 
     #[test]
     fn route_entry_default_respects_method() {
-        let e = RouteEntry { method: RouteMethod::Get, path: "$default".into() };
+        let e = RouteEntry {
+            method: RouteMethod::Get,
+            path: "$default".into(),
+        };
         assert!(e.match_path("GET", "/anything").is_some());
         assert!(e.match_path("POST", "/anything").is_none());
     }
 
     #[test]
     fn route_entry_default_extracts_no_params() {
-        let e = RouteEntry { method: RouteMethod::Any, path: "$default".into() };
+        let e = RouteEntry {
+            method: RouteMethod::Any,
+            path: "$default".into(),
+        };
         let p = e.match_path("GET", "/foo/bar/baz").unwrap();
         assert!(p.is_empty());
     }
@@ -330,7 +383,10 @@ mod tests {
         assert_eq!(HandlerError::Timeout(30).status_code(), 504);
         assert_eq!(HandlerError::Overloaded(10).status_code(), 429);
         assert_eq!(HandlerError::Process("died".into()).status_code(), 502);
-        assert_eq!(HandlerError::InvalidResponse("bad json".into()).status_code(), 500);
+        assert_eq!(
+            HandlerError::InvalidResponse("bad json".into()).status_code(),
+            500
+        );
         assert_eq!(HandlerError::Internal("x".into()).status_code(), 500);
     }
 

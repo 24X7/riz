@@ -1,6 +1,6 @@
+use crate::config::DatadogConfig;
 use cadence::{prelude::*, QueuingMetricSink, StatsdClient, UdpMetricSink};
 use std::net::UdpSocket;
-use crate::config::DatadogConfig;
 
 pub struct MetricsEmitter {
     client: Option<StatsdClient>,
@@ -23,13 +23,19 @@ macro_rules! tag {
 impl MetricsEmitter {
     pub fn new(config: &DatadogConfig) -> Self {
         if !config.enabled {
-            return Self { client: None, env: config.env.clone() };
+            return Self {
+                client: None,
+                env: config.env.clone(),
+            };
         }
         let socket = match UdpSocket::bind("0.0.0.0:0") {
             Ok(s) => s,
             Err(e) => {
                 tracing::warn!("metrics: could not bind UDP socket: {e} — metrics disabled");
-                return Self { client: None, env: config.env.clone() };
+                return Self {
+                    client: None,
+                    env: config.env.clone(),
+                };
             }
         };
         socket.set_nonblocking(true).ok();
@@ -37,12 +43,18 @@ impl MetricsEmitter {
             Ok(s) => s,
             Err(e) => {
                 tracing::warn!("metrics: statsd sink error: {e} — metrics disabled");
-                return Self { client: None, env: config.env.clone() };
+                return Self {
+                    client: None,
+                    env: config.env.clone(),
+                };
             }
         };
         let queuing_sink = QueuingMetricSink::from(sink);
         let client = StatsdClient::from_sink(&config.service, queuing_sink);
-        Self { client: Some(client), env: config.env.clone() }
+        Self {
+            client: Some(client),
+            env: config.env.clone(),
+        }
     }
 
     pub fn record_request(&self, route: &str, method: &str, status: u16, duration_ms: f64) {

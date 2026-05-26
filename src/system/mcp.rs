@@ -18,11 +18,6 @@
 //! On `initialize`, echoes the version requested by the client if recognized;
 //! otherwise responds with the baseline (client may choose to disconnect).
 
-use async_trait::async_trait;
-use http::{header, HeaderMap, HeaderValue, Method};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
 use crate::gateway::{
     ApiGatewayV2httpRequest, ApiGatewayV2httpRequestContext,
     ApiGatewayV2httpRequestContextHttpDescription, ApiGatewayV2httpResponse, Body,
@@ -30,7 +25,11 @@ use crate::gateway::{
 use crate::router::Router;
 use crate::runtime::{HandlerError, LambdaHandler, RouteEntry, RouteMethod};
 use crate::state::{FunctionKind, RizState};
-use crate::system::mcp_tool_name;
+use async_trait::async_trait;
+use http::{header, HeaderMap, HeaderValue, Method};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 pub struct McpHandler {
     routes: Vec<RouteEntry>,
@@ -41,7 +40,10 @@ pub struct McpHandler {
 impl McpHandler {
     pub fn new(riz_state: Arc<RizState>) -> Self {
         Self {
-            routes: vec![RouteEntry { method: RouteMethod::Post, path: "/_riz/mcp".into() }],
+            routes: vec![RouteEntry {
+                method: RouteMethod::Post,
+                path: "/_riz/mcp".into(),
+            }],
             riz_state,
             router: tokio::sync::RwLock::new(None),
         }
@@ -70,26 +72,6 @@ struct JsonRpcRequest {
     method: String,
     #[serde(default)]
     params: serde_json::Value,
-}
-
-#[derive(Serialize)]
-struct JsonRpcOk<T: Serialize> {
-    jsonrpc: &'static str,
-    id: serde_json::Value,
-    result: T,
-}
-
-#[derive(Serialize)]
-struct JsonRpcErr {
-    jsonrpc: &'static str,
-    id: serde_json::Value,
-    error: JsonRpcErrBody,
-}
-
-#[derive(Serialize)]
-struct JsonRpcErrBody {
-    code: i32,
-    message: String,
 }
 
 #[derive(Serialize)]
@@ -146,17 +128,28 @@ struct ToolArguments {
 
 #[async_trait]
 impl LambdaHandler for McpHandler {
-    fn name(&self) -> &str { "POST /_riz/mcp" }
-    fn routes(&self) -> &[RouteEntry] { &self.routes }
+    fn name(&self) -> &str {
+        "POST /_riz/mcp"
+    }
+    fn routes(&self) -> &[RouteEntry] {
+        &self.routes
+    }
 
-    async fn invoke(&self, event: ApiGatewayV2httpRequest) -> Result<ApiGatewayV2httpResponse, HandlerError> {
+    async fn invoke(
+        &self,
+        event: ApiGatewayV2httpRequest,
+    ) -> Result<ApiGatewayV2httpResponse, HandlerError> {
         let body = event.body.as_deref().unwrap_or("{}");
         // Parse as raw JSON first to detect batch (array) vs single (object)
         let raw: serde_json::Value = match serde_json::from_str(body) {
             Ok(v) => v,
-            Err(e) => return Ok(jsonrpc_error_response(
-                serde_json::Value::Null, -32700, &format!("parse error: {e}"),
-            )),
+            Err(e) => {
+                return Ok(jsonrpc_error_response(
+                    serde_json::Value::Null,
+                    -32700,
+                    &format!("parse error: {e}"),
+                ))
+            }
         };
 
         // JSON-RPC 2.0 batch: array of requests. Process each, collect
@@ -165,7 +158,9 @@ impl LambdaHandler for McpHandler {
         if let Some(arr) = raw.as_array() {
             if arr.is_empty() {
                 return Ok(jsonrpc_error_response(
-                    serde_json::Value::Null, -32600, "empty batch is invalid",
+                    serde_json::Value::Null,
+                    -32600,
+                    "empty batch is invalid",
                 ));
             }
             let mut out: Vec<serde_json::Value> = Vec::new();
@@ -184,7 +179,7 @@ impl LambdaHandler for McpHandler {
         // Single request (object).
         match self.process_one(&raw).await {
             Some(resp) => Ok(json_response(resp)),
-            None => Ok(no_content_response()),  // it was a notification
+            None => Ok(no_content_response()), // it was a notification
         }
     }
 }
@@ -202,7 +197,9 @@ impl McpHandler {
                 let id = raw.get("id").cloned().unwrap_or(serde_json::Value::Null);
                 if raw.get("id").is_some() {
                     return Some(jsonrpc_error_value(
-                        id, -32600, &format!("invalid request: {e}"),
+                        id,
+                        -32600,
+                        &format!("invalid request: {e}"),
                     ));
                 }
                 return None;
@@ -258,9 +255,15 @@ impl McpHandler {
         })
     }
 
-    async fn initialize(&self, params: serde_json::Value) -> Result<serde_json::Value, JsonRpcError> {
+    async fn initialize(
+        &self,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, JsonRpcError> {
         // Best-effort client protocol version negotiation.
-        let requested = params.get("protocolVersion").and_then(|v| v.as_str()).unwrap_or("");
+        let requested = params
+            .get("protocolVersion")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let chosen = if SUPPORTED_PROTOCOL_VERSIONS.contains(&requested) {
             requested
         } else {
@@ -282,14 +285,18 @@ impl McpHandler {
         let functions = self.riz_state.functions.read().await;
         let mut tools = Vec::new();
         for (_, f) in functions.iter() {
-            if !matches!(f.kind, FunctionKind::User) { continue; }
+            if !matches!(f.kind, FunctionKind::User) {
+                continue;
+            }
             // MCP tool name = function name directly (no transformation needed
             // now that we're function-centric).
             let name = f.name.clone();
             let description = match &f.config {
                 Some(c) => format!(
                     "Invoke function `{}` ({} runtime). Routes: [{}]",
-                    f.name, c.runtime.as_str(), f.routes.join(", "),
+                    f.name,
+                    c.runtime.as_str(),
+                    f.routes.join(", "),
                 ),
                 None => format!("Invoke {}", f.name),
             };
@@ -299,24 +306,29 @@ impl McpHandler {
                 input_schema: generic_envelope_schema(),
             });
         }
-        let value = serde_json::to_value(ToolsListResult { tools })
-            .map_err(|e| JsonRpcError { code: -32603, message: e.to_string() })?;
+        let value = serde_json::to_value(ToolsListResult { tools }).map_err(|e| JsonRpcError {
+            code: -32603,
+            message: e.to_string(),
+        })?;
         Ok(value)
     }
 
-    async fn tools_call_value(&self, params: serde_json::Value) -> Result<serde_json::Value, JsonRpcError> {
-        let parsed: ToolsCallParams = serde_json::from_value(params)
-            .map_err(|e| JsonRpcError {
-                code: -32602,
-                message: format!("invalid params: {e}"),
-            })?;
+    async fn tools_call_value(
+        &self,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, JsonRpcError> {
+        let parsed: ToolsCallParams = serde_json::from_value(params).map_err(|e| JsonRpcError {
+            code: -32602,
+            message: format!("invalid params: {e}"),
+        })?;
 
         // Tool name == function name. Look up the function and pick a route
         // to dispatch to: use the caller-supplied `route` arg if present,
         // otherwise default to the function's first declared route.
-        let (function_name, method, path) = {
+        let (_function_name, method, path) = {
             let functions = self.riz_state.functions.read().await;
-            let f = functions.get(&parsed.name)
+            let f = functions
+                .get(&parsed.name)
                 .filter(|f| matches!(f.kind, FunctionKind::User))
                 .ok_or_else(|| JsonRpcError {
                     code: -32602,
@@ -327,14 +339,18 @@ impl McpHandler {
             // Pick the requested one (if the caller passed `route`), else the first.
             let requested = parsed.arguments.route.as_deref();
             let chosen = match requested {
-                Some(want) => f.routes.iter()
+                Some(want) => f
+                    .routes
+                    .iter()
                     .find(|r| r.as_str() == want)
                     .ok_or_else(|| JsonRpcError {
                         code: -32602,
                         message: format!("route '{want}' not declared by function '{}'", f.name),
                     })?
                     .clone(),
-                None => f.routes.first()
+                None => f
+                    .routes
+                    .first()
                     .ok_or_else(|| JsonRpcError {
                         code: -32603,
                         message: format!("function '{}' has no routes", f.name),
@@ -354,7 +370,9 @@ impl McpHandler {
         // pathParams.id; the Router re-extracts params during dispatch.
         let args = parsed.arguments;
         let concrete_path = substitute_path_params(&path, &args.path_params);
-        let raw_qs = args.query_params.iter()
+        let raw_qs = args
+            .query_params
+            .iter()
             .map(|(k, v)| format!("{}={}", urlencode(k), urlencode(v)))
             .collect::<Vec<_>>()
             .join("&");
@@ -369,21 +387,23 @@ impl McpHandler {
             }
         }
         let qmap: aws_lambda_events::query_map::QueryMap = args.query_params.clone().into();
-        let mut ctx = ApiGatewayV2httpRequestContext::default();
-        ctx.route_key = Some(route_key.clone());
-        ctx.account_id = Some("riz".into());
-        ctx.stage = Some("$default".into());
-        ctx.request_id = Some(uuid::Uuid::new_v4().to_string());
-        ctx.time_epoch = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as i64;
-        ctx.http = ApiGatewayV2httpRequestContextHttpDescription {
-            method: method_typed.clone(),
-            path: Some(concrete_path.clone()),
-            protocol: Some("HTTP/1.1".into()),
-            source_ip: Some("127.0.0.1".into()),
-            user_agent: Some("riz-mcp".into()),
+        let ctx = ApiGatewayV2httpRequestContext {
+            route_key: Some(route_key.clone()),
+            account_id: Some("riz".into()),
+            stage: Some("$default".into()),
+            request_id: Some(uuid::Uuid::new_v4().to_string()),
+            time_epoch: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as i64,
+            http: ApiGatewayV2httpRequestContextHttpDescription {
+                method: method_typed.clone(),
+                path: Some(concrete_path.clone()),
+                protocol: Some("HTTP/1.1".into()),
+                source_ip: Some("127.0.0.1".into()),
+                user_agent: Some("riz-mcp".into()),
+            },
+            ..Default::default()
         };
         let event = ApiGatewayV2httpRequest {
             version: Some("2.0".into()),
@@ -408,26 +428,31 @@ impl McpHandler {
 
         // Reentrant dispatch through the same Router.
         let router = self.router.read().await;
-        let router = router.as_ref()
-            .cloned()
-            .ok_or_else(|| JsonRpcError {
-                code: -32603,
-                message: "router not initialized".into(),
-            })?;
+        let router = router.as_ref().cloned().ok_or_else(|| JsonRpcError {
+            code: -32603,
+            message: "router not initialized".into(),
+        })?;
         let inner = match router.dispatch(event).await {
             Ok(outcome) => outcome.response,
             Err(e) => e.to_response(),
         };
 
         let is_error = inner.status_code >= 400;
-        let inner_json = serde_json::to_string(&inner)
-            .map_err(|e| JsonRpcError { code: -32603, message: e.to_string() })?;
+        let inner_json = serde_json::to_string(&inner).map_err(|e| JsonRpcError {
+            code: -32603,
+            message: e.to_string(),
+        })?;
         let result = ToolsCallResult {
-            content: vec![ToolContent { kind: "text", text: inner_json }],
+            content: vec![ToolContent {
+                kind: "text",
+                text: inner_json,
+            }],
             is_error,
         };
-        let value = serde_json::to_value(result)
-            .map_err(|e| JsonRpcError { code: -32603, message: e.to_string() })?;
+        let value = serde_json::to_value(result).map_err(|e| JsonRpcError {
+            code: -32603,
+            message: e.to_string(),
+        })?;
         Ok(value)
     }
 }
@@ -463,7 +488,9 @@ fn substitute_path_params(pattern: &str, params: &HashMap<String, String>) -> St
     let mut out = String::with_capacity(pattern.len());
     let mut first = true;
     for seg in pattern.trim_start_matches('/').split('/') {
-        if !first { out.push('/'); }
+        if !first {
+            out.push('/');
+        }
         first = false;
         // `{name+}` greedy
         if let Some(inner) = seg.strip_prefix('{').and_then(|s| s.strip_suffix("+}")) {
@@ -518,7 +545,10 @@ fn urlencode(s: &str) -> String {
 fn json_response(value: serde_json::Value) -> ApiGatewayV2httpResponse {
     let json = serde_json::to_string(&value).unwrap_or_else(|_| String::from("{}"));
     let mut headers = HeaderMap::new();
-    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
     ApiGatewayV2httpResponse {
         status_code: 200,
         headers,
@@ -543,7 +573,11 @@ fn no_content_response() -> ApiGatewayV2httpResponse {
 
 /// Build a JSON-RPC error envelope around a single id, return as a full HTTP
 /// response. Used at the top of `invoke` for parse/batch-shape failures.
-fn jsonrpc_error_response(id: serde_json::Value, code: i32, message: &str) -> ApiGatewayV2httpResponse {
+fn jsonrpc_error_response(
+    id: serde_json::Value,
+    code: i32,
+    message: &str,
+) -> ApiGatewayV2httpResponse {
     json_response(jsonrpc_error_value(id, code, message))
 }
 
@@ -606,7 +640,11 @@ mod tests {
     #[tokio::test]
     async fn tools_list_excludes_system_functions() {
         let s = Arc::new(RizState::new());
-        s.register(FunctionState::system("_riz_health", vec!["GET /_riz/health".into()])).await;
+        s.register(FunctionState::system(
+            "_riz_health",
+            vec!["GET /_riz/health".into()],
+        ))
+        .await;
         s.register(user_state()).await;
         let h = McpHandler::new(s);
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
@@ -663,7 +701,10 @@ mod tests {
     fn substitute_path_params_replaces_segments() {
         let mut params = HashMap::new();
         params.insert("id".to_string(), "42".to_string());
-        assert_eq!(substitute_path_params("/accounts/{id}", &params), "/accounts/42");
+        assert_eq!(
+            substitute_path_params("/accounts/{id}", &params),
+            "/accounts/42"
+        );
     }
 
     #[test]
@@ -688,7 +729,10 @@ mod tests {
         // Caller forgot to provide a value — substitution leaves the literal
         // ":id" in place; the Router will 404 on that path.
         let params = HashMap::new();
-        assert_eq!(substitute_path_params("/accounts/{id}", &params), "/accounts/{id}");
+        assert_eq!(
+            substitute_path_params("/accounts/{id}", &params),
+            "/accounts/{id}"
+        );
     }
 
     // ─── MCP spec compliance ───────────────────────────────────────────────
@@ -705,8 +749,10 @@ mod tests {
         assert_eq!(body["id"], 1);
         assert_eq!(body["result"]["protocolVersion"], "2024-11-05");
         assert_eq!(body["result"]["serverInfo"]["name"], "riz");
-        assert!(body["result"]["capabilities"]["tools"].is_object(),
-            "tools capability must be advertised");
+        assert!(
+            body["result"]["capabilities"]["tools"].is_object(),
+            "tools capability must be advertised"
+        );
     }
 
     #[tokio::test]
@@ -726,7 +772,10 @@ mod tests {
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"9999-99-99"}}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
-        assert_eq!(body["result"]["protocolVersion"], SERVER_DEFAULT_PROTOCOL_VERSION);
+        assert_eq!(
+            body["result"]["protocolVersion"],
+            SERVER_DEFAULT_PROTOCOL_VERSION
+        );
     }
 
     #[tokio::test]
@@ -748,7 +797,10 @@ mod tests {
         let h = McpHandler::new(s);
         let req = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
-        assert_eq!(resp.status_code, 204, "notifications must not produce a body");
+        assert_eq!(
+            resp.status_code, 204,
+            "notifications must not produce a body"
+        );
         assert!(matches!(resp.body, None | Some(Body::Empty)));
     }
 

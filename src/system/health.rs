@@ -1,13 +1,13 @@
 //! /_riz/health handler — returns 200 with runtime + per-function status.
 
-use async_trait::async_trait;
-use serde::Serialize;
-use std::sync::Arc;
-use std::sync::atomic::Ordering;
-use http::{header, HeaderMap, HeaderValue};
 use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse, Body};
 use crate::runtime::{HandlerError, LambdaHandler, RouteEntry, RouteMethod};
 use crate::state::{FunctionKind, RizState};
+use async_trait::async_trait;
+use http::{header, HeaderMap, HeaderValue};
+use serde::Serialize;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 #[derive(Serialize)]
 struct HealthBody {
@@ -37,7 +37,10 @@ pub struct HealthHandler {
 impl HealthHandler {
     pub fn new(riz_state: Arc<RizState>) -> Self {
         Self {
-            routes: vec![RouteEntry { method: RouteMethod::Get, path: "/_riz/health".into() }],
+            routes: vec![RouteEntry {
+                method: RouteMethod::Get,
+                path: "/_riz/health".into(),
+            }],
             riz_state,
         }
     }
@@ -45,10 +48,17 @@ impl HealthHandler {
 
 #[async_trait]
 impl LambdaHandler for HealthHandler {
-    fn name(&self) -> &str { "GET /_riz/health" }
-    fn routes(&self) -> &[RouteEntry] { &self.routes }
+    fn name(&self) -> &str {
+        "GET /_riz/health"
+    }
+    fn routes(&self) -> &[RouteEntry] {
+        &self.routes
+    }
 
-    async fn invoke(&self, _event: ApiGatewayV2httpRequest) -> Result<ApiGatewayV2httpResponse, HandlerError> {
+    async fn invoke(
+        &self,
+        _event: ApiGatewayV2httpRequest,
+    ) -> Result<ApiGatewayV2httpResponse, HandlerError> {
         let now = std::time::Instant::now();
         let functions = self.riz_state.functions.read().await;
         let mut out: Vec<FunctionHealth> = Vec::with_capacity(functions.len());
@@ -57,10 +67,14 @@ impl LambdaHandler for HealthHandler {
                 // System endpoints excluded from health body to avoid recursive noise.
                 continue;
             }
-            let (p50, _, _, _, p99) = f.latency.lock()
+            let (p50, _, _, _, p99) = f
+                .latency
+                .lock()
                 .map(|mut w| w.percentiles(now))
                 .unwrap_or((0.0, 0.0, 0.0, 0.0, 0.0));
-            let last_secs = f.last_invoked.lock()
+            let last_secs = f
+                .last_invoked
+                .lock()
                 .ok()
                 .and_then(|l| l.map(|t| now.duration_since(t).as_secs_f64()));
             out.push(FunctionHealth {
@@ -80,10 +94,13 @@ impl LambdaHandler for HealthHandler {
             uptime_secs: self.riz_state.uptime_secs(),
             functions: out,
         };
-        let json = serde_json::to_string(&body)
-            .map_err(|e| HandlerError::Internal(e.to_string()))?;
+        let json =
+            serde_json::to_string(&body).map_err(|e| HandlerError::Internal(e.to_string()))?;
         let mut headers = HeaderMap::new();
-        headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
         Ok(ApiGatewayV2httpResponse {
             status_code: 200,
             headers,
@@ -154,7 +171,11 @@ mod tests {
     #[tokio::test]
     async fn health_excludes_system_functions() {
         let s = Arc::new(RizState::new());
-        s.register(FunctionState::system("_riz_health", vec!["GET /_riz/health".into()])).await;
+        s.register(FunctionState::system(
+            "_riz_health",
+            vec!["GET /_riz/health".into()],
+        ))
+        .await;
         s.register(user_state()).await;
         let h = HealthHandler::new(s);
         let resp = h.invoke(evt()).await.unwrap();

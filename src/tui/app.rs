@@ -1,7 +1,7 @@
+use crate::process::{HostStats, PoolStats};
+use crate::state::{FunctionStateSnapshot, LogEntry};
 use std::collections::VecDeque;
 use std::time::Instant;
-use crate::state::{FunctionStateSnapshot, LogEntry};
-use crate::process::{HostStats, PoolStats};
 
 #[derive(Default)]
 pub struct App {
@@ -64,8 +64,10 @@ mod tests {
     fn app_with_routes(n: usize) -> App {
         let mut app = App::default();
         for i in 0..n {
-            let mut s = FunctionStateSnapshot::default();
-            s.name = format!("route{i}");
+            let s = FunctionStateSnapshot {
+                name: format!("route{i}"),
+                ..Default::default()
+            };
             app.function_stats.push(s);
         }
         app

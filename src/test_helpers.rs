@@ -4,27 +4,26 @@
 //! across the crate. Production code should never construct events directly —
 //! they come from server.rs (built from incoming axum requests).
 
-#![cfg(test)]
-
-use http::{HeaderMap, Method};
 use crate::gateway::{
-    ApiGatewayV2httpRequest,
-    ApiGatewayV2httpRequestContext,
+    ApiGatewayV2httpRequest, ApiGatewayV2httpRequestContext,
     ApiGatewayV2httpRequestContextHttpDescription,
 };
+use http::{HeaderMap, Method};
 
 pub fn make_event(method: &str, path: &str) -> ApiGatewayV2httpRequest {
     let m = Method::from_bytes(method.as_bytes()).unwrap_or(Method::GET);
-    let mut ctx = ApiGatewayV2httpRequestContext::default();
-    ctx.http = ApiGatewayV2httpRequestContextHttpDescription {
-        method: m.clone(),
-        path: Some(path.to_string()),
-        protocol: Some("HTTP/1.1".into()),
-        source_ip: Some("127.0.0.1".into()),
-        user_agent: Some("riz-test".into()),
+    let ctx = ApiGatewayV2httpRequestContext {
+        http: ApiGatewayV2httpRequestContextHttpDescription {
+            method: m.clone(),
+            path: Some(path.to_string()),
+            protocol: Some("HTTP/1.1".into()),
+            source_ip: Some("127.0.0.1".into()),
+            user_agent: Some("riz-test".into()),
+        },
+        request_id: Some("req-1".into()),
+        time_epoch: 0,
+        ..Default::default()
     };
-    ctx.request_id = Some("req-1".into());
-    ctx.time_epoch = 0;
     ApiGatewayV2httpRequest {
         version: Some("2.0".into()),
         route_key: Some(format!("{method} {path}")),

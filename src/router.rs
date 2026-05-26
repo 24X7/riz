@@ -1,6 +1,6 @@
-use std::sync::Arc;
 use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
 use crate::runtime::{error_response, HandlerError, LambdaHandler};
+use std::sync::Arc;
 
 pub struct Router {
     handlers: Vec<Arc<dyn LambdaHandler>>,
@@ -20,7 +20,9 @@ impl Router {
     }
 
     pub fn empty() -> Self {
-        Self { handlers: Vec::new() }
+        Self {
+            handlers: Vec::new(),
+        }
     }
 
     /// Stable key format used in logs/metrics/registry.
@@ -108,7 +110,9 @@ fn hex_val(b: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gateway::{ApiGatewayV2httpRequestContext, ApiGatewayV2httpRequestContextHttpDescription, Body};
+    use crate::gateway::{
+        ApiGatewayV2httpRequestContext, ApiGatewayV2httpRequestContextHttpDescription, Body,
+    };
     use crate::runtime::{LambdaHandler, RouteEntry, RouteMethod};
     use async_trait::async_trait;
     use http::{HeaderMap, Method};
@@ -121,9 +125,16 @@ mod tests {
 
     #[async_trait]
     impl LambdaHandler for StubHandler {
-        fn name(&self) -> &str { &self.name }
-        fn routes(&self) -> &[RouteEntry] { &self.routes }
-        async fn invoke(&self, _event: ApiGatewayV2httpRequest) -> Result<ApiGatewayV2httpResponse, HandlerError> {
+        fn name(&self) -> &str {
+            &self.name
+        }
+        fn routes(&self) -> &[RouteEntry] {
+            &self.routes
+        }
+        async fn invoke(
+            &self,
+            _event: ApiGatewayV2httpRequest,
+        ) -> Result<ApiGatewayV2httpResponse, HandlerError> {
             Ok(ApiGatewayV2httpResponse {
                 status_code: 200,
                 headers: HeaderMap::new(),
@@ -136,16 +147,18 @@ mod tests {
     }
 
     pub(crate) fn make_event(method: &str, path: &str) -> ApiGatewayV2httpRequest {
-        let mut ctx = ApiGatewayV2httpRequestContext::default();
-        ctx.http = ApiGatewayV2httpRequestContextHttpDescription {
-            method: Method::from_bytes(method.as_bytes()).unwrap_or(Method::GET),
-            path: Some(path.to_string()),
-            protocol: Some("HTTP/1.1".into()),
-            source_ip: Some("127.0.0.1".into()),
-            user_agent: Some("riz-test".into()),
+        let ctx = ApiGatewayV2httpRequestContext {
+            http: ApiGatewayV2httpRequestContextHttpDescription {
+                method: Method::from_bytes(method.as_bytes()).unwrap_or(Method::GET),
+                path: Some(path.to_string()),
+                protocol: Some("HTTP/1.1".into()),
+                source_ip: Some("127.0.0.1".into()),
+                user_agent: Some("riz-test".into()),
+            },
+            request_id: Some("req-1".into()),
+            time_epoch: 0,
+            ..Default::default()
         };
-        ctx.request_id = Some("req-1".into());
-        ctx.time_epoch = 0;
         ApiGatewayV2httpRequest {
             version: Some("2.0".into()),
             route_key: Some(format!("{method} {path}")),
@@ -159,9 +172,12 @@ mod tests {
             stage_variables: Default::default(),
             body: None,
             is_base64_encoded: false,
-            kind: None, method_arn: None,
+            kind: None,
+            method_arn: None,
             http_method: Method::from_bytes(method.as_bytes()).unwrap_or(Method::GET),
-            identity_source: None, authorization_token: None, resource: None,
+            identity_source: None,
+            authorization_token: None,
+            resource: None,
         }
     }
 
@@ -174,12 +190,18 @@ mod tests {
     async fn first_matching_handler_wins() {
         let h1 = Arc::new(StubHandler {
             name: "first".into(),
-            routes: vec![RouteEntry { method: RouteMethod::Get, path: "/api".into() }],
+            routes: vec![RouteEntry {
+                method: RouteMethod::Get,
+                path: "/api".into(),
+            }],
             body: "from-first".into(),
         });
         let h2 = Arc::new(StubHandler {
             name: "second".into(),
-            routes: vec![RouteEntry { method: RouteMethod::Get, path: "/api".into() }],
+            routes: vec![RouteEntry {
+                method: RouteMethod::Get,
+                path: "/api".into(),
+            }],
             body: "from-second".into(),
         });
         let router = Router::new(vec![h1, h2]);
@@ -194,7 +216,10 @@ mod tests {
     #[tokio::test]
     async fn no_match_returns_404() {
         let router = Router::empty();
-        let outcome = router.dispatch(make_event("GET", "/no-such")).await.unwrap();
+        let outcome = router
+            .dispatch(make_event("GET", "/no-such"))
+            .await
+            .unwrap();
         assert_eq!(outcome.response.status_code, 404);
     }
 
@@ -202,7 +227,10 @@ mod tests {
     async fn method_mismatch_returns_404() {
         let h = Arc::new(StubHandler {
             name: "only-get".into(),
-            routes: vec![RouteEntry { method: RouteMethod::Get, path: "/api".into() }],
+            routes: vec![RouteEntry {
+                method: RouteMethod::Get,
+                path: "/api".into(),
+            }],
             body: "x".into(),
         });
         let router = Router::new(vec![h]);
@@ -214,7 +242,10 @@ mod tests {
     async fn route_method_any_matches_all_methods() {
         let h = Arc::new(StubHandler {
             name: "any".into(),
-            routes: vec![RouteEntry { method: RouteMethod::Any, path: "/api".into() }],
+            routes: vec![RouteEntry {
+                method: RouteMethod::Any,
+                path: "/api".into(),
+            }],
             body: "ok".into(),
         });
         let router = Router::new(vec![h]);
@@ -231,9 +262,16 @@ mod tests {
 
     #[async_trait::async_trait]
     impl LambdaHandler for CapturingHandler {
-        fn name(&self) -> &str { "capturing" }
-        fn routes(&self) -> &[RouteEntry] { &self.routes }
-        async fn invoke(&self, event: ApiGatewayV2httpRequest) -> Result<ApiGatewayV2httpResponse, HandlerError> {
+        fn name(&self) -> &str {
+            "capturing"
+        }
+        fn routes(&self) -> &[RouteEntry] {
+            &self.routes
+        }
+        async fn invoke(
+            &self,
+            event: ApiGatewayV2httpRequest,
+        ) -> Result<ApiGatewayV2httpResponse, HandlerError> {
             *self.captured.lock().unwrap() = event.path_parameters.clone();
             Ok(ApiGatewayV2httpResponse {
                 status_code: 200,
@@ -249,11 +287,17 @@ mod tests {
     #[tokio::test]
     async fn dispatch_injects_path_params_into_event() {
         let h = Arc::new(CapturingHandler {
-            routes: vec![RouteEntry { method: RouteMethod::Get, path: "/accounts/{id}".into() }],
+            routes: vec![RouteEntry {
+                method: RouteMethod::Get,
+                path: "/accounts/{id}".into(),
+            }],
             captured: std::sync::Mutex::new(Default::default()),
         });
         let router = Router::new(vec![h.clone()]);
-        let outcome = router.dispatch(make_event("GET", "/accounts/42")).await.unwrap();
+        let outcome = router
+            .dispatch(make_event("GET", "/accounts/42"))
+            .await
+            .unwrap();
         assert_eq!(outcome.response.status_code, 200);
         assert_eq!(outcome.function_name, "capturing");
         let captured = h.captured.lock().unwrap();
@@ -263,11 +307,17 @@ mod tests {
     #[tokio::test]
     async fn dispatch_attributes_to_function_name_not_route() {
         let h = Arc::new(CapturingHandler {
-            routes: vec![RouteEntry { method: RouteMethod::Get, path: "/orgs/{org}/repos/{repo}".into() }],
+            routes: vec![RouteEntry {
+                method: RouteMethod::Get,
+                path: "/orgs/{org}/repos/{repo}".into(),
+            }],
             captured: std::sync::Mutex::new(Default::default()),
         });
         let router = Router::new(vec![h]);
-        let outcome = router.dispatch(make_event("GET", "/orgs/anthropic/repos/riz")).await.unwrap();
+        let outcome = router
+            .dispatch(make_event("GET", "/orgs/anthropic/repos/riz"))
+            .await
+            .unwrap();
         assert_eq!(outcome.function_name, "capturing",
             "metrics must attribute to the function name, mirroring AWS CloudWatch per-function aggregation");
     }
@@ -275,15 +325,24 @@ mod tests {
     #[tokio::test]
     async fn router_matches_aws_path_syntax() {
         let h = Arc::new(CapturingHandler {
-            routes: vec![RouteEntry { method: RouteMethod::Any, path: "/api/{proxy+}".into() }],
+            routes: vec![RouteEntry {
+                method: RouteMethod::Any,
+                path: "/api/{proxy+}".into(),
+            }],
             captured: std::sync::Mutex::new(Default::default()),
         });
         let router = Router::new(vec![h.clone()]);
-        let outcome = router.dispatch(make_event("GET", "/api/users/42/profile")).await.unwrap();
+        let outcome = router
+            .dispatch(make_event("GET", "/api/users/42/profile"))
+            .await
+            .unwrap();
         assert_eq!(outcome.response.status_code, 200);
         assert_eq!(outcome.function_name, "capturing");
         let captured = h.captured.lock().unwrap();
-        assert_eq!(captured.get("proxy").map(String::as_str), Some("users/42/profile"));
+        assert_eq!(
+            captured.get("proxy").map(String::as_str),
+            Some("users/42/profile")
+        );
     }
 
     #[test]

@@ -1,17 +1,17 @@
 pub mod app;
 pub mod widgets;
 
-use std::io;
-use std::sync::Arc;
-use std::time::Duration;
+use self::app::App;
+use crate::state::AppState;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
-use crate::state::AppState;
-use self::app::App;
+use std::io;
+use std::sync::Arc;
+use std::time::Duration;
 
 pub fn run_tui(state: Arc<AppState>, handle: tokio::runtime::Handle) -> anyhow::Result<()> {
     enable_raw_mode()?;
@@ -23,7 +23,11 @@ pub fn run_tui(state: Arc<AppState>, handle: tokio::runtime::Handle) -> anyhow::
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
         let r = run_loop(&mut terminal, state, handle);
-        execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
+        execute!(
+            terminal.backend_mut(),
+            LeaveAlternateScreen,
+            DisableMouseCapture
+        )?;
         terminal.show_cursor()?;
         r
     })();
@@ -49,10 +53,7 @@ fn run_loop<B: ratatui::backend::Backend>(
             // deployments.
             let now = std::time::Instant::now();
             let functions = state.riz_state.functions.read().await;
-            app.function_stats = functions
-                .values()
-                .map(|f| f.snapshot(now))
-                .collect();
+            app.function_stats = functions.values().map(|f| f.snapshot(now)).collect();
             app.pool_stats = state.process_manager.pool_stats().await;
             app.host_stats = state.process_manager.host_stats();
             app.uptime_secs = state.riz_state.uptime_secs();

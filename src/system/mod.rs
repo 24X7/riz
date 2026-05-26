@@ -2,9 +2,9 @@
 //! Each handler implements LambdaHandler and reads from RizState.
 
 pub mod health;
+pub mod mcp;
 pub mod metrics;
 pub mod registry;
-pub mod mcp;
 
 /// Derive a stable, MCP-compatible tool name from a route_key like "GET /api/users/:id".
 /// Result: "GET_api_users_id". Runs of separators collapse to a single underscore.
@@ -14,10 +14,16 @@ pub fn mcp_tool_name(route_key: &str) -> String {
     for c in route_key.chars() {
         match c {
             ' ' | '/' => {
-                if !last_was_sep { out.push('_'); last_was_sep = true; }
+                if !last_was_sep {
+                    out.push('_');
+                    last_was_sep = true;
+                }
             }
             ':' => continue,
-            _ => { out.push(c); last_was_sep = false; }
+            _ => {
+                out.push(c);
+                last_was_sep = false;
+            }
         }
     }
     out.trim_matches('_').to_string()

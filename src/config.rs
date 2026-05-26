@@ -37,9 +37,15 @@ pub struct ServerConfig {
     pub stage: String,
 }
 
-fn default_port() -> u16 { 3000 }
-fn default_host() -> String { "0.0.0.0".into() }
-fn default_stage() -> String { "$default".into() }
+fn default_port() -> u16 {
+    3000
+}
+fn default_host() -> String {
+    "0.0.0.0".into()
+}
+fn default_stage() -> String {
+    "$default".into()
+}
 
 impl Default for ServerConfig {
     fn default() -> Self {
@@ -59,7 +65,9 @@ pub struct CacheConfig {
     pub max_size_mb: u64,
 }
 
-fn default_cache_size() -> u64 { 128 }
+fn default_cache_size() -> u64 {
+    128
+}
 
 impl Default for CacheConfig {
     fn default() -> Self {
@@ -82,9 +90,15 @@ pub struct DatadogConfig {
     pub env: String,
 }
 
-fn default_statsd() -> String { "127.0.0.1:8125".into() }
-fn default_service() -> String { "riz".into() }
-fn default_env() -> String { "production".into() }
+fn default_statsd() -> String {
+    "127.0.0.1:8125".into()
+}
+fn default_service() -> String {
+    "riz".into()
+}
+fn default_env() -> String {
+    "production".into()
+}
 
 impl Default for DatadogConfig {
     fn default() -> Self {
@@ -110,10 +124,16 @@ pub struct AwsConfig {
     pub region: String,
 }
 
-fn default_region() -> String { "us-east-1".into() }
+fn default_region() -> String {
+    "us-east-1".into()
+}
 
 impl Default for AwsConfig {
-    fn default() -> Self { Self { region: default_region() } }
+    fn default() -> Self {
+        Self {
+            region: default_region(),
+        }
+    }
 }
 
 /// A user function — one process pool, N routes.
@@ -218,7 +238,10 @@ impl FunctionConfig {
                 RuntimeKind::Python => "py",
                 RuntimeKind::Rust => unreachable!("handled above"),
             };
-            return (PathBuf::from(format!("{module}.{runtime_ext}")), exp.to_string());
+            return (
+                PathBuf::from(format!("{module}.{runtime_ext}")),
+                exp.to_string(),
+            );
         }
         // Fallback: file path with no extension and no dot — treat as bare module,
         // append runtime extension, default export name "handler".
@@ -227,7 +250,10 @@ impl FunctionConfig {
             RuntimeKind::Python => "py",
             RuntimeKind::Rust => unreachable!("handled above"),
         };
-        (PathBuf::from(format!("{s}.{runtime_ext}")), "handler".into())
+        (
+            PathBuf::from(format!("{s}.{runtime_ext}")),
+            "handler".into(),
+        )
     }
 }
 
@@ -238,10 +264,18 @@ pub struct RouteSpec {
     pub method: String,
 }
 
-fn default_method() -> String { "ANY".into() }
-fn default_timeout() -> u64 { 30_000 }
-fn default_integration_timeout() -> u64 { 30_000 }
-fn default_concurrency() -> usize { 1 }
+fn default_method() -> String {
+    "ANY".into()
+}
+fn default_timeout() -> u64 {
+    30_000
+}
+fn default_integration_timeout() -> u64 {
+    30_000
+}
+fn default_concurrency() -> usize {
+    1
+}
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -267,13 +301,11 @@ impl RuntimeKind {
 /// the other.
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum Protocol {
+    #[default]
     Http,
     WebSocket,
-}
-
-impl Default for Protocol {
-    fn default() -> Self { Self::Http }
 }
 
 impl Config {
@@ -287,7 +319,9 @@ impl Config {
     }
 
     pub fn effective_deploy_key(&self) -> Option<String> {
-        std::env::var("RIZ_DEPLOY_KEY").ok().or_else(|| self.deploy.deploy_key.clone())
+        std::env::var("RIZ_DEPLOY_KEY")
+            .ok()
+            .or_else(|| self.deploy.deploy_key.clone())
     }
 
     /// Reject configurations that overlap Riz's reserved /_riz/* namespace,
@@ -439,7 +473,10 @@ handler = "./chat.ts"
 protocol = "websocket"
 "#;
         let c: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(c.functions.get("chat").unwrap().protocol, Protocol::WebSocket);
+        assert_eq!(
+            c.functions.get("chat").unwrap().protocol,
+            Protocol::WebSocket
+        );
     }
 
     #[test]
@@ -463,7 +500,10 @@ method = "ANY"
 "#;
         let c: Config = toml::from_str(toml_str).unwrap();
         let err = c.validate().unwrap_err();
-        assert!(err.contains("websocket") && err.contains("one route"), "got: {err}");
+        assert!(
+            err.contains("websocket") && err.contains("one route"),
+            "got: {err}"
+        );
     }
 
     /// Locks the serde lowercase contract. Without this, a future regression
@@ -472,7 +512,8 @@ method = "ANY"
     #[test]
     fn protocol_rejects_non_lowercase_spellings() {
         for bad in &["WEBSOCKET", "WebSocket", "Http", "HTTP"] {
-            let toml_str = format!(r#"
+            let toml_str = format!(
+                r#"
 [server]
 port = 8080
 
@@ -480,7 +521,8 @@ port = 8080
 runtime = "bun"
 handler = "./x.ts"
 protocol = "{bad}"
-"#);
+"#
+            );
             assert!(
                 toml::from_str::<Config>(&toml_str).is_err(),
                 "protocol = {bad:?} must be rejected (serde rename_all = lowercase)",
@@ -503,7 +545,10 @@ path = "/api"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let routes = config.functions.get("api").unwrap().effective_routes("api");
-        assert_eq!(routes[0].method, "ANY", "method defaults to ANY per AWS convention");
+        assert_eq!(
+            routes[0].method, "ANY",
+            "method defaults to ANY per AWS convention"
+        );
     }
 
     #[test]

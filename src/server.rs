@@ -1,7 +1,9 @@
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Instant;
-use base64::Engine as _;
+use crate::cache::CacheLayer;
+use crate::gateway::{
+    ApiGatewayV2httpRequest, ApiGatewayV2httpRequestContext,
+    ApiGatewayV2httpRequestContextHttpDescription, ApiGatewayV2httpResponse, Body,
+};
+use crate::state::AppState;
 use axum::{
     body::Body as AxumBody,
     extract::{ConnectInfo, Request, State},
@@ -10,15 +12,13 @@ use axum::{
     routing::{any, get, post},
     Json, Router as AxumRouter,
 };
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Instant;
 use tracing::{error, info};
 use uuid::Uuid;
-use crate::cache::CacheLayer;
-use crate::gateway::{
-    ApiGatewayV2httpRequest, ApiGatewayV2httpRequestContext,
-    ApiGatewayV2httpRequestContextHttpDescription, ApiGatewayV2httpResponse, Body,
-};
-use crate::state::AppState;
 
 #[derive(Serialize)]
 struct HealthResponse {
@@ -53,14 +53,13 @@ pub async fn run(state: Arc<AppState>, addr: SocketAddr) -> anyhow::Result<()> {
     info!("riz listening on {addr}");
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
-    let serve_future = axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            shutdown_signal().await;
-            tracing::info!(
-                "shutdown signal received — draining in-flight requests (max {}s)",
-                SHUTDOWN_DRAIN_TIMEOUT.as_secs(),
-            );
-        });
+    let serve_future = axum::serve(listener, app).with_graceful_shutdown(async {
+        shutdown_signal().await;
+        tracing::info!(
+            "shutdown signal received — draining in-flight requests (max {}s)",
+            SHUTDOWN_DRAIN_TIMEOUT.as_secs(),
+        );
+    });
 
     // Hard cap the drain. axum's graceful shutdown would otherwise wait
     // indefinitely if a handler hangs.
@@ -81,7 +80,9 @@ pub async fn run(state: Arc<AppState>, addr: SocketAddr) -> anyhow::Result<()> {
 async fn shutdown_signal() {
     use tokio::signal;
     let ctrl_c = async {
-        signal::ctrl_c().await.expect("failed to install Ctrl+C handler");
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
     };
     #[cfg(unix)]
     let terminate = async {
@@ -118,7 +119,8 @@ async fn dispatch_lambda(
     let path = req.uri().path().to_string();
     let query = req.uri().query().unwrap_or("").to_string();
     let source_ip = peer.ip().to_string();
-    let user_agent = req.headers()
+    let user_agent = req
+        .headers()
         .get(http::header::USER_AGENT)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
@@ -128,7 +130,8 @@ async fn dispatch_lambda(
     let route_key_for_logs = crate::router::Router::route_key(&method_str, &path);
 
     // BUG-12: skip cache for authenticated/personalized requests
-    let has_auth = req.headers().contains_key("authorization") || req.headers().contains_key("cookie");
+    let has_auth =
+        req.headers().contains_key("authorization") || req.headers().contains_key("cookie");
 
     let (default_ttl, stage) = {
         let cfg = state.config.read().await;
@@ -155,8 +158,14 @@ async fn dispatch_lambda(
             // path which calls record_request with cache_hit=false).
             let fn_name = {
                 let router = state.router.read().await;
-                router.handlers().iter()
-                    .find(|h| h.routes().iter().any(|r| r.match_path(&method_str, &path).is_some()))
+                router
+                    .handlers()
+                    .iter()
+                    .find(|h| {
+                        h.routes()
+                            .iter()
+                            .any(|r| r.match_path(&method_str, &path).is_some())
+                    })
                     .map(|h| h.name().to_string())
             };
             if let Some(fn_name) = fn_name {
@@ -171,10 +180,16 @@ async fn dispatch_lambda(
 
     // Cookies — AWS v2 represents them as a separate top-level field, parsed
     // from the `Cookie` header (split on `; `).
-    let cookies: Option<Vec<String>> = req.headers()
+    let cookies: Option<Vec<String>> = req
+        .headers()
         .get(http::header::COOKIE)
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.split("; ").map(|c| c.trim().to_string()).filter(|c| !c.is_empty()).collect())
+        .map(|s| {
+            s.split("; ")
+                .map(|c| c.trim().to_string())
+                .filter(|c| !c.is_empty())
+                .collect()
+        })
         .filter(|v: &Vec<String>| !v.is_empty());
 
     // Query string parameters — parse from raw query into a flat map (the
@@ -218,19 +233,21 @@ async fn dispatch_lambda(
     // AWS v2 time format: "01/Jan/2025:12:00:00 +0000"
     let time_str = format_aws_time(time_epoch);
 
-    let mut ctx = ApiGatewayV2httpRequestContext::default();
-    ctx.route_key = Some(route_key_for_logs.clone());
-    ctx.account_id = Some("riz".into());
-    ctx.stage = Some(stage);
-    ctx.request_id = Some(request_id.clone());
-    ctx.time = Some(time_str);
-    ctx.time_epoch = time_epoch as i64;
-    ctx.http = ApiGatewayV2httpRequestContextHttpDescription {
-        method: method_typed.clone(),
-        path: Some(path.clone()),
-        protocol: Some("HTTP/1.1".into()),
-        source_ip: Some(source_ip.clone()),
-        user_agent: Some(user_agent),
+    let ctx = ApiGatewayV2httpRequestContext {
+        route_key: Some(route_key_for_logs.clone()),
+        account_id: Some("riz".into()),
+        stage: Some(stage),
+        request_id: Some(request_id.clone()),
+        time: Some(time_str),
+        time_epoch: time_epoch as i64,
+        http: ApiGatewayV2httpRequestContextHttpDescription {
+            method: method_typed.clone(),
+            path: Some(path.clone()),
+            protocol: Some("HTTP/1.1".into()),
+            source_ip: Some(source_ip.clone()),
+            user_agent: Some(user_agent),
+        },
+        ..Default::default()
     };
 
     let gw_request = ApiGatewayV2httpRequest {
@@ -241,7 +258,7 @@ async fn dispatch_lambda(
         cookies,
         headers,
         query_string_parameters,
-        path_parameters: Default::default(),  // router populates after match
+        path_parameters: Default::default(), // router populates after match
         request_context: ctx,
         stage_variables: Default::default(),
         body,
@@ -280,10 +297,14 @@ async fn dispatch_lambda(
 
             let status_u16 = gw_resp.status_code as u16;
             let healthy = status_u16 < 500;
-            state.metrics.record_request(&function_name, &method_str, status_u16, latency);
+            state
+                .metrics
+                .record_request(&function_name, &method_str, status_u16, latency);
 
             match status_u16 {
-                502 => state.metrics.record_lambda_crash(&function_name, &runtime_tag),
+                502 => state
+                    .metrics
+                    .record_lambda_crash(&function_name, &runtime_tag),
                 504 => state.metrics.record_lambda_timeout(&function_name),
                 _ => {}
             }
@@ -293,7 +314,9 @@ async fn dispatch_lambda(
                 state.metrics.record_cache_miss(&function_name);
             }
 
-            state.record_request(&function_name, false, latency, healthy).await;
+            state
+                .record_request(&function_name, false, latency, healthy)
+                .await;
 
             state.push_log(
                 "INFO",
@@ -312,7 +335,11 @@ async fn dispatch_lambda(
             let resp = e.to_response();
             error!("dispatch error: {e}");
             // No function attribution possible — log under "_unmatched".
-            state.push_log("ERROR", None, format!("dispatch error {method_str} {path}: {e}"));
+            state.push_log(
+                "ERROR",
+                None,
+                format!("dispatch error {method_str} {path}: {e}"),
+            );
             gateway_to_axum(&resp)
         }
     }
@@ -322,8 +349,8 @@ async fn dispatch_lambda(
 /// Handles `Body::Text`, `Body::Binary`, base64-encoded `Body::Text`, and
 /// v2 cookies (emitted as `Set-Cookie` headers since axum is HTTP/1.1+).
 pub fn gateway_to_axum(resp: &ApiGatewayV2httpResponse) -> Response {
-    let status = StatusCode::from_u16(resp.status_code as u16)
-        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let status =
+        StatusCode::from_u16(resp.status_code as u16).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let mut builder = axum::http::response::Builder::new().status(status);
     for (name, value) in resp.headers.iter() {
         builder = builder.header(name, value);
@@ -339,11 +366,9 @@ pub fn gateway_to_axum(resp: &ApiGatewayV2httpResponse) -> Response {
     }
 
     let body_bytes: Vec<u8> = match resp.body.as_ref() {
-        Some(Body::Text(s)) if resp.is_base64_encoded => {
-            base64::engine::general_purpose::STANDARD
-                .decode(s.as_bytes())
-                .unwrap_or_default()
-        }
+        Some(Body::Text(s)) if resp.is_base64_encoded => base64::engine::general_purpose::STANDARD
+            .decode(s.as_bytes())
+            .unwrap_or_default(),
         Some(Body::Text(s)) => s.clone().into_bytes(),
         Some(Body::Binary(b)) => b.clone(),
         Some(Body::Empty) | None => Vec::new(),
@@ -370,8 +395,13 @@ fn format_aws_time(epoch_ms: u128) -> String {
     let m = (time_of_day % 3600) / 60;
     let s = time_of_day % 60;
     let (year, month, day) = days_to_ymd(days);
-    let month_name = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][month - 1];
-    format!("{:02}/{}/{}:{:02}:{:02}:{:02} +0000", day, month_name, year, h, m, s)
+    let month_name = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ][month - 1];
+    format!(
+        "{:02}/{}/{}:{:02}:{:02}:{:02} +0000",
+        day, month_name, year, h, m, s
+    )
 }
 
 /// Convert days-since-epoch to (year, month-1-indexed, day-1-indexed).
@@ -379,14 +409,16 @@ fn days_to_ymd(mut days: u64) -> (u64, usize, u64) {
     let mut year = 1970u64;
     loop {
         let in_year = if is_leap(year) { 366 } else { 365 };
-        if days < in_year { break; }
+        if days < in_year {
+            break;
+        }
         days -= in_year;
         year += 1;
     }
     let month_days = if is_leap(year) {
-        [31,29,31,30,31,30,31,31,30,31,30,31]
+        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
     } else {
-        [31,28,31,30,31,30,31,31,30,31,30,31]
+        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
     };
     let mut month = 0usize;
     while month < 12 && days >= month_days[month] as u64 {
@@ -397,7 +429,7 @@ fn days_to_ymd(mut days: u64) -> (u64, usize, u64) {
 }
 
 fn is_leap(y: u64) -> bool {
-    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+    (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400)
 }
 
 async fn health_handler() -> impl IntoResponse {
@@ -463,8 +495,10 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_signal_resolves_on_ctrl_c() {
+        // Construct the future to exercise the type signature and any
+        // signal-handler installation side-effects; we don't await it
+        // because there's no SIGINT in the test environment.
         let _fut = shutdown_signal();
-        assert!(true);
     }
 
     #[test]
@@ -476,7 +510,10 @@ mod tests {
 
     #[test]
     fn ready_response_omits_empty_unhealthy() {
-        let resp = ReadyResponse { status: "ok", unhealthy: vec![] };
+        let resp = ReadyResponse {
+            status: "ok",
+            unhealthy: vec![],
+        };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(!json.contains("unhealthy"));
     }

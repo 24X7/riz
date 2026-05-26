@@ -3,12 +3,12 @@
 //! to delegate invocation to. The same handler is matched by the Router for
 //! every route the function declares; one pool serves them all.
 
-use async_trait::async_trait;
-use std::sync::Arc;
 use crate::config::{FunctionConfig, RouteSpec};
 use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
 use crate::process::ProcessManager;
 use crate::runtime::{HandlerError, LambdaHandler, RouteEntry, RouteMethod};
+use async_trait::async_trait;
+use std::sync::Arc;
 
 pub struct ProcessHandler {
     name: String,
@@ -28,10 +28,11 @@ impl ProcessHandler {
         cfg: &FunctionConfig,
         process_manager: Arc<ProcessManager>,
     ) -> Self {
-        let routes: Vec<RouteEntry> = cfg.effective_routes(name)
+        let routes: Vec<RouteEntry> = cfg
+            .effective_routes(name)
             .into_iter()
             .map(|RouteSpec { path, method }| RouteEntry {
-                method: RouteMethod::from_str(&method),
+                method: RouteMethod::parse_lenient(&method),
                 path,
             })
             .collect();
@@ -52,10 +53,17 @@ impl ProcessHandler {
 
 #[async_trait]
 impl LambdaHandler for ProcessHandler {
-    fn name(&self) -> &str { &self.name }
-    fn routes(&self) -> &[RouteEntry] { &self.routes }
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn routes(&self) -> &[RouteEntry] {
+        &self.routes
+    }
 
-    async fn invoke(&self, mut event: ApiGatewayV2httpRequest) -> Result<ApiGatewayV2httpResponse, HandlerError> {
+    async fn invoke(
+        &self,
+        mut event: ApiGatewayV2httpRequest,
+    ) -> Result<ApiGatewayV2httpResponse, HandlerError> {
         // Inject this function's stage variables before the handler sees the event.
         for (k, v) in &self.stage_variables {
             event.stage_variables.insert(k.clone(), v.clone());
@@ -66,11 +74,14 @@ impl LambdaHandler for ProcessHandler {
         //   return 504 to the client without waiting for the handler.
         // - timeout_ms: enforced INSIDE process_manager.invoke; if exceeded,
         //   the child process is killed and respawned.
-        let invoke = self.process_manager.invoke(&self.name, &event, self.timeout_ms);
+        let invoke = self
+            .process_manager
+            .invoke(&self.name, &event, self.timeout_ms);
         let outcome = tokio::time::timeout(
             std::time::Duration::from_millis(self.integration_timeout_ms),
             invoke,
-        ).await;
+        )
+        .await;
 
         match outcome {
             Ok(Ok(resp)) => Ok(resp),
@@ -122,8 +133,14 @@ mod tests {
     fn process_handler_declares_multiple_explicit_routes() {
         let mut cfg = make_cfg();
         cfg.routes = vec![
-            RouteSpec { path: "/api".into(), method: "GET".into() },
-            RouteSpec { path: "/api/{proxy+}".into(), method: "ANY".into() },
+            RouteSpec {
+                path: "/api".into(),
+                method: "GET".into(),
+            },
+            RouteSpec {
+                path: "/api/{proxy+}".into(),
+                method: "ANY".into(),
+            },
         ];
         let riz_state = Arc::new(crate::state::RizState::new());
         let pm = Arc::new(ProcessManager::new(riz_state));

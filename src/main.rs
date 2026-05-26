@@ -1,3 +1,6 @@
+// FIXME(wave-7): same dead-code allow as lib.rs — Wave 7 itemizes cleanup.
+#![allow(dead_code)]
+
 mod cache;
 mod config;
 mod deploy;
@@ -16,9 +19,9 @@ mod ws;
 #[cfg(test)]
 mod test_helpers;
 
+use clap::{Parser, Subcommand};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use clap::{Parser, Subcommand};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -65,11 +68,15 @@ enum Commands {
 
 fn effective_config_path(dev: bool, explicit: Option<&str>) -> String {
     explicit.map(|s| s.to_string()).unwrap_or_else(|| {
-        if dev { "examples/riz.dev.toml".into() } else { "riz.toml".into() }
+        if dev {
+            "examples/riz.dev.toml".into()
+        } else {
+            "riz.toml".into()
+        }
     })
 }
 
-fn effective_log_level<'a>(dev: bool, explicit: Option<&'a str>) -> &'a str {
+fn effective_log_level(dev: bool, explicit: Option<&str>) -> &str {
     explicit.unwrap_or(if dev { "debug" } else { "info" })
 }
 
@@ -79,8 +86,7 @@ async fn main() -> anyhow::Result<()> {
 
     let config_path = effective_config_path(cli.dev, cli.config.as_deref());
     let log_level = effective_log_level(cli.dev, cli.log_level.as_deref());
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(log_level));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
 
     if cli.dev {
         tracing_subscriber::fmt()
@@ -95,7 +101,9 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let config = config::Config::from_file(&config_path)?;
-    config.validate().map_err(|e| anyhow::anyhow!("invalid config: {e}"))?;
+    config
+        .validate()
+        .map_err(|e| anyhow::anyhow!("invalid config: {e}"))?;
 
     match &cli.command {
         Some(Commands::Validate) => {
@@ -104,12 +112,19 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Routes) => {
             for (name, f) in &config.functions {
-                let routes: Vec<String> = f.effective_routes(name).into_iter()
+                let routes: Vec<String> = f
+                    .effective_routes(name)
+                    .into_iter()
                     .map(|r| format!("{} {}", r.method, r.path))
                     .collect();
-                println!("{} [{}] {:?} ({})  routes: {}",
-                    name, f.runtime.as_str(), f.handler, f.runtime.as_str(),
-                    routes.join(", "));
+                println!(
+                    "{} [{}] {:?} ({})  routes: {}",
+                    name,
+                    f.runtime.as_str(),
+                    f.handler,
+                    f.runtime.as_str(),
+                    routes.join(", ")
+                );
             }
             return Ok(());
         }
@@ -132,28 +147,44 @@ async fn main() -> anyhow::Result<()> {
 
     let riz_state = Arc::new(state::RizState::new());
     // Register system endpoints first.
-    riz_state.register(state::FunctionState::system(
-        "_riz_health", vec!["GET /_riz/health".into()],
-    )).await;
-    riz_state.register(state::FunctionState::system(
-        "_riz_metrics", vec!["GET /_riz/metrics".into()],
-    )).await;
-    riz_state.register(state::FunctionState::system(
-        "_riz_registry", vec!["GET /_riz/registry".into()],
-    )).await;
-    riz_state.register(state::FunctionState::system(
-        "_riz_mcp", vec!["POST /_riz/mcp".into()],
-    )).await;
+    riz_state
+        .register(state::FunctionState::system(
+            "_riz_health",
+            vec!["GET /_riz/health".into()],
+        ))
+        .await;
+    riz_state
+        .register(state::FunctionState::system(
+            "_riz_metrics",
+            vec!["GET /_riz/metrics".into()],
+        ))
+        .await;
+    riz_state
+        .register(state::FunctionState::system(
+            "_riz_registry",
+            vec!["GET /_riz/registry".into()],
+        ))
+        .await;
+    riz_state
+        .register(state::FunctionState::system(
+            "_riz_mcp",
+            vec!["POST /_riz/mcp".into()],
+        ))
+        .await;
     // Register user functions by name.
     for (name, cfg) in &config.functions {
-        riz_state.register(state::FunctionState::user(name.clone(), cfg.clone())).await;
+        riz_state
+            .register(state::FunctionState::user(name.clone(), cfg.clone()))
+            .await;
     }
 
     let process_manager = Arc::new(process::ProcessManager::new(riz_state.clone()));
 
     // Spawn one process pool per function. Each spawned process bumps
     // cold_starts on the matching FunctionState.
-    process_manager.spawn_all(&config.functions, &registry, log_tx.clone()).await?;
+    process_manager
+        .spawn_all(&config.functions, &registry, log_tx.clone())
+        .await?;
 
     // Build the handler list. System handlers mount FIRST so /_riz/* always
     // beats any user attempt to shadow those paths.
@@ -167,9 +198,7 @@ async fn main() -> anyhow::Result<()> {
     // One ProcessHandler per function — it declares every route the function
     // serves (including implicit `ANY /<name>` when no routes block is given).
     for (name, cfg) in &config.functions {
-        let h = runtime::process::ProcessHandler::for_function(
-            name, cfg, process_manager.clone(),
-        );
+        let h = runtime::process::ProcessHandler::for_function(name, cfg, process_manager.clone());
         handlers.push(Arc::new(h));
     }
     // McpHandler.tools_call needs an Arc<Router> for reentrant dispatch.
@@ -261,7 +290,10 @@ mod tests {
     fn explicit_config_overrides_dev_default() {
         let cli = Cli::try_parse_from(["riz", "--dev", "--config", "custom.toml"]).unwrap();
         assert_eq!(cli.config.as_deref(), Some("custom.toml"));
-        assert_eq!(effective_config_path(cli.dev, cli.config.as_deref()), "custom.toml");
+        assert_eq!(
+            effective_config_path(cli.dev, cli.config.as_deref()),
+            "custom.toml"
+        );
     }
 
     #[test]

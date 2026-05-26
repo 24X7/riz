@@ -10,23 +10,37 @@ use tokio::sync::{mpsc, oneshot};
 #[serde(transparent)]
 pub struct ConnectionId(pub String);
 
+impl Default for ConnectionId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConnectionId {
     pub fn new() -> Self {
         Self(uuid::Uuid::new_v4().to_string())
     }
-    pub fn as_str(&self) -> &str { &self.0 }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 impl From<String> for ConnectionId {
-    fn from(s: String) -> Self { Self(s) }
+    fn from(s: String) -> Self {
+        Self(s)
+    }
 }
 
 impl From<&str> for ConnectionId {
-    fn from(s: &str) -> Self { Self(s.to_string()) }
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
 }
 
 impl AsRef<str> for ConnectionId {
-    fn as_ref(&self) -> &str { &self.0 }
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
 }
 
 impl std::fmt::Display for ConnectionId {

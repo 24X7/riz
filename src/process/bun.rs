@@ -1,8 +1,8 @@
-use std::path::PathBuf;
-use tokio::process::Command;
-use anyhow::Context;
 use crate::config::FunctionConfig;
 use crate::process::runtime::LambdaRuntime;
+use anyhow::Context;
+use std::path::PathBuf;
+use tokio::process::Command;
 
 const BUN_ADAPTER: &str = include_str!("../../assets/bun-adapter.mjs");
 
@@ -13,11 +13,9 @@ pub struct BunRuntime {
 impl BunRuntime {
     pub fn new() -> anyhow::Result<Self> {
         let dir = home_dir().join(".riz");
-        std::fs::create_dir_all(&dir)
-            .context("failed to create ~/.riz")?;
+        std::fs::create_dir_all(&dir).context("failed to create ~/.riz")?;
         let adapter_path = dir.join("bun-adapter.mjs");
-        std::fs::write(&adapter_path, BUN_ADAPTER)
-            .context("failed to write bun adapter")?;
+        std::fs::write(&adapter_path, BUN_ADAPTER).context("failed to write bun adapter")?;
         Ok(Self { adapter_path })
     }
 }
@@ -36,11 +34,13 @@ impl LambdaRuntime for BunRuntime {
         let module = module.canonicalize().unwrap_or(module);
         let mut cmd = Command::new("bun");
         cmd.arg("run")
-           .arg(&self.adapter_path)
-           .arg(module)
-           .arg(export_name);
+            .arg(&self.adapter_path)
+            .arg(module)
+            .arg(export_name);
         cmd
     }
 
-    fn name(&self) -> &'static str { "bun" }
+    fn name(&self) -> &'static str {
+        "bun"
+    }
 }

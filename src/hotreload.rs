@@ -1,12 +1,12 @@
-use std::path::Path;
-use std::sync::Arc;
-use std::time::Duration;
-use notify::{Event, EventKind, RecursiveMode, Watcher};
-use tokio::sync::mpsc;
-use tracing::{error, info};
 use crate::config::{Config, FunctionConfig};
 use crate::router::Router;
 use crate::state::AppState;
+use notify::{Event, EventKind, RecursiveMode, Watcher};
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::mpsc;
+use tracing::{error, info};
 
 pub async fn watch_config(config_path: String, state: Arc<AppState>) {
     let (tx, mut rx) = mpsc::channel::<()>(4);
@@ -65,11 +65,11 @@ pub async fn watch_config(config_path: String, state: Arc<AppState>) {
                     if let Some(old_cfg) = old_funcs.get(name) {
                         if function_changed(old_cfg, new_cfg) {
                             info!("hot-reload: swapping pool for {name}");
-                            if let Err(e) = state.process_manager.hot_swap(
-                                name,
-                                new_cfg.clone(),
-                                &*state.runtime_registry,
-                            ).await {
+                            if let Err(e) = state
+                                .process_manager
+                                .hot_swap(name, new_cfg.clone(), &state.runtime_registry)
+                                .await
+                            {
                                 error!("hot_swap failed for {name}: {e}");
                             }
                         }
@@ -81,9 +81,11 @@ pub async fn watch_config(config_path: String, state: Arc<AppState>) {
                 for (name, new_cfg) in new_funcs {
                     if !old_funcs.contains_key(name) {
                         info!("hot-reload: adding function {name}");
-                        if let Err(e) = state.process_manager.spawn_function(
-                            name, new_cfg, &state.runtime_registry, log_tx.clone(),
-                        ).await {
+                        if let Err(e) = state
+                            .process_manager
+                            .spawn_function(name, new_cfg, &state.runtime_registry, log_tx.clone())
+                            .await
+                        {
                             error!("spawn_function failed for {name}: {e}");
                         }
                     }
@@ -107,7 +109,9 @@ pub async fn watch_config(config_path: String, state: Arc<AppState>) {
                 }
                 for (name, cfg) in new_funcs {
                     let h = crate::runtime::process::ProcessHandler::for_function(
-                        name, cfg, state.process_manager.clone(),
+                        name,
+                        cfg,
+                        state.process_manager.clone(),
                     );
                     handlers.push(Arc::new(h));
                 }
@@ -117,13 +121,23 @@ pub async fn watch_config(config_path: String, state: Arc<AppState>) {
                 // but we want to preserve counters, so only register names not
                 // already present).
                 {
-                    let known: std::collections::HashSet<String> = state.riz_state.functions
-                        .read().await.keys().cloned().collect();
+                    let known: std::collections::HashSet<String> = state
+                        .riz_state
+                        .functions
+                        .read()
+                        .await
+                        .keys()
+                        .cloned()
+                        .collect();
                     for (name, cfg) in new_funcs {
                         if !known.contains(name) {
-                            state.riz_state.register(
-                                crate::state::FunctionState::user(name.clone(), cfg.clone())
-                            ).await;
+                            state
+                                .riz_state
+                                .register(crate::state::FunctionState::user(
+                                    name.clone(),
+                                    cfg.clone(),
+                                ))
+                                .await;
                         }
                     }
                 }
@@ -147,7 +161,10 @@ fn function_changed(old: &FunctionConfig, new: &FunctionConfig) -> bool {
         || old.timeout_ms != new.timeout_ms
         || old.runtime != new.runtime
         || old.routes.len() != new.routes.len()
-        || old.routes.iter().zip(new.routes.iter())
+        || old
+            .routes
+            .iter()
+            .zip(new.routes.iter())
             .any(|(a, b)| a.path != b.path || a.method != b.method)
 }
 
@@ -195,9 +212,15 @@ mod tests {
     #[test]
     fn function_changed_detects_route_change() {
         let mut r1 = make_cfg("./same.ts", 1);
-        r1.routes = vec![RouteSpec { path: "/a".into(), method: "GET".into() }];
+        r1.routes = vec![RouteSpec {
+            path: "/a".into(),
+            method: "GET".into(),
+        }];
         let mut r2 = make_cfg("./same.ts", 1);
-        r2.routes = vec![RouteSpec { path: "/b".into(), method: "GET".into() }];
+        r2.routes = vec![RouteSpec {
+            path: "/b".into(),
+            method: "GET".into(),
+        }];
         assert!(function_changed(&r1, &r2));
     }
 }

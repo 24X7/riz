@@ -1,9 +1,9 @@
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use moka::future::Cache;
-use moka::Expiry;
 use crate::config::CacheConfig;
 use crate::gateway::ApiGatewayV2httpResponse;
+use moka::future::Cache;
+use moka::Expiry;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 /// The value stored in the underlying moka cache.
 /// We bundle the TTL so the `Expiry` implementation can read it per entry.
@@ -112,7 +112,10 @@ mod tests {
     use super::*;
 
     fn test_config() -> CacheConfig {
-        CacheConfig { default_ttl_secs: 0, max_size_mb: 16 }
+        CacheConfig {
+            default_ttl_secs: 0,
+            max_size_mb: 16,
+        }
     }
 
     fn ok_response() -> ApiGatewayV2httpResponse {
@@ -128,7 +131,10 @@ mod tests {
 
     #[test]
     fn make_key_format() {
-        assert_eq!(CacheLayer::make_key("GET", "/accounts/1", ""), "GET:/accounts/1?");
+        assert_eq!(
+            CacheLayer::make_key("GET", "/accounts/1", ""),
+            "GET:/accounts/1?"
+        );
         assert_eq!(
             CacheLayer::make_key("get", "/foo", "bar=1"),
             "GET:/foo?bar=1"
@@ -171,7 +177,7 @@ mod tests {
         let cache = CacheLayer::new(&test_config());
         let key = CacheLayer::make_key("GET", "/foo", "");
         cache.set(key.clone(), ok_response(), 60).await;
-        let evicted = cache.invalidate_keys(&[key.clone()]).await;
+        let evicted = cache.invalidate_keys(std::slice::from_ref(&key)).await;
         assert_eq!(evicted, 1);
         assert!(cache.get(&key).await.is_none());
     }
