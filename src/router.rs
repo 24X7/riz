@@ -273,7 +273,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dispatch_supports_greedy_proxy_wildcard() {
+    async fn router_matches_aws_path_syntax() {
         let h = Arc::new(CapturingHandler {
             routes: vec![RouteEntry { method: RouteMethod::Any, path: "/api/{proxy+}".into() }],
             captured: std::sync::Mutex::new(Default::default()),
