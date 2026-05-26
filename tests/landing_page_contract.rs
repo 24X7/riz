@@ -77,3 +77,17 @@ fn extractors_smoke() {
     let coming = extract_status_lis(&h, "Coming");
     assert!(!coming.is_empty(), "expected at least one Coming item");
 }
+
+#[test]
+fn embedded_riz_toml_parses_and_validates() {
+    let raw = extract_config_toml_block(&html());
+    let raw = html_decode_entities(&raw);
+    // The landing-page snippet shows function blocks only — wrap in a
+    // minimal complete config so the parse exercises the same code path
+    // real users hit.
+    let full = format!("[server]\nport = 3000\nhost = \"0.0.0.0\"\n\n{raw}");
+    let cfg: riz::config::Config = toml::from_str(&full)
+        .unwrap_or_else(|e| panic!("landing-page riz.toml does not parse:\n{e}\n---\n{full}"));
+    cfg.validate().unwrap_or_else(|e|
+        panic!("landing-page riz.toml fails validation: {e}\n---\n{full}"));
+}
