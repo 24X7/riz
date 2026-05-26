@@ -22,8 +22,15 @@ impl RuntimeRegistry {
         match kind {
             RuntimeKind::Bun => &self.bun,
             RuntimeKind::Rust | RuntimeKind::Python => {
-                tracing::warn!("runtime {:?} not implemented in Phase 1 — falling back to Bun", kind);
-                &self.bun
+                // Should never be reached: Config::validate rejects unsupported
+                // runtimes at load time. Panic loudly so we never silently run
+                // a Python handler under Bun (which would simply fail to parse
+                // the `.py` file as a JS module).
+                panic!(
+                    "runtime {:?} is not yet implemented. Riz currently supports only `bun`. \
+                     This panic indicates Config::validate did not reject the unsupported runtime.",
+                    kind
+                );
             }
         }
     }

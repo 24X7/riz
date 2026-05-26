@@ -1,6 +1,7 @@
 [server]
 port = 3000
 host = "0.0.0.0"
+stage = "$default"   # API GW v2 stage — surfaces as requestContext.stage
 
 [cache]
 default_ttl_secs = 0
@@ -19,19 +20,32 @@ allowed_cidrs = []          # empty = allow all IPs
 [aws]
 region = "us-east-1"
 
-[[routes]]
-path = "/auth/signin"
-method = "POST"
+# Function-centric config matches AWS Lambda + API Gateway v2.
+# One [function.<name>] = one process pool, N routes.
+
+[function.signin]
 runtime = "bun"
-handler = "./lambdas/signin/index.ts"
+handler = "signin.handler"            # AWS-style: file=signin.ts, export=handler
 timeout_ms = 5000
+integration_timeout_ms = 30000        # API GW v2 IntegrationTimeoutInMillis
 concurrency = 2
 
-[[routes]]
-path = "/accounts/:id"
-method = "GET"
+[[function.signin.routes]]
+path = "/auth/signin"
+method = "POST"
+
+[function.accounts]
 runtime = "bun"
-handler = "./lambdas/accounts/index.ts"
-cache_ttl_secs = 30
+handler = "./lambdas/accounts/index.ts"   # Riz-native: explicit path also works
 timeout_ms = 3000
+cache_ttl_secs = 30
 concurrency = 1
+stage_variables = { backend = "https://accounts-api.internal" }
+
+[[function.accounts.routes]]
+path = "/accounts/{id}"               # AWS-style single-segment param
+method = "GET"
+
+[[function.accounts.routes]]
+path = "/accounts/{proxy+}"           # AWS-style greedy proxy
+method = "ANY"

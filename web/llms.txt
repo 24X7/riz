@@ -1,40 +1,58 @@
 # Riz
 
-> Self-hosted AWS Lambda runtime. Run your Lambda functions on any Linux or macOS box. HTTP API Gateway v2 compatible. Single Rust binary. No Docker, no cold start tax, no AWS bill.
+> Self-hosted AWS Lambda + API Gateway v2 runtime. Run your Lambda functions on your own box, unmodified. Single Rust binary. Drop-in compatibility with the AWS API Gateway v2 HTTP event payload — handlers written for AWS Lambda compile and run on Riz with zero changes.
 
-Riz is an open-source drop-in replacement for AWS Lambda + API Gateway v2. You give it a `riz.toml` describing your function fleet and a handler file per function; Riz spawns isolated child processes per route, dispatches HTTP requests using the AWS HTTP API Gateway v2 JSON payload format, and exposes a terminal dashboard (ratatui) with live latency percentiles, request logs, and per-route stats. Handlers written for AWS Lambda run on Riz unchanged.
+Riz is an open-source self-hosted runtime that emulates AWS Lambda + API Gateway v2. You point your `riz.toml` at your handler files; Riz spawns one isolated child-process pool per function, dispatches HTTP requests using the canonical AWS API Gateway v2 HTTP payload shape (via the `aws_lambda_events` crate), and exposes a ratatui terminal dashboard with real percentile latency tracking (P50/P75/P90/P95/P99 over a 5-minute rolling window), per-route + per-function Prometheus metrics, hot-reload of config, zero-downtime hot-swap deploys from S3, and a fully MCP-spec-compliant JSON-RPC server that turns every function into an LLM-callable tool.
 
-The runtime is a single Rust binary built on tokio + axum. Each route gets a process pool with a configurable concurrency limit, request timeout, and runtime adapter. Process crashes are detected by a background liveness watcher and the pool is automatically respawned. Hot reload of `riz.toml` and zero-downtime hot-swap deploys from S3 are first-class features.
+Function-centric config matches AWS exactly: one `[function.<name>]` block per function, one process pool, N declared routes per function. AWS-style path syntax (`{id}`, `{proxy+}`), AWS-style handler resolution (`handler = "index.handler"` splits into file + export name), AWS-style `$default` catch-all route key, AWS-style `stage` and `stage_variables`, AWS-style `integration_timeout_ms` separate from handler `timeout_ms`. Handlers receive the event in the exact shape AWS sends — same crate, same field names, same serde JSON.
 
 ## Author
 
-- [Chris Rizzuto](https://linkedin.com/in/ship247) — chris@riz.dev — 20 years of engineering leadership at Meta, Google, Microsoft, Oracle.
+- [Chris Rizzuto](https://linkedin.com/in/ship247) — chris@riz.dev — 20 years engineering leadership at Meta, Google, Microsoft, Oracle.
 
 ## Project
 
-- [GitHub repository](https://github.com/crizzuto/riz): Source code, issue tracker, releases
-- [Releases](https://github.com/crizzuto/riz/releases): Prebuilt binaries for Linux and macOS
-- [Quick start guide](https://github.com/crizzuto/riz#quick-start): Five-minute getting-started
+- [GitHub repository](https://github.com/crizzuto/riz): source, issues, releases
+- [Releases](https://github.com/crizzuto/riz/releases): prebuilt binaries for Linux and macOS (x86_64 + aarch64)
+- [Install script](https://riz.dev/install): one-line install — `curl -fsSL https://riz.dev/install | sh`
 
-## Runtimes
+## What works today (v0.1)
 
-- **bun**: TypeScript and JavaScript handlers via the Bun runtime
-- **python**: Python 3 handlers
-- **rust**: Compiled Rust binary handlers
-- node: planned
+- **AWS API Gateway v2 HTTP payload** — exact `aws_lambda_events::apigw::ApiGatewayV2httpRequest`/`Response` types, including `cookies`, `queryStringParameters`, `multiValueHeaders`, full `requestContext` with `time`, `timeEpoch`, `userAgent`, `stage`, `accountId`, etc.
+- **Function-centric config** — `[function.<name>]` blocks with optional `[[function.<name>.routes]]`, mirroring AWS Lambda's "one function = one execution environment" model
+- **Bun runtime** (TypeScript / JavaScript)
+- **AWS-style handler syntax** — `handler = "index.handler"` resolves to file `index.ts` + export `handler`; `handler = "./api/index.ts:myFunc"` is also supported as an explicit form
+- **AWS path patterns** — `{name}` single-segment captures, `{proxy+}` greedy multi-segment captures, `$default` HTTP catch-all
+- **`ANY` method** — matches all HTTP verbs (AWS API GW v2 semantic)
+- **Separate `timeout_ms` and `integration_timeout_ms`** — handler-side vs gateway-side limits, matching AWS Lambda + API Gateway behavior
+- **`stage_variables`** per function, surfaced as `event.stageVariables`
+- **Auth-aware response cache** — automatically bypassed when `Authorization` or `Cookie` headers are present
+- **Hot-reload** of `riz.toml` with diff-aware function add/remove/replace
+- **Hot-swap deploys** from S3 that drain in-flight invocations before killing old processes
+- **Per-function process isolation** with semaphore-bounded concurrency, automatic respawn on crash/timeout, liveness watcher
+- **Terminal dashboard** (ratatui) — real nearest-rank P50/P75/P90/P95/P99 over a 5-minute rolling window, plus host process stats and system endpoint visibility
+- **Prometheus metrics** at `/_riz/metrics` — `riz_invocations_total`, `riz_errors_total`, `riz_latency_ms` (summary), `riz_cold_starts_total`, `riz_function_healthy`, `riz_uptime_seconds`
+- **MCP server** at `/_riz/mcp` — spec-compliant JSON-RPC 2.0 (`initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`, `resources/list`, `prompts/list`, batch). Every user function becomes an LLM-invokable tool with no code changes.
+- **Health endpoints** — `/health` (liveness 200), `/ready` (per-pool readiness), `/_riz/health` (rich per-function status)
+- **30-second graceful drain** on SIGTERM/SIGINT (hard cap enforced)
+- **Single Rust binary** with embedded Bun adapter (no install dance)
+- **Datadog metrics emitter** alongside Prometheus
 
-## Key Features
+## Coming (v0.2 and beyond)
 
-- HTTP API Gateway v2 payload compatibility (drop-in for existing Lambda code)
-- Per-route process isolation with concurrency limits and request timeouts
-- Background liveness monitoring with automatic respawn on crash
-- Hot-reload of `riz.toml` configuration without restart
-- Zero-downtime hot-swap deploys from S3 (signed with `RIZ_DEPLOY_KEY` or CIDR allowlist)
-- In-process response cache with per-route TTLs and authentication-aware bypass
-- Terminal UI (ratatui) showing P50/P75/P90/P99 latency, route stats, and live logs
-- Optional JSON-formatted production logging via `tracing-subscriber`
-- Datadog metrics emitter for production observability
-- Graceful shutdown on SIGTERM/SIGINT with 30s request drain
+- WebSocket APIs (`$connect`/`$disconnect`/`$default` route keys, `requestContext.connectionId`, `@connections` management)
+- Python runtime adapter
+- Rust runtime adapter (compiled binary handlers)
+- Node.js runtime adapter
+- Lambda authorizers (REQUEST + JWT)
+- CORS auto-preflight
+- Non-HTTP event sources (SQS, SNS, S3, EventBridge, scheduled)
+- Bearer-token auth on `/_riz/*` system endpoints
+
+## Requirements
+
+- **Runtime dependency**: Bun must be installed on PATH (`curl -fsSL https://bun.sh/install | bash`) — Riz spawns Bun processes to execute TypeScript/JavaScript handlers
+- **Linux or macOS** (x86_64 or aarch64). Windows not supported.
 
 ## License
 

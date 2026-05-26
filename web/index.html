@@ -26,7 +26,7 @@
     "url": "https://riz.dev",
     "applicationCategory": "DeveloperApplication",
     "operatingSystem": "Linux, macOS",
-    "programmingLanguage": ["Rust","Python","JavaScript","TypeScript"],
+    "programmingLanguage": ["TypeScript","JavaScript"],
     "author": {
       "@type": "Person",
       "name": "Chris Rizzuto",
@@ -351,6 +351,34 @@
     .tn{color:var(--t-acc2)}
     .tH{color:var(--ink);font-weight:700}
 
+    /* ── HONEST STATUS ── */
+    .status{
+      padding:5.5rem 10vw;
+      border-bottom:1px solid var(--border);
+      background:var(--bg2);
+    }
+    .status-inner h2{margin-bottom:2rem}
+    .status-grid{
+      display:grid;grid-template-columns:1fr 1fr;gap:2.5rem;margin-top:2.25rem;
+    }
+    .status-col h3{
+      font-family:var(--sans);font-size:0.95rem;font-weight:600;color:var(--ink);
+      margin-bottom:0.95rem;letter-spacing:-0.01em;
+    }
+    .status-col ul{list-style:none;padding:0}
+    .status-col li{
+      font-size:0.83rem;color:var(--ink3);line-height:1.55;padding:0.32rem 0;
+      border-bottom:1px solid var(--border);
+    }
+    .status-col li:last-child{border-bottom:none}
+    .status-col code{
+      font-family:var(--mono);font-size:0.78em;color:var(--accent);
+    }
+    @media(max-width:960px){
+      .status{padding:4rem 2rem}
+      .status-grid{grid-template-columns:1fr;gap:2rem}
+    }
+
     /* ── AUTHOR ── */
     .auth{
       display:grid;grid-template-columns:1fr 1fr;
@@ -468,7 +496,9 @@
 <nav>
   <a href="/" class="logo">riz<span class="tld">.dev</span></a>
   <div class="nav-r">
-    <a href="#config">Docs</a>
+    <a href="#config">Config</a>
+    <a href="#mcp">MCP</a>
+    <a href="#status">Status</a>
     <a href="#author">About</a>
     <a href="https://github.com/crizzuto/riz" target="_blank">GitHub</a>
     <a href="https://github.com/crizzuto/riz" target="_blank" class="nav-gh">Star on GitHub ↗</a>
@@ -586,9 +616,10 @@
     <p>Point any HTTP client at Riz exactly as you would at API Gateway. Same format, different bill.</p>
     <div class="pills">
       <span class="pill">bun</span>
-      <span class="pill">python</span>
-      <span class="pill">rust</span>
+      <span class="pill">python — soon</span>
+      <span class="pill">rust — soon</span>
       <span class="pill">node — soon</span>
+      <span class="pill">websocket — soon</span>
     </div>
   </div>
   <div class="sp-c">
@@ -597,23 +628,98 @@
         <span class="cc-n">riz.toml</span>
         <span class="cc-l">toml</span>
       </div>
-      <pre><span class="tc"># your entire fleet in one file</span>
+      <pre><span class="tc"># one function = one process pool = N routes</span>
+<span class="tc"># mirrors AWS Lambda + API Gateway v2</span>
 
 <span class="tH">[function.api]</span>
-<span class="tk">runtime</span>        = <span class="ts">"bun"</span>
-<span class="tk">handler</span>        = <span class="ts">"./src/api/index.ts"</span>
-<span class="tk">timeout</span>        = <span class="tn">30</span>
-<span class="tk">max_concurrent</span> = <span class="tn">10</span>
+<span class="tk">runtime</span>     = <span class="ts">"bun"</span>
+<span class="tk">handler</span>     = <span class="ts">"src/api/index.handler"</span>  <span class="tc"># AWS file.export</span>
+<span class="tk">timeout_ms</span>  = <span class="tn">30000</span>
+<span class="tk">concurrency</span> = <span class="tn">10</span>
 
-<span class="tH">[function.processor]</span>
-<span class="tk">runtime</span>        = <span class="ts">"python"</span>
-<span class="tk">handler</span>        = <span class="ts">"./processor/main.py"</span>
-<span class="tk">timeout</span>        = <span class="tn">60</span>
+<span class="tc"># Implicit default: ANY /api</span>
+<span class="tc"># Or explicit, with AWS-style path params + greedy proxy:</span>
+<span class="tH">[[function.api.routes]]</span>
+<span class="tk">path</span>   = <span class="ts">"/api/{id}"</span>
+<span class="tk">method</span> = <span class="ts">"GET"</span>
 
-<span class="tH">[function.encoder]</span>
-<span class="tk">runtime</span>        = <span class="ts">"rust"</span>
-<span class="tk">handler</span>        = <span class="ts">"./target/release/encoder"</span>
-<span class="tk">timeout</span>        = <span class="tn">10</span></pre>
+<span class="tH">[[function.api.routes]]</span>
+<span class="tk">path</span>   = <span class="ts">"/api/{proxy+}"</span>
+<span class="tk">method</span> = <span class="ts">"ANY"</span></pre>
+    </div>
+  </div>
+</section>
+
+<!-- MCP -->
+<section class="split" id="mcp">
+  <div class="sp-t">
+    <span class="lbl">// MCP server, built in</span>
+    <h2>Your APIs.<br/><em>An LLM's hands.</em></h2>
+    <p>Riz ships a spec-compliant <strong>MCP server</strong> at <code style="font-family:var(--mono);font-size:.82em;color:var(--accent)">/_riz/mcp</code>. Every function in your <code style="font-family:var(--mono);font-size:.82em;color:var(--accent)">riz.toml</code> automatically becomes a tool an LLM can invoke.</p>
+    <p>No SDKs, no wrappers, no second runtime. Drop your existing Lambda code in, point Claude or Cursor at the endpoint, and your APIs are agent-callable.</p>
+    <div class="pills">
+      <span class="pill">jsonrpc 2.0</span>
+      <span class="pill">mcp 2024-11-05</span>
+      <span class="pill">batched</span>
+    </div>
+  </div>
+  <div class="sp-c">
+    <div class="cc">
+      <div class="cc-hd">
+        <span class="cc-n">claude mcp add riz</span>
+        <span class="cc-l">bash</span>
+      </div>
+      <pre><span class="tc"># Point Claude / Cursor / any MCP client at your riz instance.</span>
+$ claude mcp add riz-local \
+    --transport http \
+    http://localhost:3000<span class="ts">/_riz/mcp</span>
+
+<span class="tc"># Now every function in riz.toml is an LLM tool.</span>
+<span class="tc"># Claude can call them directly:</span>
+
+<span class="ca">&gt;</span> <span class="tk">tools/call</span> <span class="ts">api</span> { id: <span class="ts">"42"</span> }
+{
+  <span class="tk">statusCode</span>: <span class="tn">200</span>,
+  <span class="tk">body</span>: <span class="ts">{ "id":"42","name":"Account 42" }</span>
+}</pre>
+    </div>
+  </div>
+</section>
+
+<!-- HONEST STATUS -->
+<section class="status" id="status">
+  <div class="status-inner">
+    <span class="lbl">// what works today, what's coming</span>
+    <h2>Honest status.<br/><em>v0.1, shipping in public.</em></h2>
+    <div class="status-grid">
+      <div class="status-col">
+        <h3>✓ Works now</h3>
+        <ul>
+          <li>AWS API Gateway v2 HTTP payload — exact <code>aws_lambda_events</code> types</li>
+          <li>Bun (TypeScript / JavaScript) handlers</li>
+          <li>Function-centric config: <code>[function.&lt;name&gt;]</code> + N routes per function</li>
+          <li>AWS path syntax: <code>{id}</code>, <code>{proxy+}</code>, <code>$default</code></li>
+          <li>AWS handler syntax: <code>handler = "index.handler"</code></li>
+          <li>Hot-swap deploys from S3 with in-flight request drain</li>
+          <li><code>riz.toml</code> hot-reload on save</li>
+          <li><code>/_riz/health</code> · <code>/_riz/metrics</code> · <code>/_riz/registry</code></li>
+          <li>MCP server (spec 2024-11-05, JSON-RPC, batches, lifecycle)</li>
+          <li>Terminal dashboard: P50/P75/P90/P95/P99 over 5-min window</li>
+          <li>Datadog metrics emitter</li>
+        </ul>
+      </div>
+      <div class="status-col">
+        <h3>🚧 Coming</h3>
+        <ul>
+          <li>Python runtime adapter</li>
+          <li>Rust runtime adapter</li>
+          <li>WebSocket APIs (<code>$connect</code> / <code>$disconnect</code> / <code>connectionId</code>)</li>
+          <li>Lambda authorizers (REQUEST / JWT)</li>
+          <li>CORS auto-preflight</li>
+          <li>Non-HTTP event sources (SQS, SNS, S3, EventBridge)</li>
+          <li>Bearer-token auth on <code>/_riz/*</code></li>
+        </ul>
+      </div>
     </div>
   </div>
 </section>

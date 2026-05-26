@@ -274,13 +274,35 @@ impl Config {
     }
 
     /// Reject configurations that overlap Riz's reserved /_riz/* namespace,
-    /// or that use the reserved `_riz` prefix in function names.
+    /// use the reserved `_riz` prefix in function names, or declare a runtime
+    /// Riz doesn't actually support yet (refuses to start rather than silently
+    /// falling back to a different runtime).
     pub fn validate(&self) -> Result<(), String> {
         for (name, func) in &self.functions {
             if name == "_riz" || name.starts_with("_riz") {
                 return Err(format!(
                     "function name '{name}' uses reserved '_riz' prefix"
                 ));
+            }
+            // Riz currently ships only the Bun runtime. Python and Rust are
+            // planned (see runtime/process.rs). Refuse to start rather than
+            // silently mis-spawning them as Bun modules.
+            match func.runtime {
+                RuntimeKind::Bun => {}
+                RuntimeKind::Python => {
+                    return Err(format!(
+                        "function '{name}' declares runtime = \"python\" but the Python adapter \
+                         is not yet shipped in this riz build. Use runtime = \"bun\" or wait for \
+                         the python runtime to land."
+                    ));
+                }
+                RuntimeKind::Rust => {
+                    return Err(format!(
+                        "function '{name}' declares runtime = \"rust\" but the Rust adapter is \
+                         not yet shipped in this riz build. Use runtime = \"bun\" or wait for \
+                         the rust runtime to land."
+                    ));
+                }
             }
             for r in func.effective_routes(name) {
                 if r.path == "/_riz" || r.path.starts_with("/_riz/") {

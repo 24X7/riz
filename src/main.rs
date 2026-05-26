@@ -48,9 +48,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Start,
+    /// Start the runtime. Default when no subcommand is given.
+    Run,
+    /// Validate riz.toml and exit.
     Validate,
+    /// List configured functions and their routes.
     Routes,
+    /// Hot-swap a deployed function from S3.
     Deploy {
         lambda: String,
         s3_bucket: String,

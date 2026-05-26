@@ -42,17 +42,38 @@ pub fn build_app(state: Arc<AppState>) -> AxumRouter {
         .with_state(state)
 }
 
+/// Maximum time we'll wait for in-flight requests to drain after receiving a
+/// shutdown signal. Matches the documented "30 s graceful drain" promise.
+/// After this elapses we force-stop axum (any still-in-flight handler is cut
+/// off) and proceed to kill child processes.
+const SHUTDOWN_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 pub async fn run(state: Arc<AppState>, addr: SocketAddr) -> anyhow::Result<()> {
     let app = build_app(state.clone()).into_make_service_with_connect_info::<SocketAddr>();
     info!("riz listening on {addr}");
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app)
+
+    let serve_future = axum::serve(listener, app)
         .with_graceful_shutdown(async {
             shutdown_signal().await;
-            tracing::info!("shutdown signal received — draining in-flight requests (30s timeout)");
-        })
-        .await?;
-    tracing::info!("all requests drained — killing child processes");
+            tracing::info!(
+                "shutdown signal received — draining in-flight requests (max {}s)",
+                SHUTDOWN_DRAIN_TIMEOUT.as_secs(),
+            );
+        });
+
+    // Hard cap the drain. axum's graceful shutdown would otherwise wait
+    // indefinitely if a handler hangs.
+    match tokio::time::timeout(SHUTDOWN_DRAIN_TIMEOUT, serve_future).await {
+        Ok(result) => result?,
+        Err(_elapsed) => {
+            tracing::warn!(
+                "drain timeout ({}s) elapsed — forcing shutdown with requests still in flight",
+                SHUTDOWN_DRAIN_TIMEOUT.as_secs(),
+            );
+        }
+    }
+    tracing::info!("draining complete — killing child processes");
     kill_all_processes(&state).await;
     Ok(())
 }
