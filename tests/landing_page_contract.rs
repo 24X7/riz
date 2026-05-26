@@ -91,3 +91,28 @@ fn embedded_riz_toml_parses_and_validates() {
     cfg.validate().unwrap_or_else(|e|
         panic!("landing-page riz.toml fails validation: {e}\n---\n{full}"));
 }
+
+/// Source-of-truth for every feature pill on the landing page.
+/// Keep this in sync with the `.pills` block in `web/index.html` under #config.
+const PILLS: &[&str] = &[
+    "bun",
+    "python — soon",
+    "rust — soon",
+    "node — soon",
+    "websocket — soon",
+];
+
+#[test]
+fn pills_match_truth_slice() {
+    let on_page: HashSet<String> = extract_pills(&html()).into_iter().collect();
+    let in_code: HashSet<String> = PILLS.iter().map(|s| s.to_string()).collect();
+
+    let only_on_page: Vec<_> = on_page.difference(&in_code).cloned().collect();
+    let only_in_code: Vec<_> = in_code.difference(&on_page).cloned().collect();
+
+    assert!(only_on_page.is_empty() && only_in_code.is_empty(),
+        "Landing-page pills drift detected.\n\
+         On page but not in PILLS truth slice: {only_on_page:?}\n\
+         In PILLS but not on page: {only_in_code:?}\n\
+         Fix one or the other.");
+}
