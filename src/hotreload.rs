@@ -172,7 +172,7 @@ mod tests {
     }
 
     #[test]
-    fn function_changed_detects_handler_change() {
+    fn hotreload_picks_up_riz_toml_changes() {
         let r1 = make_cfg("./old.ts", 1);
         let r2 = make_cfg("./new.ts", 1);
         assert!(function_changed(&r1, &r2));
