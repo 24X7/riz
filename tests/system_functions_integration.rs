@@ -33,6 +33,7 @@ async fn make_state() -> Arc<riz::state::AppState> {
     // pre-recorded so health/metrics assertions have data to look at.
     let cfg = FunctionConfig {
         runtime: RuntimeKind::Bun,
+        protocol: Default::default(),
         handler: std::path::PathBuf::from("./echo.ts"),
         timeout_ms: 5000,
         integration_timeout_ms: 30000,

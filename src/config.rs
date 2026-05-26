@@ -125,6 +125,8 @@ impl Default for AwsConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct FunctionConfig {
     pub runtime: RuntimeKind,
+    #[serde(default)]
+    pub protocol: Protocol,
     pub handler: PathBuf,
     /// Handler timeout: how long the spawned process is allowed to take to
     /// produce a response before riz kills it and respawns. Matches AWS
@@ -259,6 +261,21 @@ impl RuntimeKind {
     }
 }
 
+/// Per-function transport protocol. AWS API Gateway distinguishes HTTP APIs
+/// (v2 REST-style) from WebSocket APIs (persistent socket with $connect /
+/// $disconnect / $default lifecycle events). Riz functions opt into one or
+/// the other.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Protocol {
+    Http,
+    WebSocket,
+}
+
+impl Default for Protocol {
+    fn default() -> Self { Self::Http }
+}
+
 impl Config {
     pub fn from_file(path: impl AsRef<std::path::Path>) -> anyhow::Result<Self> {
         let path = path.as_ref();
@@ -301,6 +318,20 @@ impl Config {
                         "function '{name}' declares runtime = \"rust\" but the Rust adapter is \
                          not yet shipped in this riz build. Use runtime = \"bun\" or wait for \
                          the rust runtime to land."
+                    ));
+                }
+            }
+            if matches!(func.protocol, Protocol::WebSocket) {
+                // Zero-route WS functions get the implicit ANY /<name> default,
+                // which is the upgrade endpoint — that's allowed. Multi-route
+                // WS is not: per-message route_selection_expression (multiple
+                // handler functions per socket) is not yet supported.
+                if func.routes.len() > 1 {
+                    return Err(format!(
+                        "function '{name}' is websocket but declares {} routes; \
+                         websocket functions must have at most one route (the upgrade path) — \
+                         per-message route_selection_expression is not yet supported",
+                        func.routes.len()
                     ));
                 }
             }
@@ -380,6 +411,81 @@ method = "ANY"
         assert_eq!(routes[0].method, "GET");
         assert_eq!(routes[1].path, "/api/{proxy+}");
         assert_eq!(routes[1].method, "ANY");
+    }
+
+    #[test]
+    fn protocol_defaults_to_http() {
+        let toml_str = r#"
+[server]
+port = 8080
+
+[function.api]
+runtime = "bun"
+handler = "./api.ts"
+"#;
+        let c: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(c.functions.get("api").unwrap().protocol, Protocol::Http);
+    }
+
+    #[test]
+    fn protocol_parses_websocket() {
+        let toml_str = r#"
+[server]
+port = 8080
+
+[function.chat]
+runtime = "bun"
+handler = "./chat.ts"
+protocol = "websocket"
+"#;
+        let c: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(c.functions.get("chat").unwrap().protocol, Protocol::WebSocket);
+    }
+
+    #[test]
+    fn validate_rejects_websocket_with_multiple_routes() {
+        let toml_str = r#"
+[server]
+port = 8080
+
+[function.chat]
+runtime = "bun"
+handler = "./chat.ts"
+protocol = "websocket"
+
+[[function.chat.routes]]
+path = "/chat"
+method = "ANY"
+
+[[function.chat.routes]]
+path = "/other"
+method = "ANY"
+"#;
+        let c: Config = toml::from_str(toml_str).unwrap();
+        let err = c.validate().unwrap_err();
+        assert!(err.contains("websocket") && err.contains("one route"), "got: {err}");
+    }
+
+    /// Locks the serde lowercase contract. Without this, a future regression
+    /// to `rename_all = "snake_case"` or a permissive parser would silently
+    /// broaden the accepted spelling.
+    #[test]
+    fn protocol_rejects_non_lowercase_spellings() {
+        for bad in &["WEBSOCKET", "WebSocket", "Http", "HTTP"] {
+            let toml_str = format!(r#"
+[server]
+port = 8080
+
+[function.x]
+runtime = "bun"
+handler = "./x.ts"
+protocol = "{bad}"
+"#);
+            assert!(
+                toml::from_str::<Config>(&toml_str).is_err(),
+                "protocol = {bad:?} must be rejected (serde rename_all = lowercase)",
+            );
+        }
     }
 
     #[test]
@@ -495,6 +601,7 @@ handler = "./h.ts"
     fn fc(runtime: RuntimeKind, handler: &str) -> FunctionConfig {
         FunctionConfig {
             runtime,
+            protocol: Default::default(),
             handler: PathBuf::from(handler),
             timeout_ms: 1000,
             integration_timeout_ms: 30000,

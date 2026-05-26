@@ -96,6 +96,7 @@ mod tests {
     fn make_cfg() -> FunctionConfig {
         FunctionConfig {
             runtime: crate::config::RuntimeKind::Bun,
+            protocol: Default::default(),
             handler: std::path::PathBuf::from("./does-not-exist.ts"),
             timeout_ms: 5000,
             integration_timeout_ms: 30000,

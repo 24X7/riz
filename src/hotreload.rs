@@ -160,6 +160,7 @@ mod tests {
     fn make_cfg(handler: &str, concurrency: usize) -> FunctionConfig {
         FunctionConfig {
             runtime: RuntimeKind::Bun,
+            protocol: Default::default(),
             handler: PathBuf::from(handler),
             timeout_ms: 5000,
             integration_timeout_ms: 30000,

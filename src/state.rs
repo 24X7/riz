@@ -594,6 +594,7 @@ mod riz_state_tests {
     fn make_function_config() -> crate::config::FunctionConfig {
         crate::config::FunctionConfig {
             runtime: crate::config::RuntimeKind::Bun,
+            protocol: Default::default(),
             handler: std::path::PathBuf::from("./handler.ts"),
             timeout_ms: 5000,
             integration_timeout_ms: 30000,

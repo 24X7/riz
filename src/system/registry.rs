@@ -110,6 +110,7 @@ mod tests {
     fn user_state() -> FunctionState {
         let c = crate::config::FunctionConfig {
             runtime: crate::config::RuntimeKind::Bun,
+            protocol: Default::default(),
             handler: std::path::PathBuf::from("./api.ts"),
             timeout_ms: 5000,
             integration_timeout_ms: 30000,
