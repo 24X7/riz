@@ -2,6 +2,18 @@ use tokio::process::Command;
 use crate::config::{FunctionConfig, RuntimeKind};
 use crate::process::bun::BunRuntime;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_registry_registers_bun() {
+        let r = RuntimeRegistry::new().expect("registry");
+        // Calling get with Bun must not panic — it proves Bun is a registered runtime.
+        let _rt = r.get(&RuntimeKind::Bun);
+    }
+}
+
 pub trait LambdaRuntime: Send + Sync + 'static {
     fn spawn_command(&self, route: &FunctionConfig) -> Command;
     fn name(&self) -> &'static str;
