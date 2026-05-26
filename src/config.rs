@@ -613,7 +613,7 @@ handler = "./h.ts"
     }
 
     #[test]
-    fn handler_aws_style_index_handler_resolves_to_ts_file_and_handler_export() {
+    fn handler_export_syntax_resolves() {
         let c = fc(RuntimeKind::Bun, "src/api/index.handler");
         let (module, export) = c.module_and_export();
         assert_eq!(module, PathBuf::from("src/api/index.ts"));
