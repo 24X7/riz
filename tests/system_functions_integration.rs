@@ -84,7 +84,7 @@ async fn serve(state: Arc<riz::state::AppState>) -> SocketAddr {
 }
 
 #[tokio::test]
-async fn health_endpoint_reports_user_function() {
+async fn system_endpoints_respond_with_aws_shape() {
     let state = make_state().await;
     let addr = serve(state).await;
     let resp = reqwest::get(format!("http://{addr}/_riz/health")).await.unwrap();
