@@ -150,6 +150,18 @@ async fn dispatch_lambda(
                 Some(&route_key_for_logs),
                 format!("{method_str} {path} 200 {latency:.0}ms [cache] req={request_id} ip={source_ip}"),
             );
+            // Attribute the cache hit to the function that owns the route so
+            // FunctionState.cache_hits stays accurate (mirrors the cache-miss
+            // path which calls record_request with cache_hit=false).
+            let fn_name = {
+                let router = state.router.read().await;
+                router.handlers().iter()
+                    .find(|h| h.routes().iter().any(|r| r.match_path(&method_str, &path).is_some()))
+                    .map(|h| h.name().to_string())
+            };
+            if let Some(fn_name) = fn_name {
+                state.record_request(&fn_name, true, latency, true).await;
+            }
             return gateway_to_axum(&cached);
         }
     }

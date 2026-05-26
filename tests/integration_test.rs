@@ -6,7 +6,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 #[tokio::test]
-#[ignore = "requires bun on PATH"]
 async fn echo_lambda_returns_200() {
     let config_toml = format!(r#"
 [server]
@@ -85,7 +84,6 @@ method = "GET"
 }
 
 #[tokio::test]
-#[ignore = "requires bun on PATH"]
 async fn cache_returns_hit_on_second_request() {
     let config_toml = format!(r#"
 [server]
@@ -164,10 +162,11 @@ method = "GET"
     state_for_check.cache.sync().await;
 
     assert_eq!(state_for_check.cache.entry_count(), 1);
-    // After two requests: 1 cache miss + 1 cache hit
+    // Three requests total: warm-up (cache miss), r1 (cache hit), r2 (cache hit).
+    // The warm-up primes the cache; r1 and r2 both return the cached entry.
     let functions = state_for_check.riz_state.functions.read().await;
     let f = functions.get("cached").unwrap();
     use std::sync::atomic::Ordering;
-    assert_eq!(f.cache_hits.load(Ordering::Relaxed), 1);
+    assert_eq!(f.cache_hits.load(Ordering::Relaxed), 2);
     assert_eq!(f.cache_misses.load(Ordering::Relaxed), 1);
 }
