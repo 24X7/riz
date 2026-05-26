@@ -60,9 +60,9 @@ fn render_routes_table(frame: &mut Frame, app: &App, area: Rect) {
         let cursor = if app.selected_route == Some(i) { "▶" } else { " " };
         let is_system = matches!(stats.kind, FunctionKind::System);
         let route_label = if is_system {
-            format!("◆ {}", stats.route_key)  // diamond marker for system routes
+            format!("◆ {}", stats.name)  // diamond marker for system routes
         } else {
-            stats.route_key.clone()
+            stats.name.clone()
         };
         let route_style = if is_system {
             Style::default().fg(Color::DarkGray)
@@ -118,7 +118,7 @@ fn render_routes_table(frame: &mut Frame, app: &App, area: Rect) {
 fn render_log_panel(frame: &mut Frame, app: &App, area: Rect) {
     let selected_key: Option<&str> = app.selected_route
         .and_then(|i| app.function_stats.get(i))
-        .map(|s| s.route_key.as_str());
+        .map(|s| s.name.as_str());
 
     let title = match selected_key {
         Some(k) => format!("Logs — {k}  [Esc / c to clear filter]"),
@@ -220,7 +220,7 @@ fn render_processes_table(frame: &mut Frame, app: &App, area: Rect) {
         let health_color = if f.healthy { Color::Green } else { Color::Red };
         rows.push(Row::new([
             Cell::from("◆").style(Style::default().fg(Color::DarkGray)),
-            Cell::from(f.route_key.clone()).style(Style::default().fg(Color::DarkGray)),
+            Cell::from(f.name.clone()).style(Style::default().fg(Color::DarkGray)),
             Cell::from(app.host_stats.pid.to_string()).style(Style::default().fg(Color::DarkGray)),
             Cell::from("(host)").style(Style::default().fg(Color::DarkGray)),
             Cell::from("(host)").style(Style::default().fg(Color::DarkGray)),
@@ -242,7 +242,7 @@ fn render_processes_table(frame: &mut Frame, app: &App, area: Rect) {
         let cpu_str = format!("{:.1}%", s.cpu_percent);
         rows.push(Row::new([
             Cell::from(" "),
-            Cell::from(s.route_key.as_str()),
+            Cell::from(s.name.as_str()),
             Cell::from(pids.join(", ")),
             Cell::from(mem_str),
             Cell::from(cpu_str),

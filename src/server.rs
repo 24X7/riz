@@ -103,35 +103,30 @@ async fn dispatch_lambda(
         .unwrap_or("")
         .to_string();
 
-    let route_key = crate::router::Router::route_key(&method_str, &path);
     let cache_key = CacheLayer::make_key(&method_str, &path, &query);
+    let route_key_for_logs = crate::router::Router::route_key(&method_str, &path);
 
     // BUG-12: skip cache for authenticated/personalized requests
     let has_auth = req.headers().contains_key("authorization") || req.headers().contains_key("cookie");
 
-    // Resolve per-route config knobs (runtime tag + cache TTL override).
-    // System routes won't appear in config.routes — defaults apply.
-    let (route_runtime_tag, route_cache_ttl, default_ttl) = {
+    let default_ttl = {
         let cfg = state.config.read().await;
-        let matched = cfg.routes.iter()
-            .find(|r| crate::router::Router::route_key(&r.method, &r.path) == route_key);
-        let runtime_tag = matched
-            .map(|r| r.runtime.as_str().to_string())
-            .unwrap_or_else(|| "system".to_string());
-        let ttl_override = matched.and_then(|r| r.cache_ttl_secs);
-        (runtime_tag, ttl_override, cfg.cache.default_ttl_secs)
+        cfg.cache.default_ttl_secs
     };
 
-    // Cache check — only when no auth headers present.
+    // Cache check — only when no auth headers present. The cache is keyed
+    // by raw method+path+query (a cached response is the request's response,
+    // not the function's). Attribution to function name happens via the
+    // first router pass we need to do for the lookup; for cache-hit we use
+    // the request path as the log key.
     if !has_auth {
         if let Some(cached) = state.cache.get(&cache_key).await {
             let latency = start.elapsed().as_secs_f64() * 1000.0;
             let request_id = Uuid::new_v4().to_string();
-            state.record_request(&route_key, true, latency, true).await;
-            state.metrics.record_cache_hit(&route_key);
+            state.metrics.record_cache_hit(&route_key_for_logs);
             state.push_log(
                 "INFO",
-                Some(&route_key),
+                Some(&route_key_for_logs),
                 format!("{method_str} {path} 200 {latency:.0}ms [cache] req={request_id} ip={source_ip}"),
             );
             return gateway_to_axum(&cached);
@@ -191,7 +186,7 @@ async fn dispatch_lambda(
     let time_str = format_aws_time(time_epoch);
 
     let mut ctx = ApiGatewayV2httpRequestContext::default();
-    ctx.route_key = Some(route_key.clone());
+    ctx.route_key = Some(route_key_for_logs.clone());
     ctx.account_id = Some("riz".into());
     ctx.stage = Some("$default".into());
     ctx.request_id = Some(request_id.clone());
@@ -207,7 +202,7 @@ async fn dispatch_lambda(
 
     let gw_request = ApiGatewayV2httpRequest {
         version: Some("2.0".into()),
-        route_key: Some(route_key.clone()),
+        route_key: Some(route_key_for_logs.clone()),
         raw_path: Some(path.clone()),
         raw_query_string: Some(query.clone()),
         cookies,
@@ -234,46 +229,46 @@ async fn dispatch_lambda(
 
     match result {
         Ok(outcome) => {
-            let route_key = outcome.route_key.clone();
+            // Router returns (function_name, response). All metrics, cache
+            // bookkeeping, and access logs attribute to function_name —
+            // mirrors AWS CloudWatch per-function metric semantics.
+            let function_name = outcome.function_name.clone();
             let gw_resp = outcome.response;
 
-            // Re-resolve runtime tag + ttl override against the matched pattern.
-            let (route_runtime_tag, route_cache_ttl) = {
+            // Look up the function config to get the runtime tag for metrics
+            // and the per-function cache TTL override.
+            let (runtime_tag, fn_cache_ttl) = {
                 let cfg = state.config.read().await;
-                let matched = cfg.routes.iter()
-                    .find(|r| crate::router::Router::route_key(&r.method, &r.path) == route_key);
-                let runtime_tag = matched
-                    .map(|r| r.runtime.as_str().to_string())
-                    .unwrap_or_else(|| "system".to_string());
-                let ttl_override = matched.and_then(|r| r.cache_ttl_secs);
-                (runtime_tag, ttl_override)
+                match cfg.functions.get(&function_name) {
+                    Some(fc) => (fc.runtime.as_str().to_string(), fc.cache_ttl_secs),
+                    None => ("system".to_string(), None),
+                }
             };
-            let _ = (route_runtime_tag.clone(), route_cache_ttl);
 
             let status_u16 = gw_resp.status_code as u16;
             let healthy = status_u16 < 500;
-            state.metrics.record_request(&route_key, &method_str, status_u16, latency);
+            state.metrics.record_request(&function_name, &method_str, status_u16, latency);
 
             match status_u16 {
-                502 => state.metrics.record_lambda_crash(&route_key, &route_runtime_tag),
-                504 => state.metrics.record_lambda_timeout(&route_key),
+                502 => state.metrics.record_lambda_crash(&function_name, &runtime_tag),
+                504 => state.metrics.record_lambda_timeout(&function_name),
                 _ => {}
             }
-            state.metrics.record_lambda_healthy(&route_key, healthy);
+            state.metrics.record_lambda_healthy(&function_name, healthy);
 
             if status_u16 < 400 {
-                state.metrics.record_cache_miss(&route_key);
+                state.metrics.record_cache_miss(&function_name);
             }
 
-            state.record_request(&route_key, false, latency, healthy).await;
+            state.record_request(&function_name, false, latency, healthy).await;
 
             state.push_log(
                 "INFO",
-                Some(&route_key),
-                format!("{method_str} {path} {status_u16} {latency:.0}ms req={request_id} ip={source_ip}"),
+                Some(&function_name),
+                format!("{method_str} {path} {status_u16} {latency:.0}ms req={request_id} ip={source_ip} fn={function_name}"),
             );
 
-            let ttl = route_cache_ttl.unwrap_or(default_ttl);
+            let ttl = fn_cache_ttl.unwrap_or(default_ttl);
             if !has_auth && ttl > 0 && status_u16 < 400 {
                 state.cache.set(cache_key, gw_resp.clone(), ttl).await;
             }
@@ -282,11 +277,9 @@ async fn dispatch_lambda(
         }
         Err(e) => {
             let resp = e.to_response();
-            error!("dispatch error for {route_key}: {e}");
-            state.metrics.record_lambda_crash(&route_key, &route_runtime_tag);
-            state.metrics.record_lambda_healthy(&route_key, false);
-            state.record_request(&route_key, false, latency, false).await;
-            state.push_log("ERROR", Some(&route_key), format!("dispatch error {route_key}: {e}"));
+            error!("dispatch error: {e}");
+            // No function attribution possible — log under "_unmatched".
+            state.push_log("ERROR", None, format!("dispatch error {method_str} {path}: {e}"));
             gateway_to_axum(&resp)
         }
     }
@@ -383,7 +376,7 @@ async fn ready_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse 
     let unhealthy: Vec<String> = stats
         .iter()
         .filter(|s| !s.healthy)
-        .map(|s| s.route_key.clone())
+        .map(|s| s.name.clone())
         .collect();
     if unhealthy.is_empty() {
         (

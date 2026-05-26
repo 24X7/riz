@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use tokio::process::Command;
 use anyhow::Context;
-use crate::config::RouteConfig;
+use crate::config::FunctionConfig;
 use crate::process::runtime::LambdaRuntime;
 
 const BUN_ADAPTER: &str = include_str!("../../assets/bun-adapter.mjs");
@@ -29,7 +29,7 @@ fn home_dir() -> PathBuf {
 }
 
 impl LambdaRuntime for BunRuntime {
-    fn spawn_command(&self, route: &RouteConfig) -> Command {
+    fn spawn_command(&self, route: &FunctionConfig) -> Command {
         let handler = route.handler.canonicalize()
             .unwrap_or_else(|_| route.handler.clone());
         let mut cmd = Command::new("bun");

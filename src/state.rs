@@ -381,16 +381,24 @@ mod latency_window_tests {
 // ─── FunctionState + RizState ──────────────────────────────────────────────
 
 use indexmap::IndexMap;
-use crate::config::RouteConfig;
+use crate::config::FunctionConfig;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FunctionKind { User, System }
 
-/// Per-function runtime state. Counters are atomic for lock-free hot path;
-/// latency uses a Mutex because percentile computation needs the full sample window.
+/// Per-function runtime state. One entry per FUNCTION (not per route) —
+/// matches AWS Lambda's CloudWatch metric shape where counters and latency
+/// percentiles aggregate at the function level regardless of how many routes
+/// invoke it. Counters are atomic for lock-free hot path; latency uses a
+/// Mutex because percentile computation needs the full sample window.
 pub struct FunctionState {
-    pub route_key: String,
-    pub route: Option<RouteConfig>,
+    /// Function name (`api`, `users`, `_riz/health` for system).
+    pub name: String,
+    /// All routes this function serves, as "METHOD /path" strings for
+    /// display in /_riz/health, /_riz/registry, and the TUI.
+    pub routes: Vec<String>,
+    /// Function-level config for user functions; None for system endpoints.
+    pub config: Option<FunctionConfig>,
     pub kind: FunctionKind,
     pub invocations: AtomicU64,
     pub errors: AtomicU64,
@@ -405,7 +413,8 @@ pub struct FunctionState {
 /// Plain-data view of one FunctionState — what the TUI renders.
 #[derive(Clone, Debug, Default)]
 pub struct FunctionStateSnapshot {
-    pub route_key: String,
+    pub name: String,
+    pub routes: Vec<String>,
     pub kind: FunctionKind,
     pub invocations: u64,
     pub errors: u64,
@@ -433,8 +442,7 @@ impl Default for FunctionKind {
 }
 
 impl FunctionState {
-    /// Capture an immutable snapshot. Reads atomics with Relaxed ordering,
-    /// briefly locks `latency` and `last_invoked` to read their state.
+    /// Capture an immutable snapshot.
     pub fn snapshot(&self, now: Instant) -> FunctionStateSnapshot {
         let (p50, p75, p90, p95, p99) = self.latency.lock()
             .map(|mut w| w.percentiles(now))
@@ -443,7 +451,8 @@ impl FunctionState {
             .ok()
             .and_then(|l| l.map(|t| now.duration_since(t).as_secs_f64()));
         FunctionStateSnapshot {
-            route_key: self.route_key.clone(),
+            name: self.name.clone(),
+            routes: self.routes.clone(),
             kind: self.kind,
             invocations: self.invocations.load(Ordering::Relaxed),
             errors: self.errors.load(Ordering::Relaxed),
@@ -460,10 +469,16 @@ impl FunctionState {
         }
     }
 
-    pub fn user(route_key: impl Into<String>, route: RouteConfig) -> Self {
+    pub fn user(name: impl Into<String>, config: FunctionConfig) -> Self {
+        let name = name.into();
+        let routes = config.effective_routes(&name)
+            .into_iter()
+            .map(|r| format!("{} {}", r.method.to_uppercase(), r.path))
+            .collect();
         Self {
-            route_key: route_key.into(),
-            route: Some(route),
+            name,
+            routes,
+            config: Some(config),
             kind: FunctionKind::User,
             invocations: AtomicU64::new(0),
             errors: AtomicU64::new(0),
@@ -476,10 +491,11 @@ impl FunctionState {
         }
     }
 
-    pub fn system(route_key: impl Into<String>) -> Self {
+    pub fn system(name: impl Into<String>, routes: Vec<String>) -> Self {
         Self {
-            route_key: route_key.into(),
-            route: None,
+            name: name.into(),
+            routes,
+            config: None,
             kind: FunctionKind::System,
             invocations: AtomicU64::new(0),
             errors: AtomicU64::new(0),
@@ -512,22 +528,21 @@ impl RizState {
 
     pub async fn register(&self, f: FunctionState) {
         let mut functions = self.functions.write().await;
-        functions.insert(f.route_key.clone(), Arc::new(f));
+        functions.insert(f.name.clone(), Arc::new(f));
     }
 
-    /// Hot-path bookkeeping. Read-locks the outer map briefly to clone the
-    /// Arc, then atomic-bumps and locks the per-function mutexes outside the
-    /// map borrow — keeps the outer lock contention minimal.
+    /// Hot-path bookkeeping. Keyed by FUNCTION NAME (not route_key) —
+    /// matches AWS CloudWatch metric aggregation.
     pub async fn record_invocation(
         &self,
-        route_key: &str,
+        function_name: &str,
         latency_ms: f64,
         healthy: bool,
         cache_hit: bool,
     ) {
         let entry = {
             let functions = self.functions.read().await;
-            match functions.get(route_key) {
+            match functions.get(function_name) {
                 Some(e) => e.clone(),
                 None => return,
             }
@@ -551,10 +566,10 @@ impl RizState {
         };
     }
 
-    pub async fn note_cold_start(&self, route_key: &str) {
+    pub async fn note_cold_start(&self, function_name: &str) {
         let entry = {
             let functions = self.functions.read().await;
-            match functions.get(route_key) {
+            match functions.get(function_name) {
                 Some(e) => e.clone(),
                 None => return,
             }
@@ -576,21 +591,20 @@ mod riz_state_tests {
     use super::*;
     use std::sync::atomic::Ordering;
 
-    fn make_route_config() -> crate::config::RouteConfig {
-        crate::config::RouteConfig {
-            path: "/api".into(),
-            method: "GET".into(),
+    fn make_function_config() -> crate::config::FunctionConfig {
+        crate::config::FunctionConfig {
             runtime: crate::config::RuntimeKind::Bun,
             handler: std::path::PathBuf::from("./handler.ts"),
             timeout_ms: 5000,
             cache_ttl_secs: None,
             concurrency: 1,
+            routes: vec![],
         }
     }
 
     #[tokio::test]
     async fn function_state_starts_zeroed() {
-        let f = FunctionState::user("GET /api", make_route_config());
+        let f = FunctionState::user("api", make_function_config());
         assert_eq!(f.invocations.load(Ordering::Relaxed), 0);
         assert_eq!(f.errors.load(Ordering::Relaxed), 0);
         assert_eq!(f.cache_hits.load(Ordering::Relaxed), 0);
@@ -598,41 +612,43 @@ mod riz_state_tests {
         assert_eq!(f.cold_starts.load(Ordering::Relaxed), 0);
         assert!(f.healthy.load(Ordering::Relaxed));
         assert_eq!(f.kind, FunctionKind::User);
-        assert!(f.route.is_some());
+        assert!(f.config.is_some());
+        // Implicit default route is /api at ANY
+        assert_eq!(f.routes, vec!["ANY /api".to_string()]);
     }
 
     #[tokio::test]
-    async fn system_function_state_has_no_route_config() {
-        let f = FunctionState::system("GET /_riz/health");
+    async fn system_function_state_has_no_config() {
+        let f = FunctionState::system("_riz/health", vec!["GET /_riz/health".into()]);
         assert_eq!(f.kind, FunctionKind::System);
-        assert!(f.route.is_none());
+        assert!(f.config.is_none());
     }
 
     #[tokio::test]
     async fn register_then_record_increments_counters() {
         let state = RizState::new();
-        state.register(FunctionState::user("GET /api", make_route_config())).await;
-        state.record_invocation("GET /api", 12.3, true, false).await;
-        state.record_invocation("GET /api", 7.5, true, false).await;
+        state.register(FunctionState::user("api", make_function_config())).await;
+        state.record_invocation("api", 12.3, true, false).await;
+        state.record_invocation("api", 7.5, true, false).await;
         let functions = state.functions.read().await;
-        let f = functions.get("GET /api").unwrap();
+        let f = functions.get("api").unwrap();
         assert_eq!(f.invocations.load(Ordering::Relaxed), 2);
         assert_eq!(f.cache_misses.load(Ordering::Relaxed), 2);
     }
 
     #[tokio::test]
-    async fn record_invocation_for_unknown_route_is_noop() {
+    async fn record_invocation_for_unknown_function_is_noop() {
         let state = RizState::new();
-        state.record_invocation("GET /never-registered", 5.0, true, false).await;
+        state.record_invocation("never-registered", 5.0, true, false).await;
     }
 
     #[tokio::test]
     async fn record_invocation_with_cache_hit_increments_cache_hits() {
         let state = RizState::new();
-        state.register(FunctionState::user("GET /api", make_route_config())).await;
-        state.record_invocation("GET /api", 1.0, true, true).await;
+        state.register(FunctionState::user("api", make_function_config())).await;
+        state.record_invocation("api", 1.0, true, true).await;
         let functions = state.functions.read().await;
-        let f = functions.get("GET /api").unwrap();
+        let f = functions.get("api").unwrap();
         assert_eq!(f.cache_hits.load(Ordering::Relaxed), 1);
         assert_eq!(f.cache_misses.load(Ordering::Relaxed), 0);
     }
@@ -640,10 +656,10 @@ mod riz_state_tests {
     #[tokio::test]
     async fn unhealthy_invocation_increments_errors_and_flips_healthy() {
         let state = RizState::new();
-        state.register(FunctionState::user("GET /api", make_route_config())).await;
-        state.record_invocation("GET /api", 1.0, false, false).await;
+        state.register(FunctionState::user("api", make_function_config())).await;
+        state.record_invocation("api", 1.0, false, false).await;
         let functions = state.functions.read().await;
-        let f = functions.get("GET /api").unwrap();
+        let f = functions.get("api").unwrap();
         assert_eq!(f.errors.load(Ordering::Relaxed), 1);
         assert!(!f.healthy.load(Ordering::Relaxed));
     }
@@ -651,11 +667,11 @@ mod riz_state_tests {
     #[tokio::test]
     async fn iter_preserves_registration_order() {
         let state = RizState::new();
-        state.register(FunctionState::user("GET /b", make_route_config())).await;
-        state.register(FunctionState::user("GET /a", make_route_config())).await;
-        state.register(FunctionState::system("GET /_riz/health")).await;
+        state.register(FunctionState::user("b", make_function_config())).await;
+        state.register(FunctionState::user("a", make_function_config())).await;
+        state.register(FunctionState::system("_riz_health", vec!["GET /_riz/health".into()])).await;
         let functions = state.functions.read().await;
         let keys: Vec<&str> = functions.keys().map(|s| s.as_str()).collect();
-        assert_eq!(keys, vec!["GET /b", "GET /a", "GET /_riz/health"]);
+        assert_eq!(keys, vec!["b", "a", "_riz_health"]);
     }
 }

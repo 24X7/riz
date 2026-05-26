@@ -128,6 +128,10 @@ struct ToolsCallParams {
 
 #[derive(Deserialize, Default)]
 struct ToolArguments {
+    /// Optional "METHOD /path" selector when the function declares multiple
+    /// routes. If omitted, the first declared route is used.
+    #[serde(default)]
+    route: Option<String>,
     #[serde(default)]
     body: Option<String>,
     #[serde(default)]
@@ -279,10 +283,15 @@ impl McpHandler {
         let mut tools = Vec::new();
         for (_, f) in functions.iter() {
             if !matches!(f.kind, FunctionKind::User) { continue; }
-            let name = mcp_tool_name(&f.route_key);
-            let description = match &f.route {
-                Some(r) => format!("Invoke {} ({} runtime)", f.route_key, r.runtime.as_str()),
-                None => format!("Invoke {}", f.route_key),
+            // MCP tool name = function name directly (no transformation needed
+            // now that we're function-centric).
+            let name = f.name.clone();
+            let description = match &f.config {
+                Some(c) => format!(
+                    "Invoke function `{}` ({} runtime). Routes: [{}]",
+                    f.name, c.runtime.as_str(), f.routes.join(", "),
+                ),
+                None => format!("Invoke {}", f.name),
             };
             tools.push(Tool {
                 name,
@@ -302,26 +311,43 @@ impl McpHandler {
                 message: format!("invalid params: {e}"),
             })?;
 
-        // Look up the matching route by tool-name derivation.
-        let matched: Option<(String, String, String)> = {
+        // Tool name == function name. Look up the function and pick a route
+        // to dispatch to: use the caller-supplied `route` arg if present,
+        // otherwise default to the function's first declared route.
+        let (function_name, method, path) = {
             let functions = self.riz_state.functions.read().await;
-            let mut found = None;
-            for (route_key, f) in functions.iter() {
-                if !matches!(f.kind, FunctionKind::User) { continue; }
-                if mcp_tool_name(route_key) == parsed.name {
-                    if let Some((m, p)) = route_key.split_once(' ') {
-                        found = Some((route_key.clone(), m.to_string(), p.to_string()));
-                        break;
-                    }
-                }
-            }
-            found
+            let f = functions.get(&parsed.name)
+                .filter(|f| matches!(f.kind, FunctionKind::User))
+                .ok_or_else(|| JsonRpcError {
+                    code: -32602,
+                    message: format!("unknown function: {}", parsed.name),
+                })?
+                .clone();
+            // Routes are stored as "METHOD /path" strings on FunctionState.
+            // Pick the requested one (if the caller passed `route`), else the first.
+            let requested = parsed.arguments.route.as_deref();
+            let chosen = match requested {
+                Some(want) => f.routes.iter()
+                    .find(|r| r.as_str() == want)
+                    .ok_or_else(|| JsonRpcError {
+                        code: -32602,
+                        message: format!("route '{want}' not declared by function '{}'", f.name),
+                    })?
+                    .clone(),
+                None => f.routes.first()
+                    .ok_or_else(|| JsonRpcError {
+                        code: -32603,
+                        message: format!("function '{}' has no routes", f.name),
+                    })?
+                    .clone(),
+            };
+            let (m, p) = chosen.split_once(' ').ok_or_else(|| JsonRpcError {
+                code: -32603,
+                message: format!("malformed route entry: {chosen}"),
+            })?;
+            (f.name.clone(), m.to_string(), p.to_string())
         };
-
-        let (route_key, method, path) = matched.ok_or_else(|| JsonRpcError {
-            code: -32602,
-            message: format!("unknown tool: {}", parsed.name),
-        })?;
+        let route_key = format!("{} {}", method, path);
 
         // Build an AWS v2 event. If the matched route is a pattern like
         // `/accounts/{id}`, substitute `{id}` with the caller-supplied
@@ -417,6 +443,7 @@ fn generic_envelope_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
         "properties": {
+            "route": {"type": "string", "description": "Optional \"METHOD /path\" selector when the function declares multiple routes. Omit to use the first declared route."},
             "body": {"type": "string", "description": "Request body. Set isBase64Encoded:true for binary."},
             "headers": {"type": "object", "additionalProperties": {"type": "string"}},
             "queryParams": {"type": "object", "additionalProperties": {"type": "string"}},
@@ -548,16 +575,15 @@ mod tests {
     }
 
     fn user_state() -> FunctionState {
-        let r = crate::config::RouteConfig {
-            path: "/api".into(),
-            method: "GET".into(),
+        let c = crate::config::FunctionConfig {
             runtime: crate::config::RuntimeKind::Bun,
             handler: std::path::PathBuf::from("./api.ts"),
             timeout_ms: 5000,
             cache_ttl_secs: None,
             concurrency: 1,
+            routes: vec![],
         };
-        FunctionState::user("GET /api", r)
+        FunctionState::user("api", c)
     }
 
     #[tokio::test]
@@ -570,14 +596,14 @@ mod tests {
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         let tools = body["result"]["tools"].as_array().unwrap();
         assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0]["name"], "GET_api");
-        assert!(tools[0]["description"].as_str().unwrap().contains("GET /api"));
+        assert_eq!(tools[0]["name"], "api");
+        assert!(tools[0]["description"].as_str().unwrap().contains("api"));
     }
 
     #[tokio::test]
     async fn tools_list_excludes_system_functions() {
         let s = Arc::new(RizState::new());
-        s.register(FunctionState::system("GET /_riz/health")).await;
+        s.register(FunctionState::system("_riz_health", vec!["GET /_riz/health".into()])).await;
         s.register(user_state()).await;
         let h = McpHandler::new(s);
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
@@ -585,7 +611,7 @@ mod tests {
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         let tools = body["result"]["tools"].as_array().unwrap();
         assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0]["name"], "GET_api");
+        assert_eq!(tools[0]["name"], "api");
     }
 
     #[tokio::test]
@@ -613,7 +639,7 @@ mod tests {
         let s = Arc::new(RizState::new());
         s.register(user_state()).await;
         let h = McpHandler::new(s);
-        let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"GET_api","arguments":{}}}"#;
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"api","arguments":{}}}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         assert_eq!(body["error"]["code"], -32603);
@@ -624,7 +650,7 @@ mod tests {
         let s = Arc::new(RizState::new());
         let h = McpHandler::new(s);
         h.set_router(Arc::new(Router::empty())).await;
-        let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"GET_nope","arguments":{}}}"#;
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"nope","arguments":{}}}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         assert_eq!(body["error"]["code"], -32602);

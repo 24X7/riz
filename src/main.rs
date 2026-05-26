@@ -94,14 +94,17 @@ async fn main() -> anyhow::Result<()> {
 
     match &cli.command {
         Some(Commands::Validate) => {
-            println!("Config OK: {} routes", config.routes.len());
+            println!("Config OK: {} functions", config.functions.len());
             return Ok(());
         }
         Some(Commands::Routes) => {
-            for route in &config.routes {
-                println!("{} {} -> {:?} ({})",
-                    route.method, route.path,
-                    route.handler, route.runtime.as_str());
+            for (name, f) in &config.functions {
+                let routes: Vec<String> = f.effective_routes(name).into_iter()
+                    .map(|r| format!("{} {}", r.method, r.path))
+                    .collect();
+                println!("{} [{}] {:?} ({})  routes: {}",
+                    name, f.runtime.as_str(), f.handler, f.runtime.as_str(),
+                    routes.join(", "));
             }
             return Ok(());
         }
@@ -122,28 +125,33 @@ async fn main() -> anyhow::Result<()> {
         tracing::error!("SECURITY: /deploy has no auth configured — endpoint will refuse all requests. Set RIZ_DEPLOY_KEY or deploy_key/allowed_cidrs in config.");
     }
 
-    // Per-function shared state — tracks counters and latency percentiles for
-    // both system endpoints and user functions. Constructed FIRST so the
-    // ProcessManager (and each spawned RoutePool) can hold an Arc<RizState>
-    // and bump cold_starts at every spawn site.
     let riz_state = Arc::new(state::RizState::new());
-    riz_state.register(state::FunctionState::system("GET /_riz/health")).await;
-    riz_state.register(state::FunctionState::system("GET /_riz/metrics")).await;
-    riz_state.register(state::FunctionState::system("GET /_riz/registry")).await;
-    riz_state.register(state::FunctionState::system("POST /_riz/mcp")).await;
-    for route in &config.routes {
-        let key = router::Router::route_key(&route.method, &route.path);
-        riz_state.register(state::FunctionState::user(key, route.clone())).await;
+    // Register system endpoints first.
+    riz_state.register(state::FunctionState::system(
+        "_riz_health", vec!["GET /_riz/health".into()],
+    )).await;
+    riz_state.register(state::FunctionState::system(
+        "_riz_metrics", vec!["GET /_riz/metrics".into()],
+    )).await;
+    riz_state.register(state::FunctionState::system(
+        "_riz_registry", vec!["GET /_riz/registry".into()],
+    )).await;
+    riz_state.register(state::FunctionState::system(
+        "_riz_mcp", vec!["POST /_riz/mcp".into()],
+    )).await;
+    // Register user functions by name.
+    for (name, cfg) in &config.functions {
+        riz_state.register(state::FunctionState::user(name.clone(), cfg.clone())).await;
     }
 
     let process_manager = Arc::new(process::ProcessManager::new(riz_state.clone()));
 
-    // Spawn the user-function pools (existing behavior preserved verbatim).
-    // Each initial spawn bumps cold_starts on the matching FunctionState.
-    process_manager.spawn_all(&config.routes, &registry, log_tx.clone()).await?;
+    // Spawn one process pool per function. Each spawned process bumps
+    // cold_starts on the matching FunctionState.
+    process_manager.spawn_all(&config.functions, &registry, log_tx.clone()).await?;
 
-    // Build the trait-dispatch router. System handlers mount FIRST so that
-    // /_riz/* always wins over any user attempt to shadow those paths.
+    // Build the handler list. System handlers mount FIRST so /_riz/* always
+    // beats any user attempt to shadow those paths.
     let mcp = Arc::new(system::mcp::McpHandler::new(riz_state.clone()));
     let mut handlers: Vec<Arc<dyn runtime::LambdaHandler>> = vec![
         Arc::new(system::health::HealthHandler::new(riz_state.clone())),
@@ -151,8 +159,12 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(system::registry::RegistryHandler::new(riz_state.clone())),
         mcp.clone() as Arc<dyn runtime::LambdaHandler>,
     ];
-    for route in &config.routes {
-        let h = runtime::process::ProcessHandler::for_route(route, process_manager.clone());
+    // One ProcessHandler per function — it declares every route the function
+    // serves (including implicit `ANY /<name>` when no routes block is given).
+    for (name, cfg) in &config.functions {
+        let h = runtime::process::ProcessHandler::for_function(
+            name, cfg, process_manager.clone(),
+        );
         handlers.push(Arc::new(h));
     }
     // McpHandler.tools_call needs an Arc<Router> for reentrant dispatch.

@@ -1,8 +1,10 @@
+use indexmap::IndexMap;
 use serde::Deserialize;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct Config {
+    #[serde(default)]
     pub server: ServerConfig,
     #[serde(default)]
     pub cache: CacheConfig,
@@ -12,8 +14,13 @@ pub struct Config {
     pub deploy: DeployConfig,
     #[serde(default)]
     pub aws: AwsConfig,
-    #[serde(default)]
-    pub routes: Vec<RouteConfig>,
+    /// Function-centric: one entry per function. Each function is a single
+    /// process pool serving one or more routes (mirrors AWS Lambda + API GW v2
+    /// — one Lambda, N route → function mappings, one execution environment).
+    /// TOML reads from `[function.<name>]` (singular per the AWS Lambda
+    /// "function" vocabulary); internal field is plural.
+    #[serde(default, rename = "function")]
+    pub functions: IndexMap<String, FunctionConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -96,19 +103,50 @@ impl Default for AwsConfig {
     fn default() -> Self { Self { region: default_region() } }
 }
 
+/// A user function — one process pool, N routes.
+///
+/// Mirrors AWS Lambda + API Gateway v2: a Lambda function has a single
+/// execution environment that any number of routes can target. The `routes`
+/// field lists every (path, method) pair the function answers; if omitted,
+/// the default is a single route at `ANY /<function_name>`.
 #[derive(Debug, Clone, Deserialize)]
-pub struct RouteConfig {
-    pub path: String,
-    pub method: String,
+pub struct FunctionConfig {
     pub runtime: RuntimeKind,
     pub handler: PathBuf,
     #[serde(default = "default_timeout")]
     pub timeout_ms: u64,
-    pub cache_ttl_secs: Option<u64>,
     #[serde(default = "default_concurrency")]
     pub concurrency: usize,
+    pub cache_ttl_secs: Option<u64>,
+    /// Explicit routes this function serves. If empty, defaults to
+    /// `[{ path: "/<name>", method: "ANY" }]`.
+    #[serde(default)]
+    pub routes: Vec<RouteSpec>,
 }
 
+impl FunctionConfig {
+    /// Effective routes: the declared ones, or the implicit `ANY /<name>`
+    /// fallback if no routes block was given.
+    pub fn effective_routes(&self, name: &str) -> Vec<RouteSpec> {
+        if self.routes.is_empty() {
+            vec![RouteSpec {
+                path: format!("/{name}"),
+                method: default_method(),
+            }]
+        } else {
+            self.routes.clone()
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RouteSpec {
+    pub path: String,
+    #[serde(default = "default_method")]
+    pub method: String,
+}
+
+fn default_method() -> String { "ANY".into() }
 fn default_timeout() -> u64 { 30_000 }
 fn default_concurrency() -> usize { 1 }
 
@@ -144,15 +182,22 @@ impl Config {
         std::env::var("RIZ_DEPLOY_KEY").ok().or_else(|| self.deploy.deploy_key.clone())
     }
 
-    /// Reject configurations that overlap Riz's reserved /_riz/* namespace.
-    /// Called at startup; returns Err with the offending path if found.
+    /// Reject configurations that overlap Riz's reserved /_riz/* namespace,
+    /// or that use the reserved `_riz` prefix in function names.
     pub fn validate(&self) -> Result<(), String> {
-        for r in &self.routes {
-            if r.path == "/_riz" || r.path.starts_with("/_riz/") {
+        for (name, func) in &self.functions {
+            if name == "_riz" || name.starts_with("_riz") {
                 return Err(format!(
-                    "route path '{}' uses reserved /_riz/* namespace",
-                    r.path
+                    "function name '{name}' uses reserved '_riz' prefix"
                 ));
+            }
+            for r in func.effective_routes(name) {
+                if r.path == "/_riz" || r.path.starts_with("/_riz/") {
+                    return Err(format!(
+                        "function '{name}' has route path '{}' that uses reserved /_riz/* namespace",
+                        r.path
+                    ));
+                }
             }
         }
         Ok(())
@@ -168,9 +213,7 @@ mod tests {
 port = 4000
 host = "127.0.0.1"
 
-[[routes]]
-path = "/ping"
-method = "GET"
+[function.ping]
 runtime = "bun"
 handler = "./lambdas/ping/index.ts"
 timeout_ms = 1000
@@ -185,14 +228,63 @@ concurrency = 2
     }
 
     #[test]
-    fn parses_route() {
+    fn parses_function() {
         let config: Config = toml::from_str(SAMPLE).unwrap();
-        let route = &config.routes[0];
-        assert_eq!(route.path, "/ping");
-        assert_eq!(route.method, "GET");
-        assert_eq!(route.runtime, RuntimeKind::Bun);
-        assert_eq!(route.timeout_ms, 1000);
-        assert_eq!(route.concurrency, 2);
+        let f = config.functions.get("ping").expect("ping function");
+        assert_eq!(f.runtime, RuntimeKind::Bun);
+        assert_eq!(f.timeout_ms, 1000);
+        assert_eq!(f.concurrency, 2);
+        // No explicit routes → implicit default ANY /ping
+        let routes = f.effective_routes("ping");
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0].path, "/ping");
+        assert_eq!(routes[0].method, "ANY");
+    }
+
+    #[test]
+    fn parses_function_with_explicit_routes() {
+        let toml_str = r#"
+[server]
+port = 8080
+
+[function.api]
+runtime = "bun"
+handler = "./api.ts"
+
+[[function.api.routes]]
+path = "/api/{id}"
+method = "GET"
+
+[[function.api.routes]]
+path = "/api/{proxy+}"
+method = "ANY"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let f = config.functions.get("api").unwrap();
+        let routes = f.effective_routes("api");
+        assert_eq!(routes.len(), 2);
+        assert_eq!(routes[0].path, "/api/{id}");
+        assert_eq!(routes[0].method, "GET");
+        assert_eq!(routes[1].path, "/api/{proxy+}");
+        assert_eq!(routes[1].method, "ANY");
+    }
+
+    #[test]
+    fn route_spec_defaults_method_to_any() {
+        let toml_str = r#"
+[server]
+port = 8080
+
+[function.api]
+runtime = "bun"
+handler = "./api.ts"
+
+[[function.api.routes]]
+path = "/api"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let routes = config.functions.get("api").unwrap().effective_routes("api");
+        assert_eq!(routes[0].method, "ANY", "method defaults to ANY per AWS convention");
     }
 
     #[test]
@@ -238,19 +330,18 @@ deploy_key = "filekey"
     }
 
     #[test]
-    fn validate_rejects_riz_prefix() {
+    fn validate_rejects_riz_prefix_path() {
         let toml_str = r#"
 [server]
 port = 8080
-host = "127.0.0.1"
 
-[[routes]]
-path = "/_riz/health"
-method = "GET"
+[function.health]
 runtime = "bun"
 handler = "./h.ts"
-timeout_ms = 1000
-concurrency = 1
+
+[[function.health.routes]]
+path = "/_riz/health"
+method = "GET"
 "#;
         let c: Config = toml::from_str(toml_str).unwrap();
         let err = c.validate().unwrap_err();
@@ -262,18 +353,49 @@ concurrency = 1
         let toml_str = r#"
 [server]
 port = 8080
-host = "127.0.0.1"
 
-[[routes]]
-path = "/_riz"
-method = "GET"
+[function.x]
 runtime = "bun"
 handler = "./h.ts"
-timeout_ms = 1000
-concurrency = 1
+
+[[function.x.routes]]
+path = "/_riz"
+method = "GET"
 "#;
         let c: Config = toml::from_str(toml_str).unwrap();
         assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_riz_prefix_function_name() {
+        let toml_str = r#"
+[server]
+port = 8080
+
+[function._riz]
+runtime = "bun"
+handler = "./h.ts"
+"#;
+        let c: Config = toml::from_str(toml_str).unwrap();
+        let err = c.validate().unwrap_err();
+        assert!(err.contains("_riz"));
+    }
+
+    #[test]
+    fn implicit_default_route_uses_function_name() {
+        let toml_str = r#"
+[server]
+port = 8080
+
+[function.users]
+runtime = "bun"
+handler = "./users.ts"
+"#;
+        let c: Config = toml::from_str(toml_str).unwrap();
+        let routes = c.functions.get("users").unwrap().effective_routes("users");
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0].path, "/users");
+        assert_eq!(routes[0].method, "ANY");
     }
 
     #[test]

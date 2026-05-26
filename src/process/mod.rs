@@ -12,7 +12,7 @@ use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
 use tokio::time::{timeout, Duration};
 use anyhow::Context;
 use tracing::{error, warn};
-use crate::config::RouteConfig;
+use crate::config::FunctionConfig;
 use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
 use crate::process::runtime::RuntimeRegistry;
 use crate::runtime::error_response;
@@ -27,8 +27,14 @@ struct ProcessHandle {
     _child: Child,
 }
 
+/// One pool per FUNCTION (not per route). All routes belonging to a
+/// function share the pool's processes — matches AWS Lambda execution
+/// environments where N routes can target the same Lambda.
 struct RoutePool {
-    route: RouteConfig,
+    /// Function name (`api`, `users`) — used as the map key in
+    /// ProcessManager.pools and as the cold_starts attribution key.
+    name: String,
+    config: FunctionConfig,
     handles: RwLock<Vec<Arc<Mutex<ProcessHandle>>>>,
     semaphore: Arc<Semaphore>,
     restart_count: AtomicU32,
@@ -37,8 +43,6 @@ struct RoutePool {
     runtime_registry: Arc<RuntimeRegistry>,
     log_tx: mpsc::Sender<LogEntry>,
     /// Shared RizState used to bump cold_starts on every successful spawn.
-    /// Per-pool because handle_process_failure and timeout-respawn paths
-    /// only have a `&Arc<RoutePool>` to work from.
     riz_state: Arc<RizState>,
 }
 
@@ -54,7 +58,8 @@ pub struct ProcessManager {
 }
 
 pub struct PoolStats {
-    pub route_key: String,
+    /// Function name (e.g. "api").
+    pub name: String,
     pub pids: Vec<u32>,
     pub restart_count: u32,
     pub healthy: bool,
@@ -80,19 +85,22 @@ impl ProcessManager {
         }
     }
 
+    /// Spawn one process pool per function. Each pool holds N processes
+    /// (where N = function.concurrency) and serves every route the function
+    /// declares.
     pub async fn spawn_all(
         &self,
-        routes: &[RouteConfig],
+        functions: &indexmap::IndexMap<String, FunctionConfig>,
         registry: &Arc<RuntimeRegistry>,
         log_tx: mpsc::Sender<LogEntry>,
     ) -> anyhow::Result<()> {
         let mut pools = self.pools.write().await;
-        for route in routes {
-            let key = crate::router::Router::route_key(&route.method, &route.path);
+        for (name, cfg) in functions {
             let pool = Arc::new(RoutePool {
-                route: route.clone(),
+                name: name.clone(),
+                config: cfg.clone(),
                 handles: RwLock::new(Vec::new()),
-                semaphore: Arc::new(Semaphore::new(route.concurrency)),
+                semaphore: Arc::new(Semaphore::new(cfg.concurrency)),
                 restart_count: AtomicU32::new(0),
                 consecutive_crashes: AtomicU32::new(0),
                 healthy: AtomicBool::new(true),
@@ -101,31 +109,32 @@ impl ProcessManager {
                 riz_state: self.riz_state.clone(),
             });
             let mut handle_vec = pool.handles.write().await;
-            for _ in 0..route.concurrency {
-                let handle = spawn_process(route, registry, &log_tx).await
-                    .with_context(|| format!("failed to spawn lambda for {key}"))?;
-                // Initial pool fill: each spawned process is a cold start.
-                self.riz_state.note_cold_start(&key).await;
+            for _ in 0..cfg.concurrency {
+                let handle = spawn_process(cfg, registry, &log_tx).await
+                    .with_context(|| format!("failed to spawn lambda for {name}"))?;
+                self.riz_state.note_cold_start(name).await;
                 let handle_arc = Arc::new(Mutex::new(handle));
                 let pid = handle_arc.lock().await.pid;
-                spawn_liveness_watcher(pid, handle_arc.clone(), pool.clone(), key.clone());
+                spawn_liveness_watcher(pid, handle_arc.clone(), pool.clone(), name.clone());
                 handle_vec.push(handle_arc);
             }
             drop(handle_vec);
-            pools.insert(key, pool);
+            pools.insert(name.clone(), pool);
         }
         Ok(())
     }
 
+    /// Invoke a function by its name. `function_name` keys into the pool map
+    /// (one pool per function, shared by all routes the function declares).
     pub async fn invoke(
         &self,
-        route_key: &str,
+        function_name: &str,
         request: &ApiGatewayV2httpRequest,
         timeout_ms: u64,
     ) -> anyhow::Result<ApiGatewayV2httpResponse> {
         let pools = self.pools.read().await;
-        let pool = pools.get(route_key)
-            .ok_or_else(|| anyhow::anyhow!("no pool for route {route_key}"))?
+        let pool = pools.get(function_name)
+            .ok_or_else(|| anyhow::anyhow!("no pool for function {function_name}"))?
             .clone();
         drop(pools);
 
@@ -133,18 +142,16 @@ impl ProcessManager {
             return Ok(error_response(503, "lambda unhealthy"));
         }
 
-        // Fail fast when all slots are busy — don't queue indefinitely
         let _permit = match pool.semaphore.try_acquire() {
             Ok(p) => p,
             Err(tokio::sync::TryAcquireError::NoPermits) => {
                 return Ok(error_response(429, "too many concurrent requests"))
             }
             Err(tokio::sync::TryAcquireError::Closed) => {
-                return Err(anyhow::anyhow!("concurrency semaphore closed for {route_key}"))
+                return Err(anyhow::anyhow!("concurrency semaphore closed for {function_name}"))
             }
         };
 
-        // Find a free handle (try_lock always succeeds when semaphore is correct)
         let free_arc = {
             let handles = pool.handles.read().await;
             let mut found: Option<Arc<Mutex<ProcessHandle>>> = None;
@@ -165,10 +172,6 @@ impl ProcessManager {
 
         let payload = serde_json::to_string(request)? + "\n";
 
-        // Disarmed by storing 0 after clean read completion.
-        // If this future is dropped mid-pipe (client disconnect), kills the process
-        // so the pipe isn't left in a desynced state. The liveness watcher (BUG-02)
-        // will then respawn the process automatically.
         let guard_pid = Arc::new(std::sync::atomic::AtomicU32::new(handle.pid));
         let guard_pid_inner = guard_pid.clone();
         struct PipeDropGuard(Arc<std::sync::atomic::AtomicU32>);
@@ -187,7 +190,7 @@ impl ProcessManager {
             handle.stdin.flush().await?;
             let mut line = String::new();
             handle.stdout.read_line(&mut line).await?;
-            guard_pid_inner.store(0, std::sync::atomic::Ordering::Relaxed); // disarm
+            guard_pid_inner.store(0, std::sync::atomic::Ordering::Relaxed);
             Ok::<String, anyhow::Error>(line)
         }).await;
 
@@ -199,32 +202,31 @@ impl ProcessManager {
                         Ok(resp)
                     }
                     Err(_) => {
-                        warn!("malformed lambda response on {route_key}: {line:?} — killing and restarting");
-                        handle_process_failure(&pool, &mut handle, route_key).await;
-                        spawn_liveness_watcher(handle.pid, arc.clone(), pool.clone(), route_key.to_string());
+                        warn!("malformed lambda response on {function_name}: {line:?} — killing and restarting");
+                        handle_process_failure(&pool, &mut handle, function_name).await;
+                        spawn_liveness_watcher(handle.pid, arc.clone(), pool.clone(), function_name.to_string());
                         Ok(error_response(502, "malformed lambda response"))
                     }
                 }
             }
             Ok(Err(e)) => {
-                warn!("lambda crash on {route_key}: {e} — restarting");
-                handle_process_failure(&pool, &mut handle, route_key).await;
-                spawn_liveness_watcher(handle.pid, arc.clone(), pool.clone(), route_key.to_string());
+                warn!("lambda crash on {function_name}: {e} — restarting");
+                handle_process_failure(&pool, &mut handle, function_name).await;
+                spawn_liveness_watcher(handle.pid, arc.clone(), pool.clone(), function_name.to_string());
                 Ok(error_response(502, "lambda error"))
             }
             Err(_) => {
-                warn!("lambda timeout on {route_key} after {timeout_ms}ms — killing and restarting");
+                warn!("lambda timeout on {function_name} after {timeout_ms}ms — killing and restarting");
                 kill_process_group(handle.pid);
                 let _ = handle._child.kill().await;
-                match spawn_process(&pool.route, &pool.runtime_registry, &pool.log_tx).await {
+                match spawn_process(&pool.config, &pool.runtime_registry, &pool.log_tx).await {
                     Ok(new_handle) => {
                         *handle = new_handle;
-                        // Timeout-respawn: the fresh process is a cold start.
-                        pool.riz_state.note_cold_start(route_key).await;
-                        spawn_liveness_watcher(handle.pid, arc.clone(), pool.clone(), route_key.to_string());
+                        pool.riz_state.note_cold_start(function_name).await;
+                        spawn_liveness_watcher(handle.pid, arc.clone(), pool.clone(), function_name.to_string());
                     }
                     Err(spawn_err) => {
-                        error!("failed to respawn {route_key}: {spawn_err}");
+                        error!("failed to respawn {function_name}: {spawn_err}");
                         pool.healthy.store(false, Ordering::Relaxed);
                     }
                 }
@@ -234,24 +236,24 @@ impl ProcessManager {
         }
     }
 
+    /// Replace a function's process pool in-place with a new FunctionConfig.
+    /// Drains the semaphore (waits for in-flight invocations), kills the old
+    /// processes, spawns a fresh pool matching the new config.
     pub async fn hot_swap(
         &self,
-        route_key: &str,
-        new_route: RouteConfig,
+        function_name: &str,
+        new_config: FunctionConfig,
         registry: &RuntimeRegistry,
     ) -> anyhow::Result<u32> {
         let pools = self.pools.read().await;
-        let pool = pools.get(route_key)
-            .ok_or_else(|| anyhow::anyhow!("unknown route {route_key}"))?
+        let pool = pools.get(function_name)
+            .ok_or_else(|| anyhow::anyhow!("unknown function {function_name}"))?
             .clone();
         drop(pools);
 
-        let concurrency = pool.route.concurrency as u32;
-
-        // Drain the semaphore: wait for all in-flight requests to complete
+        let concurrency = pool.config.concurrency as u32;
         let _drain = pool.semaphore.acquire_many(concurrency).await?;
 
-        // Now safe to swap handles — no requests are in flight
         let mut handles = pool.handles.write().await;
         for h in handles.iter() {
             if let Ok(g) = h.try_lock() {
@@ -261,32 +263,31 @@ impl ProcessManager {
         handles.clear();
 
         let mut first_pid = 0;
-        for _ in 0..new_route.concurrency {
-            let h = spawn_process(&new_route, registry, &pool.log_tx).await?;
+        for _ in 0..new_config.concurrency {
+            let h = spawn_process(&new_config, registry, &pool.log_tx).await?;
             if first_pid == 0 { first_pid = h.pid; }
-            // Hot-swap: every replacement process counts as a cold start.
-            pool.riz_state.note_cold_start(route_key).await;
+            pool.riz_state.note_cold_start(function_name).await;
             let handle_arc = Arc::new(Mutex::new(h));
             let pid = handle_arc.lock().await.pid;
-            spawn_liveness_watcher(pid, handle_arc.clone(), pool.clone(), route_key.to_string());
+            spawn_liveness_watcher(pid, handle_arc.clone(), pool.clone(), function_name.to_string());
             handles.push(handle_arc);
         }
 
         pool.healthy.store(true, Ordering::Relaxed);
         pool.consecutive_crashes.store(0, Ordering::Relaxed);
 
-        // _drain is released here (drop) — new requests can flow in
         Ok(first_pid)
     }
 
-    pub async fn drain_pool(&self, route_key: &str) {
+    /// Drain and remove a function's pool entirely (used by hot-reload when
+    /// a function is removed from riz.toml).
+    pub async fn drain_pool(&self, function_name: &str) {
         let pool = {
             let pools = self.pools.read().await;
-            pools.get(route_key).cloned()
+            pools.get(function_name).cloned()
         };
         if let Some(pool) = pool {
-            let concurrency = pool.route.concurrency as u32;
-            // Drain: wait for in-flight requests to complete
+            let concurrency = pool.config.concurrency as u32;
             if let Ok(_drain) = pool.semaphore.acquire_many(concurrency).await {
                 let mut handles = pool.handles.write().await;
                 for h in handles.iter() {
@@ -297,21 +298,22 @@ impl ProcessManager {
                 handles.clear();
             }
         }
-        // Remove from map
-        self.pools.write().await.remove(route_key);
+        self.pools.write().await.remove(function_name);
     }
 
-    pub async fn spawn_route(
+    /// Create a new pool for a function added at runtime (hot-reload).
+    pub async fn spawn_function(
         &self,
-        route: &RouteConfig,
+        name: &str,
+        cfg: &FunctionConfig,
         registry: &Arc<RuntimeRegistry>,
         log_tx: mpsc::Sender<LogEntry>,
     ) -> anyhow::Result<()> {
-        let key = crate::router::Router::route_key(&route.method, &route.path);
         let pool = Arc::new(RoutePool {
-            route: route.clone(),
+            name: name.to_string(),
+            config: cfg.clone(),
             handles: RwLock::new(Vec::new()),
-            semaphore: Arc::new(Semaphore::new(route.concurrency)),
+            semaphore: Arc::new(Semaphore::new(cfg.concurrency)),
             restart_count: AtomicU32::new(0),
             consecutive_crashes: AtomicU32::new(0),
             healthy: AtomicBool::new(true),
@@ -320,18 +322,17 @@ impl ProcessManager {
             riz_state: self.riz_state.clone(),
         });
         let mut handle_vec = pool.handles.write().await;
-        for _ in 0..route.concurrency {
-            let handle = spawn_process(route, registry, &log_tx).await
-                .with_context(|| format!("failed to spawn lambda for {key}"))?;
-            // Hot-reload added a new route — initial fill counts as cold start.
-            self.riz_state.note_cold_start(&key).await;
+        for _ in 0..cfg.concurrency {
+            let handle = spawn_process(cfg, registry, &log_tx).await
+                .with_context(|| format!("failed to spawn lambda for {name}"))?;
+            self.riz_state.note_cold_start(name).await;
             let handle_arc = Arc::new(Mutex::new(handle));
             let pid = handle_arc.lock().await.pid;
-            spawn_liveness_watcher(pid, handle_arc.clone(), pool.clone(), key.clone());
+            spawn_liveness_watcher(pid, handle_arc.clone(), pool.clone(), name.to_string());
             handle_vec.push(handle_arc);
         }
         drop(handle_vec);
-        self.pools.write().await.insert(key, pool);
+        self.pools.write().await.insert(name.to_string(), pool);
         Ok(())
     }
 
@@ -361,26 +362,25 @@ impl ProcessManager {
     pub async fn pool_stats(&self) -> Vec<PoolStats> {
         let pools = self.pools.read().await;
 
-        // Collect PIDs and metadata first (needs async for RwLock reads)
         struct RawStat {
-            key: String,
+            name: String,
             pids: Vec<u32>,
             restarts: u32,
             healthy: bool,
             concurrency: usize,
         }
         let mut raw: Vec<RawStat> = Vec::new();
-        for (key, pool) in pools.iter() {
+        for (name, pool) in pools.iter() {
             let handles = pool.handles.read().await;
             let pids = handles.iter()
                 .filter_map(|h| h.try_lock().ok().map(|g| g.pid))
                 .collect();
             raw.push(RawStat {
-                key: key.clone(),
+                name: name.clone(),
                 pids,
                 restarts: pool.restart_count.load(Ordering::Relaxed),
                 healthy: pool.healthy.load(Ordering::Relaxed),
-                concurrency: pool.route.concurrency,
+                concurrency: pool.config.concurrency,
             });
         }
         drop(pools);
@@ -406,7 +406,7 @@ impl ProcessManager {
                 }
             });
             PoolStats {
-                route_key: r.key,
+                name: r.name,
                 pids: r.pids,
                 restart_count: r.restarts,
                 healthy: r.healthy,
@@ -421,25 +421,24 @@ impl ProcessManager {
 async fn handle_process_failure(
     pool: &Arc<RoutePool>,
     handle: &mut ProcessHandle,
-    route_key: &str,
+    function_name: &str,
 ) {
     pool.restart_count.fetch_add(1, Ordering::Relaxed);
     let crashes = pool.consecutive_crashes.fetch_add(1, Ordering::Relaxed) + 1;
     if crashes >= CRASH_THRESHOLD {
         pool.healthy.store(false, Ordering::Relaxed);
-        error!("route {route_key} marked unhealthy after {crashes} crashes");
+        error!("function {function_name} marked unhealthy after {crashes} crashes");
     }
     kill_process_group(handle.pid);
     let _ = handle._child.kill().await;
-    match spawn_process(&pool.route, &pool.runtime_registry, &pool.log_tx).await {
+    match spawn_process(&pool.config, &pool.runtime_registry, &pool.log_tx).await {
         Ok(new_handle) => {
-            // Crash/pipe-failure respawn is a cold start.
-            pool.riz_state.note_cold_start(route_key).await;
+            pool.riz_state.note_cold_start(function_name).await;
             *handle = new_handle;
             pool.consecutive_crashes.store(0, Ordering::Relaxed);
         }
         Err(spawn_err) => {
-            error!("failed to respawn {route_key}: {spawn_err}");
+            error!("failed to respawn {function_name}: {spawn_err}");
             pool.healthy.store(false, Ordering::Relaxed);
         }
     }
@@ -461,30 +460,27 @@ fn spawn_liveness_watcher(
     pid: u32,
     handle_arc: Arc<Mutex<ProcessHandle>>,
     pool: Arc<RoutePool>,
-    route_key: String,
+    function_name: String,
 ) {
     if pid == 0 { return; }
     #[cfg(not(unix))]
-    { return; } // liveness watching not supported on non-unix
+    { return; }
     #[cfg(unix)]
     tokio::spawn(async move {
-        // Poll every 200ms to see if the process is still alive
         loop {
             tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
             use nix::sys::signal;
             use nix::unistd::Pid;
             if signal::kill(Pid::from_raw(pid as i32), None).is_err() {
-                // Process is gone
                 break;
             }
         }
 
-        warn!("lambda process {pid} exited unexpectedly on {route_key} — respawning");
-        // Use a block to ensure the guard borrow ends before we move handle_arc
+        warn!("lambda process {pid} for {function_name} exited unexpectedly — respawning");
         let new_pid: Option<u32> = {
             if let Ok(mut guard) = handle_arc.try_lock() {
                 if guard.pid == pid {
-                    let _ = handle_process_failure(&pool, &mut guard, &route_key).await;
+                    let _ = handle_process_failure(&pool, &mut guard, &function_name).await;
                     Some(guard.pid)
                 } else {
                     None
@@ -494,18 +490,18 @@ fn spawn_liveness_watcher(
             }
         };
         if let Some(new_pid) = new_pid {
-            spawn_liveness_watcher(new_pid, handle_arc, pool, route_key);
+            spawn_liveness_watcher(new_pid, handle_arc, pool, function_name);
         }
     });
 }
 
 async fn spawn_process(
-    route: &RouteConfig,
+    cfg: &FunctionConfig,
     registry: &RuntimeRegistry,
     log_tx: &mpsc::Sender<LogEntry>,
 ) -> anyhow::Result<ProcessHandle> {
-    let runtime = registry.get(&route.runtime);
-    let mut cmd = runtime.spawn_command(route);
+    let runtime = registry.get(&cfg.runtime);
+    let mut cmd = runtime.spawn_command(cfg);
     cmd.stdin(std::process::Stdio::piped())
        .stdout(std::process::Stdio::piped())
        .stderr(std::process::Stdio::piped());
@@ -514,14 +510,18 @@ async fn spawn_process(
     cmd.process_group(0);
 
     let mut child = cmd.spawn()
-        .with_context(|| format!("failed to spawn {:?}", route.handler))?;
+        .with_context(|| format!("failed to spawn {:?}", cfg.handler))?;
 
     let pid = child.id().unwrap_or(0);
     let stdin = child.stdin.take().expect("stdin piped");
     let stdout = BufReader::new(child.stdout.take().expect("stdout piped"));
 
     if let Some(stderr) = child.stderr.take() {
-        let route_key = crate::router::Router::route_key(&route.method, &route.path);
+        // Tag stderr logs with the handler filename — best signal we have
+        // about which function it came from at this layer.
+        let tag = cfg.handler.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "lambda".into());
         let tx = log_tx.clone();
         tokio::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
@@ -531,7 +531,7 @@ async fn spawn_process(
                     timestamp: std::time::SystemTime::now(),
                     level: "WARN".into(),
                     message: format!("stderr: {line}"),
-                    route_key: Some(route_key.clone()),
+                    route_key: Some(tag.clone()),
                 });
             }
         });

@@ -1,9 +1,9 @@
 use tokio::process::Command;
-use crate::config::{RouteConfig, RuntimeKind};
+use crate::config::{FunctionConfig, RuntimeKind};
 use crate::process::bun::BunRuntime;
 
 pub trait LambdaRuntime: Send + Sync + 'static {
-    fn spawn_command(&self, route: &RouteConfig) -> Command;
+    fn spawn_command(&self, route: &FunctionConfig) -> Command;
     fn name(&self) -> &'static str;
 }
 

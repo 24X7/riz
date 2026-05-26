@@ -30,9 +30,10 @@ struct RegistryBody {
 
 #[derive(Serialize)]
 struct RegistryFunction {
-    route_key: String,
-    method: String,
-    path: String,
+    /// Function name (e.g. "api", "users") — matches AWS Lambda function naming.
+    name: String,
+    /// All routes this function serves, as "METHOD /path" strings.
+    routes: Vec<String>,
     runtime: Option<String>,
     kind: &'static str,
     handler: Option<String>,
@@ -50,13 +51,13 @@ impl LambdaHandler for RegistryHandler {
         let functions = self.riz_state.functions.read().await;
         let mut out: Vec<RegistryFunction> = Vec::with_capacity(functions.len());
         for (_, f) in functions.iter() {
-            let (runtime, handler, timeout_ms, concurrency, cache_ttl_secs) = match &f.route {
-                Some(r) => (
-                    Some(r.runtime.as_str().to_string()),
-                    Some(r.handler.to_string_lossy().to_string()),
-                    Some(r.timeout_ms),
-                    Some(r.concurrency),
-                    r.cache_ttl_secs,
+            let (runtime, handler, timeout_ms, concurrency, cache_ttl_secs) = match &f.config {
+                Some(c) => (
+                    Some(c.runtime.as_str().to_string()),
+                    Some(c.handler.to_string_lossy().to_string()),
+                    Some(c.timeout_ms),
+                    Some(c.concurrency),
+                    c.cache_ttl_secs,
                 ),
                 None => (None, None, None, None, None),
             };
@@ -64,14 +65,9 @@ impl LambdaHandler for RegistryHandler {
                 FunctionKind::User => "user",
                 FunctionKind::System => "system",
             };
-            let (method, path) = match f.route_key.split_once(' ') {
-                Some((m, p)) => (m.to_string(), p.to_string()),
-                None => (String::new(), f.route_key.clone()),
-            };
             out.push(RegistryFunction {
-                route_key: f.route_key.clone(),
-                method,
-                path,
+                name: f.name.clone(),
+                routes: f.routes.clone(),
                 runtime,
                 kind,
                 handler,
@@ -112,16 +108,15 @@ mod tests {
     }
 
     fn user_state() -> FunctionState {
-        let r = crate::config::RouteConfig {
-            path: "/api".into(),
-            method: "GET".into(),
+        let c = crate::config::FunctionConfig {
             runtime: crate::config::RuntimeKind::Bun,
             handler: std::path::PathBuf::from("./api.ts"),
             timeout_ms: 5000,
             cache_ttl_secs: None,
             concurrency: 3,
+            routes: vec![],
         };
-        FunctionState::user("GET /api", r)
+        FunctionState::user("api", c)
     }
 
     #[tokio::test]
@@ -143,8 +138,11 @@ mod tests {
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         let f = &body["functions"][0];
         assert_eq!(f["kind"], "user");
-        assert_eq!(f["method"], "GET");
-        assert_eq!(f["path"], "/api");
+        assert_eq!(f["name"], "api");
+        // Routes is an array of "METHOD /path" strings.
+        let routes = f["routes"].as_array().unwrap();
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0], "ANY /api");
         assert_eq!(f["runtime"], "bun");
         assert_eq!(f["timeout_ms"], 5000);
         assert_eq!(f["concurrency"], 3);
@@ -153,14 +151,15 @@ mod tests {
     #[tokio::test]
     async fn registry_lists_system_functions_with_nulls() {
         let s = Arc::new(RizState::new());
-        s.register(FunctionState::system("GET /_riz/health")).await;
+        s.register(FunctionState::system("_riz_health", vec!["GET /_riz/health".into()])).await;
         let h = RegistryHandler::new(s);
         let resp = h.invoke(evt()).await.unwrap();
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         let f = &body["functions"][0];
         assert_eq!(f["kind"], "system");
-        assert_eq!(f["method"], "GET");
-        assert_eq!(f["path"], "/_riz/health");
+        assert_eq!(f["name"], "_riz_health");
+        let routes = f["routes"].as_array().unwrap();
+        assert_eq!(routes[0], "GET /_riz/health");
         assert!(f["runtime"].is_null());
         assert!(f["handler"].is_null());
     }

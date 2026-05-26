@@ -9,26 +9,33 @@ max_size_mb = 128
 [datadog]
 enabled = false
 
-[[routes]]
-path = "/ping"
-method = "GET"
+# Function-centric config matches AWS Lambda + API Gateway v2.
+# One function = one process pool. One function can serve N routes,
+# including AWS-style {param} captures and {proxy+} greedy wildcards.
+
+[function.ping]
 runtime = "bun"
 handler = "./examples/lambdas/ping/index.ts"
 timeout_ms = 1000
 concurrency = 1
+# No routes block → implicit default: ANY /ping
 
-[[routes]]
-path = "/accounts/:id"
-method = "GET"
+[function.accounts]
 runtime = "bun"
 handler = "./examples/lambdas/accounts/index.ts"
 timeout_ms = 1000
 concurrency = 1
 
-[[routes]]
-path = "/events"
-method = "POST"
+[[function.accounts.routes]]
+path = "/accounts/{id}"
+method = "GET"
+
+[function.events]
 runtime = "bun"
 handler = "./examples/lambdas/events/index.ts"
 timeout_ms = 1000
 concurrency = 1
+
+[[function.events.routes]]
+path = "/events"
+method = "POST"

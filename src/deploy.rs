@@ -81,21 +81,20 @@ pub async fn deploy_handler(
         return (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "invalid lambda name".into() })).into_response();
     }
 
-    // Find matching route by lambda name (matches path segment)
+    // Find the matching FUNCTION by name. The deploy "lambda" identifier
+    // is exactly the function name in riz.toml.
     let config = state.config.read().await;
-    let route = config.routes.iter().find(|r| route_name_matches(&r.path, &body.lambda)).cloned();
+    let function_cfg = config.functions.get(&body.lambda).cloned();
     drop(config);
 
-    let mut route = match route {
-        Some(r) => r,
+    let mut function_cfg = match function_cfg {
+        Some(c) => c,
         None => {
             return (StatusCode::NOT_FOUND, Json(ErrorResponse {
-                error: format!("no route found for lambda '{}'", body.lambda),
+                error: format!("no function found for '{}'", body.lambda),
             })).into_response();
         }
     };
-
-    let route_key = Router::route_key(&route.method, &route.path);
 
     // Download zip from S3 and unpack to staging dir.
     // UUID suffix ensures concurrent deploys for the same lambda never share a path (BUG-18).
@@ -107,25 +106,22 @@ pub async fn deploy_handler(
         })).into_response();
     }
 
-    // Point handler at unpacked staging dir
-    let handler_name = match route.handler.file_name() {
+    let handler_name = match function_cfg.handler.file_name() {
         Some(name) => name.to_os_string(),
         None => {
             return (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse {
-                error: format!("route handler has no filename: {:?}", route.handler),
+                error: format!("function handler has no filename: {:?}", function_cfg.handler),
             })).into_response();
         }
     };
-    route.handler = staging_dir.join(&handler_name);
+    function_cfg.handler = staging_dir.join(&handler_name);
 
-    // Hot-swap the process pool
-    match state.process_manager.hot_swap(&route_key, route, &state.runtime_registry).await {
+    match state.process_manager.hot_swap(&body.lambda, function_cfg, &state.runtime_registry).await {
         Ok(pid) => {
-            // Brief pause then health check — catches handlers that crash immediately
             tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
             let stats = state.process_manager.pool_stats().await;
             let still_healthy = stats.iter()
-                .find(|s| s.route_key == route_key)
+                .find(|s| s.name == body.lambda)
                 .map(|s| s.healthy)
                 .unwrap_or(false);
 

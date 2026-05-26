@@ -19,7 +19,8 @@ struct HealthBody {
 
 #[derive(Serialize)]
 struct FunctionHealth {
-    route_key: String,
+    name: String,
+    routes: Vec<String>,
     healthy: bool,
     invocations: u64,
     errors: u64,
@@ -63,7 +64,8 @@ impl LambdaHandler for HealthHandler {
                 .ok()
                 .and_then(|l| l.map(|t| now.duration_since(t).as_secs_f64()));
             out.push(FunctionHealth {
-                route_key: f.route_key.clone(),
+                name: f.name.clone(),
+                routes: f.routes.clone(),
                 healthy: f.healthy.load(Ordering::Relaxed),
                 invocations: f.invocations.load(Ordering::Relaxed),
                 errors: f.errors.load(Ordering::Relaxed),
@@ -111,16 +113,15 @@ mod tests {
     }
 
     fn user_state() -> FunctionState {
-        let route = crate::config::RouteConfig {
-            path: "/api".into(),
-            method: "GET".into(),
+        let c = crate::config::FunctionConfig {
             runtime: crate::config::RuntimeKind::Bun,
             handler: std::path::PathBuf::from("./h.ts"),
             timeout_ms: 5000,
             cache_ttl_secs: None,
             concurrency: 1,
+            routes: vec![],
         };
-        FunctionState::user("GET /api", route)
+        FunctionState::user("api", c)
     }
 
     #[tokio::test]
@@ -143,29 +144,29 @@ mod tests {
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         let functions = body["functions"].as_array().unwrap();
         assert_eq!(functions.len(), 1);
-        assert_eq!(functions[0]["route_key"], "GET /api");
+        assert_eq!(functions[0]["name"], "api");
         assert_eq!(functions[0]["healthy"], true);
     }
 
     #[tokio::test]
     async fn health_excludes_system_functions() {
         let s = Arc::new(RizState::new());
-        s.register(FunctionState::system("GET /_riz/health")).await;
+        s.register(FunctionState::system("_riz_health", vec!["GET /_riz/health".into()])).await;
         s.register(user_state()).await;
         let h = HealthHandler::new(s);
         let resp = h.invoke(evt()).await.unwrap();
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         let functions = body["functions"].as_array().unwrap();
         assert_eq!(functions.len(), 1, "system functions must be excluded");
-        assert_eq!(functions[0]["route_key"], "GET /api");
+        assert_eq!(functions[0]["name"], "api");
     }
 
     #[tokio::test]
     async fn health_reflects_recorded_invocations() {
         let s = Arc::new(RizState::new());
         s.register(user_state()).await;
-        s.record_invocation("GET /api", 10.0, true, false).await;
-        s.record_invocation("GET /api", 20.0, true, false).await;
+        s.record_invocation("api", 10.0, true, false).await;
+        s.record_invocation("api", 20.0, true, false).await;
         let h = HealthHandler::new(s);
         let resp = h.invoke(evt()).await.unwrap();
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();

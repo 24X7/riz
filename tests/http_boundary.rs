@@ -1,19 +1,15 @@
 //! Layer 1 — HTTP boundary golden tests. These pin the externally observable
-//! behavior of the server BEFORE the LambdaHandler refactor. Every test must
-//! still pass unchanged after the refactor.
+//! behavior of the server. Every test must still pass through any refactor.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-fn make_state_with_routes(routes: Vec<riz::config::RouteConfig>) -> Arc<riz::state::AppState> {
-    let config = riz::config::Config {
-        server: Default::default(),
-        cache: Default::default(),
-        datadog: Default::default(),
-        deploy: Default::default(),
-        aws: Default::default(),
-        routes,
-    };
+use indexmap::IndexMap;
+use riz::config::{Config, FunctionConfig, RuntimeKind};
+
+fn make_state_with_functions(functions: IndexMap<String, FunctionConfig>) -> Arc<riz::state::AppState> {
+    let mut config = Config::default();
+    config.functions = functions;
     let registry = Arc::new(riz::process::runtime::RuntimeRegistry::new().unwrap());
     let cache = riz::cache::CacheLayer::new(&config.cache);
     let metrics = riz::metrics::MetricsEmitter::new(&config.datadog);
@@ -21,16 +17,11 @@ fn make_state_with_routes(routes: Vec<riz::config::RouteConfig>) -> Arc<riz::sta
     let process_manager = Arc::new(riz::process::ProcessManager::new(riz_state.clone()));
     let (log_tx, log_rx) = tokio::sync::mpsc::channel::<riz::state::LogEntry>(10_000);
 
-    // Trait dispatch: build one ProcessHandler per route. Note: we do NOT
-    // call spawn_all here because these tests don't need real processes —
-    // they exercise the routing surface and the body/cache paths that run
-    // before invoke. A request to a registered route will reach the trait
-    // handler, which (without a spawned pool) will fail at process_manager
-    // lookup; the 413 boundary test relies on the body-size check firing
-    // before we get that far.
-    let handlers: Vec<Arc<dyn riz::runtime::LambdaHandler>> = config.routes.iter()
-        .map(|r| {
-            let h = riz::runtime::process::ProcessHandler::for_route(r, process_manager.clone());
+    // Build one ProcessHandler per declared function (no spawn — these tests
+    // exercise the routing surface and pre-invoke body/cache paths).
+    let handlers: Vec<Arc<dyn riz::runtime::LambdaHandler>> = config.functions.iter()
+        .map(|(name, cfg)| {
+            let h = riz::runtime::process::ProcessHandler::for_function(name, cfg, process_manager.clone());
             Arc::new(h) as Arc<dyn riz::runtime::LambdaHandler>
         })
         .collect();
@@ -63,7 +54,7 @@ async fn serve(state: Arc<riz::state::AppState>) -> SocketAddr {
 
 #[tokio::test]
 async fn health_returns_200_ok_json() {
-    let state = make_state_with_routes(vec![]);
+    let state = make_state_with_functions(IndexMap::new());
     let addr = serve(state).await;
     let resp = reqwest::get(format!("http://{addr}/health")).await.unwrap();
     assert_eq!(resp.status(), 200);
@@ -73,7 +64,7 @@ async fn health_returns_200_ok_json() {
 
 #[tokio::test]
 async fn ready_returns_200_when_all_pools_healthy() {
-    let state = make_state_with_routes(vec![]);
+    let state = make_state_with_functions(IndexMap::new());
     let addr = serve(state).await;
     let resp = reqwest::get(format!("http://{addr}/ready")).await.unwrap();
     assert_eq!(resp.status(), 200);
@@ -81,7 +72,7 @@ async fn ready_returns_200_when_all_pools_healthy() {
 
 #[tokio::test]
 async fn unknown_path_returns_404() {
-    let state = make_state_with_routes(vec![]);
+    let state = make_state_with_functions(IndexMap::new());
     let addr = serve(state).await;
     let resp = reqwest::get(format!("http://{addr}/no-such-route")).await.unwrap();
     assert_eq!(resp.status(), 404);
@@ -89,7 +80,7 @@ async fn unknown_path_returns_404() {
 
 #[tokio::test]
 async fn deploy_without_auth_returns_503() {
-    let state = make_state_with_routes(vec![]);
+    let state = make_state_with_functions(IndexMap::new());
     let addr = serve(state).await;
     let client = reqwest::Client::new();
     let resp = client
@@ -107,7 +98,7 @@ async fn deploy_without_auth_returns_503() {
 
 #[tokio::test]
 async fn cache_invalidate_with_keys_returns_evicted_count() {
-    let state = make_state_with_routes(vec![]);
+    let state = make_state_with_functions(IndexMap::new());
     let addr = serve(state).await;
     let client = reqwest::Client::new();
     let resp = client
@@ -125,20 +116,23 @@ async fn cache_invalidate_with_keys_returns_evicted_count() {
 async fn oversized_body_returns_413_for_routed_request() {
     // The 10 MB body cap is enforced inside dispatch_lambda AFTER route match.
     // A request to a path with no route gets 404 before the body is read, so
-    // we register a synthetic route and target its path with an oversized body.
-    let route = riz::config::RouteConfig {
-        path: "/sink".into(),
-        method: "POST".into(),
-        runtime: riz::config::RuntimeKind::Bun,
+    // we register a synthetic function and target its path with an oversized body.
+    let mut functions = IndexMap::new();
+    functions.insert("sink".to_string(), FunctionConfig {
+        runtime: RuntimeKind::Bun,
         handler: std::path::PathBuf::from("./does-not-exist.ts"),
         timeout_ms: 1000,
         cache_ttl_secs: None,
         concurrency: 1,
-    };
-    let state = make_state_with_routes(vec![route]);
+        routes: vec![riz::config::RouteSpec {
+            path: "/sink".into(),
+            method: "POST".into(),
+        }],
+    });
+    let state = make_state_with_functions(functions);
     let addr = serve(state).await;
     let client = reqwest::Client::new();
-    let big_body = vec![b'x'; 11 * 1024 * 1024]; // 11 MB > 10 MB cap
+    let big_body = vec![b'x'; 11 * 1024 * 1024];
     let resp = client
         .post(format!("http://{addr}/sink"))
         .body(big_body)

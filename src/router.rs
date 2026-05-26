@@ -6,11 +6,11 @@ pub struct Router {
     handlers: Vec<Arc<dyn LambdaHandler>>,
 }
 
-/// Result of a dispatch — exposes the matched route_key so callers can
-/// attribute metrics and logs to the pattern (e.g. "GET /accounts/:id"),
-/// not the raw incoming path ("GET /accounts/42").
+/// Result of a dispatch — exposes the matched FUNCTION NAME so callers can
+/// attribute metrics, health, and access logs to the function (mirrors AWS
+/// CloudWatch per-function metric semantics), plus the actual response.
 pub struct DispatchOutcome {
-    pub route_key: String,
+    pub function_name: String,
     pub response: ApiGatewayV2httpResponse,
 }
 
@@ -47,23 +47,21 @@ impl Router {
         for h in &self.handlers {
             for r in h.routes() {
                 if let Some(params) = r.match_path(&method, &path) {
-                    // Inject path params into event.path_parameters. The AWS
-                    // type's path_parameters is `HashMap<String, String>`
-                    // (not Option), so we extend it in place.
+                    // Inject path params into event.path_parameters.
                     for (k, v) in params {
                         event.path_parameters.insert(k, v);
                     }
-                    let matched_route_key = Self::route_key(r.method.as_str(), &r.path);
+                    let function_name = h.name().to_string();
                     let response = h.invoke(event).await?;
                     return Ok(DispatchOutcome {
-                        route_key: matched_route_key,
+                        function_name,
                         response,
                     });
                 }
             }
         }
         Ok(DispatchOutcome {
-            route_key: Self::route_key(&method, &path),
+            function_name: "_unmatched".into(),
             response: error_response(404, "not found"),
         })
     }
@@ -190,7 +188,7 @@ mod tests {
             Body::Text(s) => assert_eq!(s, "from-first"),
             other => panic!("expected Text body, got {other:?}"),
         }
-        assert_eq!(outcome.route_key, "GET /api");
+        assert_eq!(outcome.function_name, "first");
     }
 
     #[tokio::test]
@@ -257,21 +255,21 @@ mod tests {
         let router = Router::new(vec![h.clone()]);
         let outcome = router.dispatch(make_event("GET", "/accounts/42")).await.unwrap();
         assert_eq!(outcome.response.status_code, 200);
-        assert_eq!(outcome.route_key, "GET /accounts/{id}");
+        assert_eq!(outcome.function_name, "capturing");
         let captured = h.captured.lock().unwrap();
         assert_eq!(captured.get("id").map(String::as_str), Some("42"));
     }
 
     #[tokio::test]
-    async fn dispatch_uses_matched_pattern_for_route_key_not_raw_path() {
+    async fn dispatch_attributes_to_function_name_not_route() {
         let h = Arc::new(CapturingHandler {
             routes: vec![RouteEntry { method: RouteMethod::Get, path: "/orgs/{org}/repos/{repo}".into() }],
             captured: std::sync::Mutex::new(Default::default()),
         });
         let router = Router::new(vec![h]);
         let outcome = router.dispatch(make_event("GET", "/orgs/anthropic/repos/riz")).await.unwrap();
-        assert_eq!(outcome.route_key, "GET /orgs/{org}/repos/{repo}",
-            "metrics must attribute to the pattern, not the incoming path");
+        assert_eq!(outcome.function_name, "capturing",
+            "metrics must attribute to the function name, mirroring AWS CloudWatch per-function aggregation");
     }
 
     #[tokio::test]
@@ -283,7 +281,7 @@ mod tests {
         let router = Router::new(vec![h.clone()]);
         let outcome = router.dispatch(make_event("GET", "/api/users/42/profile")).await.unwrap();
         assert_eq!(outcome.response.status_code, 200);
-        assert_eq!(outcome.route_key, "ANY /api/{proxy+}");
+        assert_eq!(outcome.function_name, "capturing");
         let captured = h.captured.lock().unwrap();
         assert_eq!(captured.get("proxy").map(String::as_str), Some("users/42/profile"));
     }

@@ -5,15 +5,10 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use riz::config::{Config, FunctionConfig, RuntimeKind};
+
 async fn make_state() -> Arc<riz::state::AppState> {
-    let config = riz::config::Config {
-        server: Default::default(),
-        cache: Default::default(),
-        datadog: Default::default(),
-        deploy: Default::default(),
-        aws: Default::default(),
-        routes: vec![],
-    };
+    let config = Config::default();
     let registry = Arc::new(riz::process::runtime::RuntimeRegistry::new().unwrap());
     let cache = riz::cache::CacheLayer::new(&config.cache);
     let metrics = riz::metrics::MetricsEmitter::new(&config.datadog);
@@ -21,24 +16,34 @@ async fn make_state() -> Arc<riz::state::AppState> {
 
     let riz_state = Arc::new(riz::state::RizState::new());
     let process_manager = Arc::new(riz::process::ProcessManager::new(riz_state.clone()));
-    riz_state.register(riz::state::FunctionState::system("GET /_riz/health")).await;
-    riz_state.register(riz::state::FunctionState::system("GET /_riz/metrics")).await;
-    riz_state.register(riz::state::FunctionState::system("GET /_riz/registry")).await;
-    riz_state.register(riz::state::FunctionState::system("POST /_riz/mcp")).await;
+    riz_state.register(riz::state::FunctionState::system(
+        "_riz_health", vec!["GET /_riz/health".into()],
+    )).await;
+    riz_state.register(riz::state::FunctionState::system(
+        "_riz_metrics", vec!["GET /_riz/metrics".into()],
+    )).await;
+    riz_state.register(riz::state::FunctionState::system(
+        "_riz_registry", vec!["GET /_riz/registry".into()],
+    )).await;
+    riz_state.register(riz::state::FunctionState::system(
+        "_riz_mcp", vec!["POST /_riz/mcp".into()],
+    )).await;
 
-    // Synthetic user function (no real process spawned).
-    let route = riz::config::RouteConfig {
-        path: "/echo".into(),
-        method: "GET".into(),
-        runtime: riz::config::RuntimeKind::Bun,
+    // Synthetic user function — registered in state with one invocation
+    // pre-recorded so health/metrics assertions have data to look at.
+    let cfg = FunctionConfig {
+        runtime: RuntimeKind::Bun,
         handler: std::path::PathBuf::from("./echo.ts"),
         timeout_ms: 5000,
         cache_ttl_secs: None,
         concurrency: 1,
+        routes: vec![riz::config::RouteSpec {
+            path: "/echo".into(),
+            method: "GET".into(),
+        }],
     };
-    riz_state.register(riz::state::FunctionState::user("GET /echo", route)).await;
-    // Pre-record an invocation so health/metrics have a non-zero value to assert against.
-    riz_state.record_invocation("GET /echo", 12.5, true, false).await;
+    riz_state.register(riz::state::FunctionState::user("echo", cfg)).await;
+    riz_state.record_invocation("echo", 12.5, true, false).await;
 
     let mcp = Arc::new(riz::system::mcp::McpHandler::new(riz_state.clone()));
     let handlers: Vec<Arc<dyn riz::runtime::LambdaHandler>> = vec![
@@ -84,7 +89,7 @@ async fn health_endpoint_reports_user_function() {
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["status"], "ok");
     let functions = body["functions"].as_array().unwrap();
-    assert!(functions.iter().any(|f| f["route_key"] == "GET /echo"));
+    assert!(functions.iter().any(|f| f["name"] == "echo"));
 }
 
 #[tokio::test]
@@ -96,7 +101,7 @@ async fn metrics_endpoint_returns_prometheus_text() {
     let ct = resp.headers().get("content-type").unwrap().to_str().unwrap().to_string();
     assert!(ct.contains("text/plain"));
     let body = resp.text().await.unwrap();
-    assert!(body.contains("riz_invocations_total{route=\"GET /echo\"} 1"), "{body}");
+    assert!(body.contains("riz_invocations_total{function=\"echo\"} 1"), "{body}");
     assert!(body.contains("riz_uptime_seconds"));
 }
 
@@ -108,8 +113,8 @@ async fn registry_endpoint_lists_user_and_system_functions() {
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
     let functions = body["functions"].as_array().unwrap();
-    assert!(functions.iter().any(|f| f["kind"] == "system" && f["path"] == "/_riz/health"));
-    assert!(functions.iter().any(|f| f["kind"] == "user" && f["path"] == "/echo"));
+    assert!(functions.iter().any(|f| f["kind"] == "system" && f["name"] == "_riz_health"));
+    assert!(functions.iter().any(|f| f["kind"] == "user" && f["name"] == "echo"));
 }
 
 #[tokio::test]
@@ -123,7 +128,8 @@ async fn mcp_tools_list_includes_user_function() {
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
     let tools = body["result"]["tools"].as_array().unwrap();
-    assert!(tools.iter().any(|t| t["name"] == "GET_echo"));
+    // Tool name is the function name verbatim.
+    assert!(tools.iter().any(|t| t["name"] == "echo"));
 }
 
 #[tokio::test]

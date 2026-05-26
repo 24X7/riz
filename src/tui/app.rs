@@ -65,7 +65,7 @@ mod tests {
         let mut app = App::default();
         for i in 0..n {
             let mut s = FunctionStateSnapshot::default();
-            s.route_key = format!("GET /route{i}");
+            s.name = format!("route{i}");
             app.function_stats.push(s);
         }
         app
