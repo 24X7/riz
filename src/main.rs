@@ -195,11 +195,25 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(system::registry::RegistryHandler::new(riz_state.clone())),
         mcp.clone() as Arc<dyn runtime::LambdaHandler>,
     ];
-    // One ProcessHandler per function — it declares every route the function
-    // serves (including implicit `ANY /<name>` when no routes block is given).
+    // One ProcessHandler per HTTP function — it declares every route the
+    // function serves (including implicit `ANY /<name>` when no routes block
+    // is given). WebSocket functions are mounted as axum routes in build_app
+    // (see src/server.rs) — they don't go through the LambdaHandler dispatch
+    // path.
     for (name, cfg) in &config.functions {
-        let h = runtime::process::ProcessHandler::for_function(name, cfg, process_manager.clone());
-        handlers.push(Arc::new(h));
+        match cfg.protocol {
+            config::Protocol::Http => {
+                let h = runtime::process::ProcessHandler::for_function(
+                    name,
+                    cfg,
+                    process_manager.clone(),
+                );
+                handlers.push(Arc::new(h));
+            }
+            config::Protocol::WebSocket => {
+                // Mounted in build_app below; no LambdaHandler instance.
+            }
+        }
     }
     // McpHandler.tools_call needs an Arc<Router> for reentrant dispatch.
     // We construct the inner Router first, hand it to MCP, then wrap a clone

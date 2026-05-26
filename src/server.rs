@@ -33,13 +33,48 @@ struct ReadyResponse {
 }
 
 pub fn build_app(state: Arc<AppState>) -> AxumRouter {
-    AxumRouter::new()
+    let mut app = AxumRouter::new()
         .route("/health", get(health_handler))
         .route("/ready", get(ready_handler))
         .route("/cache/invalidate", post(cache_invalidate))
-        .route("/deploy", post(crate::deploy::deploy_handler))
-        .fallback(any(dispatch_lambda))
-        .with_state(state)
+        .route("/deploy", post(crate::deploy::deploy_handler));
+
+    // Mount WebSocket upgrade routes for every protocol=websocket function.
+    // build_app runs once at startup, so a try_read in this sync context is
+    // OK — no other writer should be holding the config write lock at startup.
+    if let Ok(cfg) = state.config.try_read() {
+        for (name, fc) in &cfg.functions {
+            if matches!(fc.protocol, crate::config::Protocol::WebSocket) {
+                if let Some(route) = fc.effective_routes(name).first() {
+                    let path = route.path.clone();
+                    let name_owned = name.clone();
+                    let state_clone = state.clone();
+                    app = app.route(
+                        &path,
+                        axum::routing::any(
+                            move |ws: axum::extract::WebSocketUpgrade,
+                                  headers: axum::http::HeaderMap,
+                                  ci: axum::extract::ConnectInfo<std::net::SocketAddr>| {
+                                let s = state_clone.clone();
+                                let n = name_owned.clone();
+                                async move {
+                                    crate::ws::upgrade::ws_upgrade_handler(
+                                        axum::extract::State((s, n)),
+                                        ci,
+                                        ws,
+                                        headers,
+                                    )
+                                    .await
+                                }
+                            },
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    app.fallback(any(dispatch_lambda)).with_state(state)
 }
 
 /// Maximum time we'll wait for in-flight requests to drain after receiving a
