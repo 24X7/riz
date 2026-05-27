@@ -12,17 +12,19 @@ enabled = false
 # Function-centric config matches AWS Lambda + API Gateway v2.
 # One function = one process pool. One function can serve N routes,
 # including AWS-style {param} captures and {proxy+} greedy wildcards.
+#
+# Two forms supported: "./path/file.ts" (path) or "./path/file.handler" (AWS file.export, recommended).
 
 [function.ping]
 runtime = "bun"
-handler = "./examples/lambdas/ping/index.ts"
+handler = "./examples/lambdas/ping/index.handler"
 timeout_ms = 1000
 concurrency = 1
 # No routes block → implicit default: ANY /ping
 
 [function.accounts]
 runtime = "bun"
-handler = "./examples/lambdas/accounts/index.ts"
+handler = "./examples/lambdas/accounts/index.handler"
 timeout_ms = 1000
 concurrency = 1
 
@@ -32,7 +34,7 @@ method = "GET"
 
 [function.events]
 runtime = "bun"
-handler = "./examples/lambdas/events/index.ts"
+handler = "./examples/lambdas/events/index.handler"
 timeout_ms = 1000
 concurrency = 1
 
@@ -57,10 +59,24 @@ method = "ANY"
 [function.chat]
 protocol    = "websocket"
 runtime     = "bun"
-handler     = "./examples/lambdas/chat/index.ts"
+handler     = "./examples/lambdas/chat/index.handler"
 timeout_ms  = 5000
 concurrency = 10
 
 [[function.chat.routes]]
 path = "/chat"
+method = "ANY"
+
+[function.crud-accounts]
+runtime = "bun"
+handler = "./examples/lambdas/crud-accounts/index.handler"
+timeout_ms = 5000
+concurrency = 10
+
+[[function.crud-accounts.routes]]
+path = "/accounts/{id}"
+method = "ANY"
+
+[[function.crud-accounts.routes]]
+path = "/accounts"
 method = "ANY"
