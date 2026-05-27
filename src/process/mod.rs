@@ -315,11 +315,23 @@ impl ProcessManager {
         .await;
 
         match result {
-            Ok(Ok(line)) => {
-                pool.consecutive_crashes.store(0, Ordering::Relaxed);
-                let resp: R = serde_json::from_str(line.trim()).unwrap_or_default();
-                Ok(resp)
-            }
+            Ok(Ok(line)) => match serde_json::from_str(line.trim()) {
+                Ok(resp) => {
+                    pool.consecutive_crashes.store(0, Ordering::Relaxed);
+                    Ok(resp)
+                }
+                Err(e) => {
+                    warn!("malformed ws handler response on {function_name}: {line:?} — killing and restarting");
+                    handle_process_failure(&pool, &mut handle, function_name).await;
+                    spawn_liveness_watcher(
+                        handle.pid,
+                        arc.clone(),
+                        pool.clone(),
+                        function_name.to_string(),
+                    );
+                    Err(anyhow::anyhow!("malformed handler response: {e}"))
+                }
+            },
             Ok(Err(e)) => {
                 warn!("ws handler error on {function_name}: {e}");
                 handle_process_failure(&pool, &mut handle, function_name).await;
