@@ -19,6 +19,8 @@ impl Router {
         Self { handlers }
     }
 
+    // FIXME(wave-4): used by MCP handler tests and future CORS preflight layer.
+    #[allow(dead_code)]
     pub fn empty() -> Self {
         Self {
             handlers: Vec::new(),

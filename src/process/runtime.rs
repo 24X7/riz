@@ -4,6 +4,8 @@ use tokio::process::Command;
 
 pub trait LambdaRuntime: Send + Sync + 'static {
     fn spawn_command(&self, route: &FunctionConfig) -> Command;
+    // FIXME(wave-2): used by Python/Rust adapter logging once those runtimes ship.
+    #[allow(dead_code)]
     fn name(&self) -> &'static str;
 }
 

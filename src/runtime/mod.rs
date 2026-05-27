@@ -19,6 +19,8 @@ pub trait LambdaHandler: Send + Sync {
 
     /// Optional: synchronous shutdown hook (e.g. kill child processes).
     /// Default: no-op.
+    // FIXME(wave-2): called during SIGTERM shutdown once Python/Rust adapters ship.
+    #[allow(dead_code)]
     fn on_shutdown(&self) {}
 
     /// Process one event. Returns Ok(response) on success, Err for runtime
@@ -113,6 +115,8 @@ impl RouteEntry {
     }
 
     /// Convenience boolean form for tests / callers that don't need the params.
+    // FIXME(wave-4): used by CORS preflight layer and in unit tests.
+    #[allow(dead_code)]
     pub fn matches(&self, method: &str, path: &str) -> bool {
         self.match_path(method, path).is_some()
     }
@@ -175,6 +179,8 @@ pub enum HandlerError {
     Overloaded(usize),
     #[error("process error: {0}")]
     Process(String),
+    // FIXME(wave-5): constructed in process/mod.rs once deadline propagation lands.
+    #[allow(dead_code)]
     #[error("invalid response: {0}")]
     InvalidResponse(String),
     #[error("internal: {0}")]

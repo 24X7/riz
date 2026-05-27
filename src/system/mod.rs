@@ -8,6 +8,8 @@ pub mod registry;
 
 /// Derive a stable, MCP-compatible tool name from a route_key like "GET /api/users/:id".
 /// Result: "GET_api_users_id". Runs of separators collapse to a single underscore.
+// FIXME(wave-7-mcp): called by McpHandler when building tools/list response from RouteEntry.
+#[allow(dead_code)]
 pub fn mcp_tool_name(route_key: &str) -> String {
     let mut out = String::with_capacity(route_key.len());
     let mut last_was_sep = false;

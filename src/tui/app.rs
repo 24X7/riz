@@ -16,6 +16,8 @@ pub struct App {
     pub log_entries: VecDeque<LogEntry>,
     pub selected_tab: usize,
     pub selected_route: Option<usize>,
+    // FIXME(wave-9): displayed in TUI header as "up for Xh Ym".
+    #[allow(dead_code)]
     pub started_at: Option<Instant>,
 }
 

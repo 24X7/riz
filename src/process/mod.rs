@@ -57,6 +57,8 @@ pub struct PoolStats {
     pub pids: Vec<u32>,
     pub restart_count: u32,
     pub healthy: bool,
+    // FIXME(wave-9): exposed in TUI process tab (concurrency column).
+    #[allow(dead_code)]
     pub concurrency: usize,
     pub memory_rss_mb: f64,
     pub cpu_percent: f32,

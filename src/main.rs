@@ -1,6 +1,3 @@
-// FIXME(wave-7): same dead-code allow as lib.rs — Wave 7 itemizes cleanup.
-#![allow(dead_code)]
-
 mod cache;
 mod config;
 mod deploy;
