@@ -18,6 +18,26 @@ use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
 use tokio::time::{timeout, Duration};
 use tracing::{error, warn};
 
+/// Typed error variants for pool-level invocation failures.
+///
+/// Returned by [`ProcessManager::invoke`] and [`ProcessManager::invoke_generic`]
+/// so callers can pattern-match on failure cause without string-matching.
+#[derive(Debug, thiserror::Error)]
+pub enum PoolError {
+    #[error("function {0} has no pool configured")]
+    NoPool(String),
+    #[error("function {0} at concurrency limit (semaphore exhausted)")]
+    SemaphoreExhausted(String),
+    #[error("function {0} pool closed")]
+    SemaphoreClosed(String),
+    #[error("function {0} timed out after {1}ms")]
+    Timeout(String, u64),
+    #[error("function {0} returned malformed response: {1}")]
+    InvalidResponse(String, String),
+    #[error("function {0}: {1}")]
+    Other(String, #[source] anyhow::Error),
+}
+
 struct ProcessHandle {
     pid: u32,
     stdin: ChildStdin,
@@ -133,11 +153,11 @@ impl ProcessManager {
         function_name: &str,
         request: &ApiGatewayV2httpRequest,
         timeout_ms: u64,
-    ) -> anyhow::Result<ApiGatewayV2httpResponse> {
+    ) -> Result<ApiGatewayV2httpResponse, PoolError> {
         let pools = self.pools.read().await;
         let pool = pools
             .get(function_name)
-            .ok_or_else(|| anyhow::anyhow!("no pool for function {function_name}"))?
+            .ok_or_else(|| PoolError::NoPool(function_name.into()))?
             .clone();
         drop(pools);
 
@@ -148,12 +168,10 @@ impl ProcessManager {
         let _permit = match pool.semaphore.try_acquire() {
             Ok(p) => p,
             Err(tokio::sync::TryAcquireError::NoPermits) => {
-                return Ok(error_response(429, "too many concurrent requests"))
+                return Err(PoolError::SemaphoreExhausted(function_name.into()))
             }
             Err(tokio::sync::TryAcquireError::Closed) => {
-                return Err(anyhow::anyhow!(
-                    "concurrency semaphore closed for {function_name}"
-                ))
+                return Err(PoolError::SemaphoreClosed(function_name.into()))
             }
         };
 
@@ -171,11 +189,18 @@ impl ProcessManager {
 
         let arc = match free_arc {
             Some(a) => a,
-            None => return Ok(error_response(503, "no free process handle")),
+            None => {
+                return Err(PoolError::Other(
+                    function_name.into(),
+                    anyhow::anyhow!("no free process handle"),
+                ))
+            }
         };
         let mut handle = arc.lock().await;
 
-        let payload = serde_json::to_string(request)? + "\n";
+        let payload = serde_json::to_string(request)
+            .map_err(|e| PoolError::Other(function_name.into(), e.into()))?
+            + "\n";
 
         let guard_pid = Arc::new(std::sync::atomic::AtomicU32::new(handle.pid));
         let guard_pid_inner = guard_pid.clone();
@@ -206,7 +231,7 @@ impl ProcessManager {
                     pool.consecutive_crashes.store(0, Ordering::Relaxed);
                     Ok(resp)
                 }
-                Err(_) => {
+                Err(e) => {
                     warn!("malformed lambda response on {function_name}: {line:?} — killing and restarting");
                     handle_process_failure(&pool, &mut handle, function_name).await;
                     spawn_liveness_watcher(
@@ -215,7 +240,10 @@ impl ProcessManager {
                         pool.clone(),
                         function_name.to_string(),
                     );
-                    Ok(error_response(502, "malformed lambda response"))
+                    Err(PoolError::InvalidResponse(
+                        function_name.into(),
+                        e.to_string(),
+                    ))
                 }
             },
             Ok(Err(e)) => {
@@ -227,7 +255,7 @@ impl ProcessManager {
                     pool.clone(),
                     function_name.to_string(),
                 );
-                Ok(error_response(502, "lambda error"))
+                Err(PoolError::Other(function_name.into(), e))
             }
             Err(_) => {
                 warn!("lambda timeout on {function_name} after {timeout_ms}ms — killing and restarting");
@@ -250,22 +278,21 @@ impl ProcessManager {
                     }
                 }
                 pool.restart_count.fetch_add(1, Ordering::Relaxed);
-                Ok(error_response(504, "lambda timeout"))
+                Err(PoolError::Timeout(function_name.into(), timeout_ms))
             }
         }
     }
 
     /// Invoke a function with an arbitrary serializable event (WebSocket events,
     /// future event sources). Same pool plumbing as `invoke`; only the wire
-    /// payload type differs. Returns the response deserialized into `R`, or
-    /// `R::default()` on transient failures (unhealthy pool, no free handle,
-    /// semaphore exhausted).
+    /// payload type differs. Returns the response deserialized into `R`, or a
+    /// typed [`PoolError`] on failure.
     pub async fn invoke_generic<E, R>(
         &self,
         function_name: &str,
         request: &E,
         timeout_ms: u64,
-    ) -> anyhow::Result<R>
+    ) -> Result<R, PoolError>
     where
         E: serde::Serialize,
         R: serde::de::DeserializeOwned + Default,
@@ -273,7 +300,7 @@ impl ProcessManager {
         let pools = self.pools.read().await;
         let pool = pools
             .get(function_name)
-            .ok_or_else(|| anyhow::anyhow!("no pool for function {function_name}"))?
+            .ok_or_else(|| PoolError::NoPool(function_name.into()))?
             .clone();
         drop(pools);
 
@@ -284,12 +311,10 @@ impl ProcessManager {
         let _permit = match pool.semaphore.try_acquire() {
             Ok(p) => p,
             Err(tokio::sync::TryAcquireError::NoPermits) => {
-                return Err(anyhow::anyhow!(
-                    "function {function_name} at concurrency limit"
-                ))
+                return Err(PoolError::SemaphoreExhausted(function_name.into()))
             }
             Err(tokio::sync::TryAcquireError::Closed) => {
-                return Err(anyhow::anyhow!("function {function_name} pool closed"))
+                return Err(PoolError::SemaphoreClosed(function_name.into()))
             }
         };
 
@@ -307,11 +332,18 @@ impl ProcessManager {
 
         let arc = match free_arc {
             Some(a) => a,
-            None => return Ok(R::default()),
+            None => {
+                return Err(PoolError::Other(
+                    function_name.into(),
+                    anyhow::anyhow!("no free process handle"),
+                ))
+            }
         };
         let mut handle = arc.lock().await;
 
-        let payload = serde_json::to_string(request)? + "\n";
+        let payload = serde_json::to_string(request)
+            .map_err(|e| PoolError::Other(function_name.into(), e.into()))?
+            + "\n";
         let result = timeout(Duration::from_millis(timeout_ms), async {
             handle.stdin.write_all(payload.as_bytes()).await?;
             handle.stdin.flush().await?;
@@ -336,20 +368,23 @@ impl ProcessManager {
                         pool.clone(),
                         function_name.to_string(),
                     );
-                    Err(anyhow::anyhow!("malformed handler response: {e}"))
+                    Err(PoolError::InvalidResponse(
+                        function_name.into(),
+                        e.to_string(),
+                    ))
                 }
             },
             Ok(Err(e)) => {
                 warn!("ws handler error on {function_name}: {e}");
                 handle_process_failure(&pool, &mut handle, function_name).await;
-                Err(anyhow::anyhow!("handler error: {e}"))
+                Err(PoolError::Other(function_name.into(), e))
             }
             Err(_) => {
                 warn!("ws handler timeout on {function_name} after {timeout_ms}ms");
                 kill_process_group(handle.pid);
                 let _ = handle._child.kill().await;
                 pool.restart_count.fetch_add(1, Ordering::Relaxed);
-                Err(anyhow::anyhow!("handler timeout"))
+                Err(PoolError::Timeout(function_name.into(), timeout_ms))
             }
         }
     }
