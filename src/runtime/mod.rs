@@ -2,11 +2,10 @@
 //! All handlers (user functions and system functions) implement LambdaHandler.
 
 pub mod process;
+pub mod response;
 
-use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse, Body};
+use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
 use async_trait::async_trait;
-use http::HeaderMap;
-use serde::Serialize;
 use std::collections::HashMap;
 
 #[async_trait]
@@ -30,29 +29,11 @@ pub trait LambdaHandler: Send + Sync {
     ) -> Result<ApiGatewayV2httpResponse, HandlerError>;
 }
 
-/// Canonical error-shape response builder. Replaces the old
-/// `GatewayResponse::error` constructor. Body is a JSON `{"message": "..."}`
-/// so it round-trips through the AWS Body::Text encoding.
+/// Canonical error-shape response builder. Thin wrapper around
+/// `response::json_response` for compatibility within the codebase.
+/// Body is a JSON `{"message": "..."}`.
 pub fn error_response(status_code: u16, message: &str) -> ApiGatewayV2httpResponse {
-    #[derive(Serialize)]
-    struct E<'a> {
-        message: &'a str,
-    }
-    let body = serde_json::to_string(&E { message })
-        .unwrap_or_else(|_| String::from(r#"{"message":"internal"}"#));
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        http::header::CONTENT_TYPE,
-        http::HeaderValue::from_static("application/json"),
-    );
-    ApiGatewayV2httpResponse {
-        status_code: status_code as i64,
-        headers,
-        multi_value_headers: HeaderMap::new(),
-        body: Some(Body::Text(body)),
-        is_base64_encoded: false,
-        cookies: Vec::new(),
-    }
+    response::json_response(status_code, &serde_json::json!({ "message": message }))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -219,6 +200,7 @@ impl HandlerError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gateway::Body;
 
     #[test]
     fn route_method_matches_any() {

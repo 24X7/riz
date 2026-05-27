@@ -1,38 +1,18 @@
 //! Encoding helpers: path-param substitution, URL encoding, HTTP response
 //! builders, and JSON-RPC envelope builders used by the MCP handler.
 
-use crate::gateway::{ApiGatewayV2httpResponse, Body};
-use http::{header, HeaderMap, HeaderValue};
+use crate::gateway::ApiGatewayV2httpResponse;
+use crate::runtime::response;
 use std::collections::HashMap;
 
 /// Wrap any JSON value in a 200 response with content-type application/json.
 pub(super) fn json_response(value: serde_json::Value) -> ApiGatewayV2httpResponse {
-    let json = serde_json::to_string(&value).unwrap_or_else(|_| String::from("{}"));
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/json"),
-    );
-    ApiGatewayV2httpResponse {
-        status_code: 200,
-        headers,
-        multi_value_headers: HeaderMap::new(),
-        body: Some(Body::Text(json)),
-        is_base64_encoded: false,
-        cookies: Vec::new(),
-    }
+    response::json_response(200, &value)
 }
 
 /// 204 No Content — used when the entire request was notifications.
 pub(super) fn no_content_response() -> ApiGatewayV2httpResponse {
-    ApiGatewayV2httpResponse {
-        status_code: 204,
-        headers: HeaderMap::new(),
-        multi_value_headers: HeaderMap::new(),
-        body: None,
-        is_base64_encoded: false,
-        cookies: Vec::new(),
-    }
+    response::empty_response(204)
 }
 
 /// Build a JSON-RPC error envelope around a single id, return as a full HTTP

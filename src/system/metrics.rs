@@ -1,10 +1,11 @@
 //! /_riz/metrics handler — emits Prometheus text format 0.0.4.
 
-use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse, Body};
-use crate::runtime::{HandlerError, LambdaHandler, RouteEntry, RouteMethod};
+use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
+use crate::runtime::{
+    response::text_response, HandlerError, LambdaHandler, RouteEntry, RouteMethod,
+};
 use crate::state::{FunctionKind, RizState};
 use async_trait::async_trait;
-use http::{header, HeaderMap, HeaderValue};
 use std::fmt::Write;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -165,25 +166,14 @@ impl LambdaHandler for MetricsHandler {
         let _ = writeln!(out, "# TYPE riz_uptime_seconds gauge");
         let _ = writeln!(out, "riz_uptime_seconds {}", self.riz_state.uptime_secs());
 
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("text/plain; version=0.0.4"),
-        );
-        Ok(ApiGatewayV2httpResponse {
-            status_code: 200,
-            headers,
-            multi_value_headers: HeaderMap::new(),
-            body: Some(Body::Text(out)),
-            is_base64_encoded: false,
-            cookies: Vec::new(),
-        })
+        Ok(text_response(200, "text/plain; version=0.0.4", out))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gateway::Body;
     use crate::state::FunctionState;
     use crate::test_helpers::make_event;
 
