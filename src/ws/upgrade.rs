@@ -14,6 +14,7 @@ use tokio::time::Duration;
 use tracing::{info, warn};
 
 use crate::gateway::ApiGatewayProxyResponse;
+use crate::process::PoolError;
 use crate::state::AppState;
 use crate::ws::connection::{Connection, ConnectionId, OutboundMessage};
 use crate::ws::event::{build_connect, build_disconnect, build_message};
@@ -49,6 +50,12 @@ async fn handle_socket(
         .unwrap_or_default()
         .as_millis() as i64;
 
+    // Record per-connection trace context. We use Span::current() to attach
+    // fields to the ambient span rather than entering a new one across awaits
+    // (EnteredSpan is !Send and cannot be held across .await points).
+    tracing::Span::current().record("ws_connection_id", connection_id.as_str());
+    tracing::Span::current().record("ws_function", function_name.as_str());
+
     // Look up the function config to get timeout_ms.
     let timeout_ms = {
         let cfg = state.config.read().await;
@@ -75,6 +82,21 @@ async fn handle_socket(
         .await
     {
         Ok(r) => r,
+        Err(PoolError::Timeout(ref name, ms)) => {
+            warn!(function = %name, timeout_ms = ms, "ws $connect timed out — closing connection");
+            let _ = socket.send(Message::Close(None)).await;
+            return;
+        }
+        Err(PoolError::InvalidResponse(ref name, ref detail)) => {
+            warn!(function = %name, detail = %detail, "ws $connect malformed response — closing connection");
+            let _ = socket.send(Message::Close(None)).await;
+            return;
+        }
+        Err(PoolError::SemaphoreExhausted(ref name)) => {
+            warn!(function = %name, "ws $connect semaphore exhausted — closing connection");
+            let _ = socket.send(Message::Close(None)).await;
+            return;
+        }
         Err(e) => {
             warn!("ws $connect failed for {function_name}: {e}");
             let _ = socket.send(Message::Close(None)).await;
@@ -104,7 +126,15 @@ async fn handle_socket(
         outbound: outbound_tx,
         close_signal: std::sync::Mutex::new(Some(close_tx)),
     });
-    state.ws_connections.insert(conn.clone());
+    if let Err(reason) = state.ws_connections.try_insert(conn.clone()) {
+        warn!(
+            function = %function_name,
+            connection_id = %connection_id,
+            "ws connection rejected: {reason} (RIZ_MAX_CONNECTIONS ceiling)"
+        );
+        let _ = socket.send(Message::Close(None)).await;
+        return;
+    }
     info!(
         "ws connected: {} (function {})",
         connection_id, function_name
@@ -147,22 +177,52 @@ async fn handle_socket(
                 match msg {
                     Message::Text(text) => {
                         let ev = build_message(&stage, read_id.as_str(), connected_at_ms, Some(text), false);
-                        if let Err(e) = read_state.process_manager
+                        match read_state.process_manager
                             .invoke_generic::<_, ApiGatewayProxyResponse>(&read_fn, &ev, timeout_ms)
                             .await
                         {
-                            warn!("ws $default dispatch error on {read_fn}: {e}");
+                            Ok(_) => {}
+                            Err(PoolError::Timeout(ref name, ms)) => {
+                                warn!(function = %name, timeout_ms = ms, "ws $default timed out — closing connection");
+                                break;
+                            }
+                            Err(PoolError::InvalidResponse(ref name, ref detail)) => {
+                                warn!(function = %name, detail = %detail, "ws $default malformed response — closing connection");
+                                break;
+                            }
+                            Err(PoolError::SemaphoreExhausted(ref name)) => {
+                                warn!(function = %name, "ws $default semaphore exhausted (transient backpressure)");
+                                // keep connection open — transient backpressure
+                            }
+                            Err(e) => {
+                                warn!("ws $default dispatch error on {read_fn}: {e}");
+                            }
                         }
                     }
                     Message::Binary(bytes) => {
                         use base64::Engine;
                         let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
                         let ev = build_message(&stage, read_id.as_str(), connected_at_ms, Some(b64), true);
-                        if let Err(e) = read_state.process_manager
+                        match read_state.process_manager
                             .invoke_generic::<_, ApiGatewayProxyResponse>(&read_fn, &ev, timeout_ms)
                             .await
                         {
-                            warn!("ws $default dispatch error on {read_fn}: {e}");
+                            Ok(_) => {}
+                            Err(PoolError::Timeout(ref name, ms)) => {
+                                warn!(function = %name, timeout_ms = ms, "ws $default (binary) timed out — closing connection");
+                                break;
+                            }
+                            Err(PoolError::InvalidResponse(ref name, ref detail)) => {
+                                warn!(function = %name, detail = %detail, "ws $default (binary) malformed response — closing connection");
+                                break;
+                            }
+                            Err(PoolError::SemaphoreExhausted(ref name)) => {
+                                warn!(function = %name, "ws $default (binary) semaphore exhausted (transient backpressure)");
+                                // keep connection open — transient backpressure
+                            }
+                            Err(e) => {
+                                warn!("ws $default (binary) dispatch error on {read_fn}: {e}");
+                            }
                         }
                     }
                     Message::Close(_) => break,

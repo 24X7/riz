@@ -30,11 +30,28 @@ fn readme_exists() {
 #[test]
 #[ignore = "wave 9 not yet shipped: 9.3 examples/riz.dev.toml uses AWS handler syntax handler = file.export"]
 fn examples_use_aws_handler_syntax() {
-    // Implementer verifies examples/riz.dev.toml uses "index.handler" style during Wave 9.3.
+    let path = std::path::Path::new("examples/riz.dev.toml");
+    assert!(path.exists(), "missing examples/riz.dev.toml — Wave 9.3 not yet shipped");
+    let contents = std::fs::read_to_string(path).expect("must read examples/riz.dev.toml");
+    // AWS handler syntax: "index.handler" — dot-separated file.export, not a file path.
+    assert!(
+        contents.contains("handler = \"index.handler\"")
+            || contents.contains("handler = \"app.handler\"")
+            || contents.contains(".handler\""),
+        "examples/riz.dev.toml does not use AWS handler syntax (file.export) — Wave 9.3 not yet shipped"
+    );
 }
 
 #[test]
 #[ignore = "wave 9 not yet shipped: 9.4 landing page hero subhead uses corrected HTTP-specific microcopy"]
 fn landing_page_hero_microcopy_updated() {
-    // Implementer verifies web/index.html hero subhead updated during Wave 9.4.
+    let path = std::path::Path::new("web/index.html");
+    assert!(path.exists(), "missing web/index.html — Wave 9.4 not yet shipped");
+    let contents = std::fs::read_to_string(path).expect("must read web/index.html");
+    // Wave 9.4: the hero subhead must not use the old generic tagline.
+    // When shipped, the microcopy should mention HTTP endpoints or API routes.
+    assert!(
+        contents.contains("HTTP") || contents.contains("API") || contents.contains("endpoint"),
+        "web/index.html hero subhead missing HTTP-specific microcopy — Wave 9.4 not yet shipped"
+    );
 }

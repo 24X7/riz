@@ -1,7 +1,9 @@
 pub mod app;
+pub mod snapshot;
 pub mod widgets;
 
 use self::app::App;
+use self::snapshot::TuiSnapshot;
 use crate::state::AppState;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
@@ -12,8 +14,17 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::watch;
 
 pub fn run_tui(state: Arc<AppState>, handle: tokio::runtime::Handle) -> anyhow::Result<()> {
+    // Spawn the async snapshotter on the shared tokio runtime before entering
+    // raw mode so the first snapshot is available (or at worst a default) by
+    // the first tick.
+    let watch_rx = snapshot::spawn_snapshotter(state, &handle);
+    run_tui_with_watch(watch_rx)
+}
+
+pub fn run_tui_with_watch(watch_rx: watch::Receiver<TuiSnapshot>) -> anyhow::Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
 
@@ -22,7 +33,7 @@ pub fn run_tui(state: Arc<AppState>, handle: tokio::runtime::Handle) -> anyhow::
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
-        let r = run_loop(&mut terminal, state, handle);
+        let r = run_loop(&mut terminal, watch_rx);
         execute!(
             terminal.backend_mut(),
             LeaveAlternateScreen,
@@ -38,42 +49,27 @@ pub fn run_tui(state: Arc<AppState>, handle: tokio::runtime::Handle) -> anyhow::
 
 fn run_loop<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
-    state: Arc<AppState>,
-    handle: tokio::runtime::Handle,
+    watch_rx: watch::Receiver<TuiSnapshot>,
 ) -> anyhow::Result<()> {
     let mut app = App::default();
     let tick = Duration::from_millis(100);
 
     loop {
-        handle.block_on(async {
-            // Snapshot every function from RizState (user + system). The
-            // routes table shows them all so operators can see /_riz/* load
-            // alongside their own functions. System routes are visually
-            // marked in the widget so they don't get confused with user
-            // deployments.
-            let now = std::time::Instant::now();
-            let functions = state.riz_state.functions.read().await;
-            app.function_stats = functions.values().map(|f| f.snapshot(now)).collect();
-            app.pool_stats = state.process_manager.pool_stats().await;
-            app.host_stats = state.process_manager.host_stats();
-            app.uptime_secs = state.riz_state.uptime_secs();
-            app.cache_entry_count = state.cache.entry_count();
-        });
+        // Borrow the latest snapshot — no RwLock, no block_on.
+        {
+            let snap = watch_rx.borrow();
+            app.function_stats = snap.functions.clone();
+            app.pool_stats = snap.pool_stats.clone();
+            app.host_stats = snap.host_stats.clone();
+            app.uptime_secs = snap.uptime_secs;
+            app.cache_entry_count = snap.cache_entry_count;
+            app.log_entries = snap.log_entries.clone();
+        }
 
         // Clamp selection if routes were removed
         if let Some(i) = app.selected_route {
             if i >= app.function_stats.len() {
                 app.selected_route = app.function_stats.len().checked_sub(1);
-            }
-        }
-
-        // Drain log channel (synchronous — no block_on needed)
-        if let Ok(mut rx) = state.log_rx.try_lock() {
-            while let Ok(entry) = rx.try_recv() {
-                app.log_entries.push_back(entry);
-                if app.log_entries.len() > 500 {
-                    app.log_entries.pop_front();
-                }
             }
         }
 

@@ -54,6 +54,9 @@ impl std::fmt::Display for ConnectionId {
 #[derive(Debug)]
 pub enum OutboundMessage {
     Text(String),
+    // FIXME(wave-1-ws-binary-push): management API will push binary frames via
+    // POST /_riz/connections/{id} with binary body once wave 1 binary support lands.
+    #[allow(dead_code)]
     Binary(Vec<u8>),
     Close,
 }

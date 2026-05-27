@@ -4,7 +4,7 @@ use crate::metrics::MetricsEmitter;
 use crate::process::runtime::RuntimeRegistry;
 use crate::process::ProcessManager;
 use crate::router::Router;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -17,84 +17,13 @@ pub struct AppState {
     pub cache: CacheLayer,
     pub metrics: MetricsEmitter,
     pub runtime_registry: Arc<RuntimeRegistry>,
-    pub route_stats: RwLock<HashMap<String, Arc<RouteStats>>>,
     pub log_tx: mpsc::Sender<LogEntry>,
     pub log_rx: Mutex<mpsc::Receiver<LogEntry>>,
     pub riz_state: Arc<RizState>,
     pub ws_connections: crate::ws::ConnectionStore,
 }
 
-/// Per-route counters stored as atomics so the hot path only needs a READ lock
-/// on the outer HashMap (to find the Arc), not a write lock.
-pub struct RouteStats {
-    pub total_requests: AtomicU64,
-    pub cache_hits: AtomicU64,
-    pub cache_misses: AtomicU64,
-    pub error_count: AtomicU64,
-    /// Sum of all request latencies in microseconds.
-    pub total_latency_us: AtomicU64,
-    pub healthy: AtomicBool,
-}
-
-impl Default for RouteStats {
-    fn default() -> Self {
-        Self {
-            total_requests: AtomicU64::new(0),
-            cache_hits: AtomicU64::new(0),
-            cache_misses: AtomicU64::new(0),
-            error_count: AtomicU64::new(0),
-            total_latency_us: AtomicU64::new(0),
-            healthy: AtomicBool::new(true),
-        }
-    }
-}
-
-impl RouteStats {
-    /// Produce a plain-data snapshot for display/testing purposes.
-    pub fn snapshot(&self) -> RouteStatsSnapshot {
-        RouteStatsSnapshot {
-            total_requests: self.total_requests.load(Ordering::Relaxed),
-            cache_hits: self.cache_hits.load(Ordering::Relaxed),
-            cache_misses: self.cache_misses.load(Ordering::Relaxed),
-            error_count: self.error_count.load(Ordering::Relaxed),
-            total_latency_us: self.total_latency_us.load(Ordering::Relaxed),
-            healthy: self.healthy.load(Ordering::Relaxed),
-        }
-    }
-}
-
-/// Plain-data snapshot of [`RouteStats`] suitable for the TUI and tests.
-#[derive(Default, Clone)]
-pub struct RouteStatsSnapshot {
-    pub total_requests: u64,
-    pub cache_hits: u64,
-    pub cache_misses: u64,
-    pub error_count: u64,
-    pub total_latency_us: u64,
-    pub healthy: bool,
-}
-
-impl RouteStatsSnapshot {
-    /// Average latency in milliseconds (used as p50 approximation in the TUI).
-    pub fn avg_latency_ms(&self) -> f64 {
-        if self.total_requests == 0 {
-            return 0.0;
-        }
-        (self.total_latency_us as f64 / self.total_requests as f64) / 1000.0
-    }
-
-    /// p50 approximation: returns average latency.
-    pub fn p50_ms(&self) -> f64 {
-        self.avg_latency_ms()
-    }
-
-    /// p95 approximation: returns average latency (best possible without per-sample storage).
-    pub fn p95_ms(&self) -> f64 {
-        self.avg_latency_ms()
-    }
-}
-
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LogEntry {
     pub timestamp: SystemTime,
     pub level: String,
@@ -111,100 +40,11 @@ impl AppState {
             route_key: route_key.map(|s| s.to_string()),
         });
     }
-
-    pub async fn record_request(
-        &self,
-        route_key: &str,
-        cache_hit: bool,
-        latency_ms: f64,
-        healthy: bool,
-    ) {
-        let latency_us = (latency_ms * 1000.0) as u64;
-
-        // Fast path: read lock — no write contention on the hot path.
-        let updated = {
-            let stats = self.route_stats.read().await;
-            if let Some(entry) = stats.get(route_key) {
-                entry.total_requests.fetch_add(1, Ordering::Relaxed);
-                if cache_hit {
-                    entry.cache_hits.fetch_add(1, Ordering::Relaxed);
-                } else {
-                    entry.cache_misses.fetch_add(1, Ordering::Relaxed);
-                }
-                if !healthy {
-                    entry.error_count.fetch_add(1, Ordering::Relaxed);
-                }
-                entry
-                    .total_latency_us
-                    .fetch_add(latency_us, Ordering::Relaxed);
-                entry.healthy.store(healthy, Ordering::Relaxed);
-                true
-            } else {
-                false
-            }
-        };
-
-        if !updated {
-            // Slow path: write lock only on first request to this route.
-            let mut stats = self.route_stats.write().await;
-            let entry = stats
-                .entry(route_key.to_string())
-                .or_insert_with(|| Arc::new(RouteStats::default()));
-            entry.total_requests.fetch_add(1, Ordering::Relaxed);
-            if cache_hit {
-                entry.cache_hits.fetch_add(1, Ordering::Relaxed);
-            } else {
-                entry.cache_misses.fetch_add(1, Ordering::Relaxed);
-            }
-            if !healthy {
-                entry.error_count.fetch_add(1, Ordering::Relaxed);
-            }
-            entry
-                .total_latency_us
-                .fetch_add(latency_us, Ordering::Relaxed);
-            entry.healthy.store(healthy, Ordering::Relaxed);
-        }
-
-        // Dual-write to RizState — this is what /_riz/health, /_riz/metrics,
-        // and the TUI's future migration will read from. record_invocation
-        // is a noop if the route_key isn't registered, so it's safe to call
-        // unconditionally.
-        self.riz_state
-            .record_invocation(route_key, latency_ms, healthy, cache_hit)
-            .await;
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    #[test]
-    fn route_stats_fetch_add_is_atomic() {
-        let counter = AtomicU64::new(0);
-        counter.fetch_add(1, Ordering::Relaxed);
-        counter.fetch_add(1, Ordering::Relaxed);
-        assert_eq!(counter.load(Ordering::Relaxed), 2);
-    }
-
-    #[test]
-    fn snapshot_avg_latency_ms_correct() {
-        let s = RouteStats::default();
-        s.total_requests.store(2, Ordering::Relaxed);
-        // 10 ms + 30 ms = 40 000 us total
-        s.total_latency_us.store(40_000, Ordering::Relaxed);
-        let snap = s.snapshot();
-        assert_eq!(snap.p50_ms(), 20.0);
-    }
-
-    #[test]
-    fn snapshot_zero_requests_returns_zero_latency() {
-        let s = RouteStats::default();
-        let snap = s.snapshot();
-        assert_eq!(snap.p50_ms(), 0.0);
-        assert_eq!(snap.p95_ms(), 0.0);
-    }
 
     #[test]
     fn bounded_channel_applies_backpressure() {
@@ -294,12 +134,16 @@ impl LatencyWindow {
         (q(0.50), q(0.75), q(0.90), q(0.95), q(0.99))
     }
 
+    // FIXME(wave-8): used in latency coverage tests (8.5) and future TUI sparkline.
+    #[allow(dead_code)]
     pub fn count(&mut self, now: Instant) -> usize {
         self.evict_stale(now);
         self.samples.len()
     }
 
     /// Raw sample count including stale entries — for tests and MAX_SAMPLES checks.
+    // FIXME(wave-8): test-support method for capacity assertions (Wave 8.5).
+    #[allow(dead_code)]
     pub fn raw_len(&self) -> usize {
         self.samples.len()
     }
@@ -427,6 +271,21 @@ pub struct FunctionState {
     /// Function-level config for user functions; None for system endpoints.
     pub config: Option<FunctionConfig>,
     pub kind: FunctionKind,
+    // ── Cached per-function metadata (hot-path reads; never touch config lock) ──
+    /// Effective cache TTL for this function: per-function override when set,
+    /// otherwise the server-level default. Cached at registration so
+    /// dispatch_lambda never needs to touch state.config.
+    pub cache_ttl_secs: AtomicU64,
+    /// API Gateway stage name (e.g. "$default", "prod"). Cached from
+    /// server-level config at registration time.
+    pub stage: std::sync::Mutex<String>,
+    /// Handler timeout in milliseconds. Mirrors FunctionConfig::timeout_ms
+    /// but lives here so the hot path never needs the config lock.
+    pub timeout_ms: AtomicU64,
+    /// Runtime tag string (e.g. "bun", "python", "rust", "system"). Used by
+    /// metrics on the hot path without re-reading the config lock.
+    pub runtime_tag: std::sync::Mutex<String>,
+    // ── Counters and instrumentation ──────────────────────────────────────────
     pub invocations: AtomicU64,
     pub errors: AtomicU64,
     pub cache_hits: AtomicU64,
@@ -441,6 +300,8 @@ pub struct FunctionState {
 #[derive(Clone, Debug, Default)]
 pub struct FunctionStateSnapshot {
     pub name: String,
+    // FIXME(wave-9): rendered in TUI routes column.
+    #[allow(dead_code)]
     pub routes: Vec<String>,
     pub kind: FunctionKind,
     pub invocations: u64,
@@ -454,6 +315,8 @@ pub struct FunctionStateSnapshot {
     pub p90_ms: f64,
     pub p95_ms: f64,
     pub p99_ms: f64,
+    // FIXME(wave-9): rendered in TUI last-active column.
+    #[allow(dead_code)]
     pub last_invoked_secs_ago: Option<f64>,
 }
 
@@ -500,16 +363,33 @@ impl FunctionState {
         }
     }
 
-    pub fn user(name: impl Into<String>, config: FunctionConfig) -> Self {
+    /// Construct a user-function state.
+    ///
+    /// `stage` — server-level API Gateway stage name (e.g. `"$default"`).
+    /// `default_ttl_secs` — server-level cache TTL used when the function
+    ///   doesn't declare its own `cache_ttl_secs`.
+    pub fn user(
+        name: impl Into<String>,
+        config: FunctionConfig,
+        stage: impl Into<String>,
+        default_ttl_secs: u64,
+    ) -> Self {
         let name = name.into();
         let routes = config
             .effective_routes(&name)
             .into_iter()
             .map(|r| format!("{} {}", r.method.to_uppercase(), r.path))
             .collect();
+        let effective_ttl = config.cache_ttl_secs.unwrap_or(default_ttl_secs);
+        let timeout_ms = config.timeout_ms;
+        let runtime_tag = config.runtime.as_str().to_string();
         Self {
             name,
             routes,
+            cache_ttl_secs: AtomicU64::new(effective_ttl),
+            stage: std::sync::Mutex::new(stage.into()),
+            timeout_ms: AtomicU64::new(timeout_ms),
+            runtime_tag: std::sync::Mutex::new(runtime_tag),
             config: Some(config),
             kind: FunctionKind::User,
             invocations: AtomicU64::new(0),
@@ -523,10 +403,18 @@ impl FunctionState {
         }
     }
 
-    pub fn system(name: impl Into<String>, routes: Vec<String>) -> Self {
+    /// Construct a system-function state (e.g. `_riz_health`).
+    ///
+    /// System functions have no per-function config, so `stage` comes from
+    /// the server config and `cache_ttl_secs` is always 0.
+    pub fn system(name: impl Into<String>, routes: Vec<String>, stage: impl Into<String>) -> Self {
         Self {
             name: name.into(),
             routes,
+            cache_ttl_secs: AtomicU64::new(0),
+            stage: std::sync::Mutex::new(stage.into()),
+            timeout_ms: AtomicU64::new(0),
+            runtime_tag: std::sync::Mutex::new("system".to_string()),
             config: None,
             kind: FunctionKind::System,
             invocations: AtomicU64::new(0),
@@ -539,10 +427,28 @@ impl FunctionState {
             latency: std::sync::Mutex::new(LatencyWindow::new()),
         }
     }
+
+    /// Update mutable metadata fields after a hot-reload.
+    ///
+    /// Preserves all counters and latency samples — only the config-derived
+    /// fields are updated. Called by the hot-reload path whenever a function's
+    /// config changes so that `cache_ttl_secs`, `timeout_ms`, `runtime_tag`,
+    /// and `stage` stay current without requiring a restart.
+    pub fn update_metadata(&self, new_config: &FunctionConfig, stage: &str, default_ttl_secs: u64) {
+        let effective_ttl = new_config.cache_ttl_secs.unwrap_or(default_ttl_secs);
+        self.cache_ttl_secs.store(effective_ttl, Ordering::Relaxed);
+        self.timeout_ms
+            .store(new_config.timeout_ms, Ordering::Relaxed);
+        if let Ok(mut s) = self.stage.lock() {
+            *s = stage.to_string();
+        }
+        if let Ok(mut r) = self.runtime_tag.lock() {
+            *r = new_config.runtime.as_str().to_string();
+        }
+    }
 }
 
-/// Shared runtime state. Replaces AppState.route_stats (which is kept for the
-/// TUI during the bridge period and will be removed in Task 15).
+/// Shared runtime state. Single source of truth for all per-function metrics.
 pub struct RizState {
     pub functions: RwLock<IndexMap<String, Arc<FunctionState>>>,
     pub start_time: Instant,
@@ -641,7 +547,7 @@ mod riz_state_tests {
 
     #[tokio::test]
     async fn function_state_starts_zeroed() {
-        let f = FunctionState::user("api", make_function_config());
+        let f = FunctionState::user("api", make_function_config(), "$default", 0);
         assert_eq!(f.invocations.load(Ordering::Relaxed), 0);
         assert_eq!(f.errors.load(Ordering::Relaxed), 0);
         assert_eq!(f.cache_hits.load(Ordering::Relaxed), 0);
@@ -656,7 +562,7 @@ mod riz_state_tests {
 
     #[tokio::test]
     async fn system_function_state_has_no_config() {
-        let f = FunctionState::system("_riz/health", vec!["GET /_riz/health".into()]);
+        let f = FunctionState::system("_riz/health", vec!["GET /_riz/health".into()], "$default");
         assert_eq!(f.kind, FunctionKind::System);
         assert!(f.config.is_none());
     }
@@ -665,7 +571,12 @@ mod riz_state_tests {
     async fn register_then_record_increments_counters() {
         let state = RizState::new();
         state
-            .register(FunctionState::user("api", make_function_config()))
+            .register(FunctionState::user(
+                "api",
+                make_function_config(),
+                "$default",
+                0,
+            ))
             .await;
         state.record_invocation("api", 12.3, true, false).await;
         state.record_invocation("api", 7.5, true, false).await;
@@ -687,7 +598,12 @@ mod riz_state_tests {
     async fn record_invocation_with_cache_hit_increments_cache_hits() {
         let state = RizState::new();
         state
-            .register(FunctionState::user("api", make_function_config()))
+            .register(FunctionState::user(
+                "api",
+                make_function_config(),
+                "$default",
+                0,
+            ))
             .await;
         state.record_invocation("api", 1.0, true, true).await;
         let functions = state.functions.read().await;
@@ -700,7 +616,12 @@ mod riz_state_tests {
     async fn unhealthy_invocation_increments_errors_and_flips_healthy() {
         let state = RizState::new();
         state
-            .register(FunctionState::user("api", make_function_config()))
+            .register(FunctionState::user(
+                "api",
+                make_function_config(),
+                "$default",
+                0,
+            ))
             .await;
         state.record_invocation("api", 1.0, false, false).await;
         let functions = state.functions.read().await;
@@ -713,19 +634,82 @@ mod riz_state_tests {
     async fn iter_preserves_registration_order() {
         let state = RizState::new();
         state
-            .register(FunctionState::user("b", make_function_config()))
+            .register(FunctionState::user(
+                "b",
+                make_function_config(),
+                "$default",
+                0,
+            ))
             .await;
         state
-            .register(FunctionState::user("a", make_function_config()))
+            .register(FunctionState::user(
+                "a",
+                make_function_config(),
+                "$default",
+                0,
+            ))
             .await;
         state
             .register(FunctionState::system(
                 "_riz_health",
                 vec!["GET /_riz/health".into()],
+                "$default",
             ))
             .await;
         let functions = state.functions.read().await;
         let keys: Vec<&str> = functions.keys().map(|s| s.as_str()).collect();
         assert_eq!(keys, vec!["b", "a", "_riz_health"]);
+    }
+
+    #[tokio::test]
+    async fn function_state_caches_metadata_at_registration() {
+        let mut cfg = make_function_config();
+        cfg.cache_ttl_secs = Some(42);
+        cfg.timeout_ms = 9000;
+        let f = FunctionState::user("api", cfg, "prod", 60);
+        // Per-function TTL override takes precedence over default_ttl_secs.
+        assert_eq!(f.cache_ttl_secs.load(Ordering::Relaxed), 42);
+        assert_eq!(f.timeout_ms.load(Ordering::Relaxed), 9000);
+        assert_eq!(f.stage.lock().unwrap().as_str(), "prod");
+        assert_eq!(f.runtime_tag.lock().unwrap().as_str(), "bun");
+    }
+
+    #[tokio::test]
+    async fn function_state_uses_default_ttl_when_no_override() {
+        let f = FunctionState::user("api", make_function_config(), "$default", 30);
+        // make_function_config sets cache_ttl_secs = None → falls back to default.
+        assert_eq!(f.cache_ttl_secs.load(Ordering::Relaxed), 30);
+    }
+
+    #[tokio::test]
+    async fn update_metadata_changes_fields_without_resetting_counters() {
+        let mut cfg = make_function_config();
+        cfg.cache_ttl_secs = Some(10);
+        cfg.timeout_ms = 1000;
+        let f = FunctionState::user("api", cfg, "$default", 0);
+        // Simulate an invocation so counters are non-zero.
+        f.invocations.store(7, Ordering::Relaxed);
+        f.cache_hits.store(3, Ordering::Relaxed);
+
+        let mut new_cfg = make_function_config();
+        new_cfg.cache_ttl_secs = Some(99);
+        new_cfg.timeout_ms = 5000;
+        f.update_metadata(&new_cfg, "v2", 0);
+
+        assert_eq!(f.cache_ttl_secs.load(Ordering::Relaxed), 99);
+        assert_eq!(f.timeout_ms.load(Ordering::Relaxed), 5000);
+        assert_eq!(f.stage.lock().unwrap().as_str(), "v2");
+        // Counters must be preserved.
+        assert_eq!(f.invocations.load(Ordering::Relaxed), 7);
+        assert_eq!(f.cache_hits.load(Ordering::Relaxed), 3);
+    }
+
+    #[tokio::test]
+    async fn system_function_state_has_zeroed_ttl_and_system_runtime_tag() {
+        let f = FunctionState::system("_riz_metrics", vec!["GET /_riz/metrics".into()], "prod");
+        assert_eq!(f.cache_ttl_secs.load(Ordering::Relaxed), 0);
+        assert_eq!(f.timeout_ms.load(Ordering::Relaxed), 0);
+        assert_eq!(f.runtime_tag.lock().unwrap().as_str(), "system");
+        assert_eq!(f.stage.lock().unwrap().as_str(), "prod");
     }
 }

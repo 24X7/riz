@@ -51,6 +51,8 @@ pub async fn watch_config(config_path: String, state: Arc<AppState>) {
                 let old_config = state.config.read().await.clone();
                 let old_funcs = &old_config.functions;
                 let new_funcs = &new_config.functions;
+                let new_stage = new_config.server.stage.clone();
+                let new_default_ttl = new_config.cache.default_ttl_secs;
 
                 // Removed: drain pool entirely.
                 for name in old_funcs.keys() {
@@ -60,9 +62,17 @@ pub async fn watch_config(config_path: String, state: Arc<AppState>) {
                     }
                 }
 
-                // Changed: hot_swap the existing pool.
+                // Changed: hot_swap the existing pool + update FunctionState metadata.
                 for (name, new_cfg) in new_funcs {
                     if let Some(old_cfg) = old_funcs.get(name) {
+                        // Always update cached metadata — even if the pool didn't
+                        // change, cache_ttl_secs or stage might have.
+                        {
+                            let functions = state.riz_state.functions.read().await;
+                            if let Some(fs) = functions.get(name) {
+                                fs.update_metadata(new_cfg, &new_stage, new_default_ttl);
+                            }
+                        }
                         if function_changed(old_cfg, new_cfg) {
                             info!("hot-reload: swapping pool for {name}");
                             if let Err(e) = state
@@ -136,6 +146,8 @@ pub async fn watch_config(config_path: String, state: Arc<AppState>) {
                                 .register(crate::state::FunctionState::user(
                                     name.clone(),
                                     cfg.clone(),
+                                    &new_stage,
+                                    new_default_ttl,
                                 ))
                                 .await;
                         }

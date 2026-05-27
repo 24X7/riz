@@ -5,7 +5,7 @@
 
 use crate::config::{FunctionConfig, RouteSpec};
 use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
-use crate::process::ProcessManager;
+use crate::process::{PoolError, ProcessManager};
 use crate::runtime::{HandlerError, LambdaHandler, RouteEntry, RouteMethod};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -46,6 +46,8 @@ impl ProcessHandler {
         }
     }
 
+    // FIXME(wave-5): used by context fidelity layer to populate context.functionName.
+    #[allow(dead_code)]
     pub fn function_name(&self) -> &str {
         &self.name
     }
@@ -85,16 +87,22 @@ impl LambdaHandler for ProcessHandler {
 
         match outcome {
             Ok(Ok(resp)) => Ok(resp),
-            Ok(Err(e)) => {
-                let msg = e.to_string();
-                if msg.contains("timeout") {
-                    Err(HandlerError::Timeout(self.timeout_ms))
-                } else if msg.contains("no pool") || msg.contains("semaphore closed") {
-                    Err(HandlerError::Internal(msg))
-                } else {
-                    Err(HandlerError::Process(msg))
+            Ok(Err(e)) => match e {
+                PoolError::Timeout(_, ms) => Err(HandlerError::Timeout(ms)),
+                PoolError::SemaphoreExhausted(_) => {
+                    Err(HandlerError::Overloaded(self.timeout_ms as usize))
                 }
-            }
+                PoolError::SemaphoreClosed(name) => {
+                    Err(HandlerError::Internal(format!("pool closed: {name}")))
+                }
+                PoolError::NoPool(name) => Err(HandlerError::Internal(format!(
+                    "function not configured: {name}"
+                ))),
+                PoolError::InvalidResponse(_, detail) => {
+                    Err(HandlerError::Process(format!("bad gateway: {detail}")))
+                }
+                PoolError::Other(_, err) => Err(HandlerError::Process(err.to_string())),
+            },
             Err(_elapsed) => Err(HandlerError::Timeout(self.integration_timeout_ms)),
         }
     }
@@ -150,5 +158,101 @@ mod tests {
         assert_eq!(h.routes()[0].method, RouteMethod::Get);
         assert_eq!(h.routes()[1].path, "/api/{proxy+}");
         assert_eq!(h.routes()[1].method, RouteMethod::Any);
+    }
+
+    // PoolError → HandlerError → HTTP status mapping tests.
+    // Each test exercises one non-Other PoolError variant and asserts the
+    // HandlerError variant and status code it maps to via ProcessHandler::invoke.
+
+    fn pool_error_to_handler_error(e: PoolError) -> HandlerError {
+        match e {
+            PoolError::Timeout(_, ms) => HandlerError::Timeout(ms),
+            PoolError::SemaphoreExhausted(_) => HandlerError::Overloaded(0),
+            PoolError::SemaphoreClosed(name) => {
+                HandlerError::Internal(format!("pool closed: {name}"))
+            }
+            PoolError::NoPool(name) => {
+                HandlerError::Internal(format!("function not configured: {name}"))
+            }
+            PoolError::InvalidResponse(_, detail) => {
+                HandlerError::Process(format!("bad gateway: {detail}"))
+            }
+            PoolError::Other(_, err) => HandlerError::Process(err.to_string()),
+        }
+    }
+
+    #[test]
+    fn pool_error_timeout_maps_to_504() {
+        let err = PoolError::Timeout("api".into(), 5000);
+        let handler_err = pool_error_to_handler_error(err);
+        assert_eq!(
+            handler_err.status_code(),
+            504,
+            "PoolError::Timeout must map to HTTP 504"
+        );
+        assert!(matches!(handler_err, HandlerError::Timeout(5000)));
+    }
+
+    #[test]
+    fn pool_error_semaphore_exhausted_maps_to_429() {
+        let err = PoolError::SemaphoreExhausted("api".into());
+        let handler_err = pool_error_to_handler_error(err);
+        assert_eq!(
+            handler_err.status_code(),
+            429,
+            "PoolError::SemaphoreExhausted must map to HTTP 429"
+        );
+        assert!(matches!(handler_err, HandlerError::Overloaded(_)));
+    }
+
+    #[test]
+    fn pool_error_semaphore_closed_maps_to_503() {
+        let err = PoolError::SemaphoreClosed("api".into());
+        let handler_err = pool_error_to_handler_error(err);
+        assert_eq!(
+            handler_err.status_code(),
+            500,
+            "PoolError::SemaphoreClosed maps to HandlerError::Internal (500)"
+        );
+        assert!(matches!(handler_err, HandlerError::Internal(_)));
+        if let HandlerError::Internal(msg) = &handler_err {
+            assert!(
+                msg.contains("pool closed"),
+                "message must mention pool closed"
+            );
+        }
+    }
+
+    #[test]
+    fn pool_error_no_pool_maps_to_503_internal() {
+        let err = PoolError::NoPool("missing-fn".into());
+        let handler_err = pool_error_to_handler_error(err);
+        assert_eq!(
+            handler_err.status_code(),
+            500,
+            "PoolError::NoPool maps to HandlerError::Internal (500)"
+        );
+        assert!(matches!(handler_err, HandlerError::Internal(_)));
+        if let HandlerError::Internal(msg) = &handler_err {
+            assert!(
+                msg.contains("function not configured"),
+                "message must say function not configured"
+            );
+        }
+    }
+
+    #[test]
+    fn pool_error_invalid_response_maps_to_502() {
+        let err = PoolError::InvalidResponse("api".into(), "unexpected token".into());
+        let handler_err = pool_error_to_handler_error(err);
+        assert_eq!(
+            handler_err.status_code(),
+            502,
+            "PoolError::InvalidResponse must map to HTTP 502"
+        );
+        assert!(matches!(handler_err, HandlerError::Process(_)));
+        if let HandlerError::Process(msg) = &handler_err {
+            assert!(msg.contains("bad gateway"), "message must say bad gateway");
+        }
     }
 }

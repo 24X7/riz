@@ -1,8 +1,13 @@
 pub mod bun;
+pub mod liveness;
+pub mod pool;
 pub mod runtime;
 
 use crate::config::FunctionConfig;
 use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
+use crate::process::liveness::{handle_process_failure, spawn_liveness_watcher};
+pub use crate::process::pool::kill_process_group;
+use crate::process::pool::{spawn_process, spawn_with_cold_start_record, ProcessHandle, RoutePool};
 use crate::process::runtime::RuntimeRegistry;
 use crate::runtime::error_response;
 use crate::state::{LogEntry, RizState};
@@ -10,44 +15,31 @@ use anyhow::Context;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
 use tokio::time::{timeout, Duration};
 use tracing::{error, warn};
 
-struct ProcessHandle {
-    pid: u32,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
-    #[allow(dead_code)]
-    spawned_at: Instant,
-    _child: Child,
+/// Typed error variants for pool-level invocation failures.
+///
+/// Returned by [`ProcessManager::invoke`] and [`ProcessManager::invoke_generic`]
+/// so callers can pattern-match on failure cause without string-matching.
+#[derive(Debug, thiserror::Error)]
+pub enum PoolError {
+    #[error("function {0} has no pool configured")]
+    NoPool(String),
+    #[error("function {0} at concurrency limit (semaphore exhausted)")]
+    SemaphoreExhausted(String),
+    #[error("function {0} pool closed")]
+    SemaphoreClosed(String),
+    #[error("function {0} timed out after {1}ms")]
+    Timeout(String, u64),
+    #[error("function {0} returned malformed response: {1}")]
+    InvalidResponse(String, String),
+    #[error("function {0}: {1}")]
+    Other(String, #[source] anyhow::Error),
 }
-
-/// One pool per FUNCTION (not per route). All routes belonging to a
-/// function share the pool's processes — matches AWS Lambda execution
-/// environments where N routes can target the same Lambda.
-struct RoutePool {
-    /// Function name (`api`, `users`) — used as the map key in
-    /// ProcessManager.pools and as the cold_starts attribution key.
-    #[allow(dead_code)]
-    name: String,
-    config: FunctionConfig,
-    handles: RwLock<Vec<Arc<Mutex<ProcessHandle>>>>,
-    semaphore: Arc<Semaphore>,
-    restart_count: AtomicU32,
-    consecutive_crashes: AtomicU32,
-    healthy: AtomicBool,
-    runtime_registry: Arc<RuntimeRegistry>,
-    log_tx: mpsc::Sender<LogEntry>,
-    /// Shared RizState used to bump cold_starts on every successful spawn.
-    riz_state: Arc<RizState>,
-}
-
-const CRASH_THRESHOLD: u32 = 5;
 
 pub struct ProcessManager {
     pools: RwLock<HashMap<String, Arc<RoutePool>>>,
@@ -58,12 +50,15 @@ pub struct ProcessManager {
     riz_state: Arc<RizState>,
 }
 
+#[derive(Clone, Debug)]
 pub struct PoolStats {
     /// Function name (e.g. "api").
     pub name: String,
     pub pids: Vec<u32>,
     pub restart_count: u32,
     pub healthy: bool,
+    // FIXME(wave-9): exposed in TUI process tab (concurrency column).
+    #[allow(dead_code)]
     pub concurrency: usize,
     pub memory_rss_mb: f64,
     pub cpu_percent: f32,
@@ -111,10 +106,9 @@ impl ProcessManager {
             });
             let mut handle_vec = pool.handles.write().await;
             for _ in 0..cfg.concurrency {
-                let handle = spawn_process(cfg, registry, &log_tx)
+                let handle = spawn_with_cold_start_record(&pool, name)
                     .await
                     .with_context(|| format!("failed to spawn lambda for {name}"))?;
-                self.riz_state.note_cold_start(name).await;
                 let handle_arc = Arc::new(Mutex::new(handle));
                 let pid = handle_arc.lock().await.pid;
                 spawn_liveness_watcher(pid, handle_arc.clone(), pool.clone(), name.clone());
@@ -128,16 +122,17 @@ impl ProcessManager {
 
     /// Invoke a function by its name. `function_name` keys into the pool map
     /// (one pool per function, shared by all routes the function declares).
+    #[tracing::instrument(skip(self, request), fields(function = %function_name, timeout_ms))]
     pub async fn invoke(
         &self,
         function_name: &str,
         request: &ApiGatewayV2httpRequest,
         timeout_ms: u64,
-    ) -> anyhow::Result<ApiGatewayV2httpResponse> {
+    ) -> Result<ApiGatewayV2httpResponse, PoolError> {
         let pools = self.pools.read().await;
         let pool = pools
             .get(function_name)
-            .ok_or_else(|| anyhow::anyhow!("no pool for function {function_name}"))?
+            .ok_or_else(|| PoolError::NoPool(function_name.into()))?
             .clone();
         drop(pools);
 
@@ -148,12 +143,10 @@ impl ProcessManager {
         let _permit = match pool.semaphore.try_acquire() {
             Ok(p) => p,
             Err(tokio::sync::TryAcquireError::NoPermits) => {
-                return Ok(error_response(429, "too many concurrent requests"))
+                return Err(PoolError::SemaphoreExhausted(function_name.into()))
             }
             Err(tokio::sync::TryAcquireError::Closed) => {
-                return Err(anyhow::anyhow!(
-                    "concurrency semaphore closed for {function_name}"
-                ))
+                return Err(PoolError::SemaphoreClosed(function_name.into()))
             }
         };
 
@@ -171,11 +164,18 @@ impl ProcessManager {
 
         let arc = match free_arc {
             Some(a) => a,
-            None => return Ok(error_response(503, "no free process handle")),
+            None => {
+                return Err(PoolError::Other(
+                    function_name.into(),
+                    anyhow::anyhow!("no free process handle"),
+                ))
+            }
         };
         let mut handle = arc.lock().await;
 
-        let payload = serde_json::to_string(request)? + "\n";
+        let payload = serde_json::to_string(request)
+            .map_err(|e| PoolError::Other(function_name.into(), e.into()))?
+            + "\n";
 
         let guard_pid = Arc::new(std::sync::atomic::AtomicU32::new(handle.pid));
         let guard_pid_inner = guard_pid.clone();
@@ -206,7 +206,7 @@ impl ProcessManager {
                     pool.consecutive_crashes.store(0, Ordering::Relaxed);
                     Ok(resp)
                 }
-                Err(_) => {
+                Err(e) => {
                     warn!("malformed lambda response on {function_name}: {line:?} — killing and restarting");
                     handle_process_failure(&pool, &mut handle, function_name).await;
                     spawn_liveness_watcher(
@@ -215,7 +215,10 @@ impl ProcessManager {
                         pool.clone(),
                         function_name.to_string(),
                     );
-                    Ok(error_response(502, "malformed lambda response"))
+                    Err(PoolError::InvalidResponse(
+                        function_name.into(),
+                        e.to_string(),
+                    ))
                 }
             },
             Ok(Err(e)) => {
@@ -227,16 +230,15 @@ impl ProcessManager {
                     pool.clone(),
                     function_name.to_string(),
                 );
-                Ok(error_response(502, "lambda error"))
+                Err(PoolError::Other(function_name.into(), e))
             }
             Err(_) => {
                 warn!("lambda timeout on {function_name} after {timeout_ms}ms — killing and restarting");
                 kill_process_group(handle.pid);
                 let _ = handle._child.kill().await;
-                match spawn_process(&pool.config, &pool.runtime_registry, &pool.log_tx).await {
+                match spawn_with_cold_start_record(&pool, function_name).await {
                     Ok(new_handle) => {
                         *handle = new_handle;
-                        pool.riz_state.note_cold_start(function_name).await;
                         spawn_liveness_watcher(
                             handle.pid,
                             arc.clone(),
@@ -250,22 +252,22 @@ impl ProcessManager {
                     }
                 }
                 pool.restart_count.fetch_add(1, Ordering::Relaxed);
-                Ok(error_response(504, "lambda timeout"))
+                Err(PoolError::Timeout(function_name.into(), timeout_ms))
             }
         }
     }
 
     /// Invoke a function with an arbitrary serializable event (WebSocket events,
     /// future event sources). Same pool plumbing as `invoke`; only the wire
-    /// payload type differs. Returns the response deserialized into `R`, or
-    /// `R::default()` on transient failures (unhealthy pool, no free handle,
-    /// semaphore exhausted).
+    /// payload type differs. Returns the response deserialized into `R`, or a
+    /// typed [`PoolError`] on failure.
+    #[tracing::instrument(skip(self, request), fields(function = %function_name, timeout_ms))]
     pub async fn invoke_generic<E, R>(
         &self,
         function_name: &str,
         request: &E,
         timeout_ms: u64,
-    ) -> anyhow::Result<R>
+    ) -> Result<R, PoolError>
     where
         E: serde::Serialize,
         R: serde::de::DeserializeOwned + Default,
@@ -273,7 +275,7 @@ impl ProcessManager {
         let pools = self.pools.read().await;
         let pool = pools
             .get(function_name)
-            .ok_or_else(|| anyhow::anyhow!("no pool for function {function_name}"))?
+            .ok_or_else(|| PoolError::NoPool(function_name.into()))?
             .clone();
         drop(pools);
 
@@ -284,12 +286,10 @@ impl ProcessManager {
         let _permit = match pool.semaphore.try_acquire() {
             Ok(p) => p,
             Err(tokio::sync::TryAcquireError::NoPermits) => {
-                return Err(anyhow::anyhow!(
-                    "function {function_name} at concurrency limit"
-                ))
+                return Err(PoolError::SemaphoreExhausted(function_name.into()))
             }
             Err(tokio::sync::TryAcquireError::Closed) => {
-                return Err(anyhow::anyhow!("function {function_name} pool closed"))
+                return Err(PoolError::SemaphoreClosed(function_name.into()))
             }
         };
 
@@ -307,11 +307,18 @@ impl ProcessManager {
 
         let arc = match free_arc {
             Some(a) => a,
-            None => return Ok(R::default()),
+            None => {
+                return Err(PoolError::Other(
+                    function_name.into(),
+                    anyhow::anyhow!("no free process handle"),
+                ))
+            }
         };
         let mut handle = arc.lock().await;
 
-        let payload = serde_json::to_string(request)? + "\n";
+        let payload = serde_json::to_string(request)
+            .map_err(|e| PoolError::Other(function_name.into(), e.into()))?
+            + "\n";
         let result = timeout(Duration::from_millis(timeout_ms), async {
             handle.stdin.write_all(payload.as_bytes()).await?;
             handle.stdin.flush().await?;
@@ -336,20 +343,23 @@ impl ProcessManager {
                         pool.clone(),
                         function_name.to_string(),
                     );
-                    Err(anyhow::anyhow!("malformed handler response: {e}"))
+                    Err(PoolError::InvalidResponse(
+                        function_name.into(),
+                        e.to_string(),
+                    ))
                 }
             },
             Ok(Err(e)) => {
                 warn!("ws handler error on {function_name}: {e}");
                 handle_process_failure(&pool, &mut handle, function_name).await;
-                Err(anyhow::anyhow!("handler error: {e}"))
+                Err(PoolError::Other(function_name.into(), e))
             }
             Err(_) => {
                 warn!("ws handler timeout on {function_name} after {timeout_ms}ms");
                 kill_process_group(handle.pid);
                 let _ = handle._child.kill().await;
                 pool.restart_count.fetch_add(1, Ordering::Relaxed);
-                Err(anyhow::anyhow!("handler timeout"))
+                Err(PoolError::Timeout(function_name.into(), timeout_ms))
             }
         }
     }
@@ -384,10 +394,10 @@ impl ProcessManager {
         let mut first_pid = 0;
         for _ in 0..new_config.concurrency {
             let h = spawn_process(&new_config, registry, &pool.log_tx).await?;
+            pool.riz_state.note_cold_start(function_name).await;
             if first_pid == 0 {
                 first_pid = h.pid;
             }
-            pool.riz_state.note_cold_start(function_name).await;
             let handle_arc = Arc::new(Mutex::new(h));
             let pid = handle_arc.lock().await.pid;
             spawn_liveness_watcher(
@@ -449,10 +459,9 @@ impl ProcessManager {
         });
         let mut handle_vec = pool.handles.write().await;
         for _ in 0..cfg.concurrency {
-            let handle = spawn_process(cfg, registry, &log_tx)
+            let handle = spawn_with_cold_start_record(&pool, name)
                 .await
                 .with_context(|| format!("failed to spawn lambda for {name}"))?;
-            self.riz_state.note_cold_start(name).await;
             let handle_arc = Arc::new(Mutex::new(handle));
             let pid = handle_arc.lock().await.pid;
             spawn_liveness_watcher(pid, handle_arc.clone(), pool.clone(), name.to_string());
@@ -549,148 +558,10 @@ impl ProcessManager {
     }
 }
 
-async fn handle_process_failure(
-    pool: &Arc<RoutePool>,
-    handle: &mut ProcessHandle,
-    function_name: &str,
-) {
-    pool.restart_count.fetch_add(1, Ordering::Relaxed);
-    let crashes = pool.consecutive_crashes.fetch_add(1, Ordering::Relaxed) + 1;
-    if crashes >= CRASH_THRESHOLD {
-        pool.healthy.store(false, Ordering::Relaxed);
-        error!("function {function_name} marked unhealthy after {crashes} crashes");
-    }
-    kill_process_group(handle.pid);
-    let _ = handle._child.kill().await;
-    match spawn_process(&pool.config, &pool.runtime_registry, &pool.log_tx).await {
-        Ok(new_handle) => {
-            pool.riz_state.note_cold_start(function_name).await;
-            *handle = new_handle;
-            pool.consecutive_crashes.store(0, Ordering::Relaxed);
-        }
-        Err(spawn_err) => {
-            error!("failed to respawn {function_name}: {spawn_err}");
-            pool.healthy.store(false, Ordering::Relaxed);
-        }
-    }
-}
-
-#[cfg(unix)]
-pub(crate) fn kill_process_group(pid: u32) {
-    if pid == 0 {
-        return;
-    }
-    let _ = nix::sys::signal::killpg(
-        nix::unistd::Pid::from_raw(pid as i32),
-        nix::sys::signal::Signal::SIGKILL,
-    );
-}
-
-#[cfg(not(unix))]
-pub(crate) fn kill_process_group(_pid: u32) {}
-
-fn spawn_liveness_watcher(
-    pid: u32,
-    handle_arc: Arc<Mutex<ProcessHandle>>,
-    pool: Arc<RoutePool>,
-    function_name: String,
-) {
-    if pid == 0 {
-        return;
-    }
-    #[cfg(not(unix))]
-    {
-        return;
-    }
-    #[cfg(unix)]
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-            use nix::sys::signal;
-            use nix::unistd::Pid;
-            if signal::kill(Pid::from_raw(pid as i32), None).is_err() {
-                break;
-            }
-        }
-
-        warn!("lambda process {pid} for {function_name} exited unexpectedly — respawning");
-        let new_pid: Option<u32> = {
-            if let Ok(mut guard) = handle_arc.try_lock() {
-                if guard.pid == pid {
-                    let _ = handle_process_failure(&pool, &mut guard, &function_name).await;
-                    Some(guard.pid)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        };
-        if let Some(new_pid) = new_pid {
-            spawn_liveness_watcher(new_pid, handle_arc, pool, function_name);
-        }
-    });
-}
-
-async fn spawn_process(
-    cfg: &FunctionConfig,
-    registry: &RuntimeRegistry,
-    log_tx: &mpsc::Sender<LogEntry>,
-) -> anyhow::Result<ProcessHandle> {
-    let runtime = registry.get(&cfg.runtime);
-    let mut cmd = runtime.spawn_command(cfg);
-    cmd.stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-
-    #[cfg(unix)]
-    cmd.process_group(0);
-
-    let mut child = cmd
-        .spawn()
-        .with_context(|| format!("failed to spawn {:?}", cfg.handler))?;
-
-    let pid = child.id().unwrap_or(0);
-    let stdin = child.stdin.take().expect("stdin piped");
-    let stdout = BufReader::new(child.stdout.take().expect("stdout piped"));
-
-    if let Some(stderr) = child.stderr.take() {
-        // Tag stderr logs with the handler filename — best signal we have
-        // about which function it came from at this layer.
-        let tag = cfg
-            .handler
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "lambda".into());
-        let tx = log_tx.clone();
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                if line.trim().is_empty() {
-                    continue;
-                }
-                let _ = tx.try_send(LogEntry {
-                    timestamp: std::time::SystemTime::now(),
-                    level: "WARN".into(),
-                    message: format!("stderr: {line}"),
-                    route_key: Some(tag.clone()),
-                });
-            }
-        });
-    }
-
-    Ok(ProcessHandle {
-        pid,
-        stdin,
-        stdout,
-        spawned_at: Instant::now(),
-        _child: child,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::process::pool::kill_process_group;
 
     #[test]
     fn kill_process_group_nonexistent_pid_does_not_panic() {

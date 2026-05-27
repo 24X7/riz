@@ -1,10 +1,11 @@
 //! /_riz/registry handler — JSON manifest of all mounted routes (user + system).
 
-use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse, Body};
-use crate::runtime::{HandlerError, LambdaHandler, RouteEntry, RouteMethod};
+use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
+use crate::runtime::{
+    response::json_response, HandlerError, LambdaHandler, RouteEntry, RouteMethod,
+};
 use crate::state::{FunctionKind, RizState};
 use async_trait::async_trait;
-use http::{header, HeaderMap, HeaderValue};
 use serde::Serialize;
 use std::sync::Arc;
 
@@ -90,27 +91,14 @@ impl LambdaHandler for RegistryHandler {
             version: self.riz_state.version,
             functions: out,
         };
-        let json =
-            serde_json::to_string(&body).map_err(|e| HandlerError::Internal(e.to_string()))?;
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("application/json"),
-        );
-        Ok(ApiGatewayV2httpResponse {
-            status_code: 200,
-            headers,
-            multi_value_headers: HeaderMap::new(),
-            body: Some(Body::Text(json)),
-            is_base64_encoded: false,
-            cookies: Vec::new(),
-        })
+        Ok(json_response(200, &body))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gateway::Body;
     use crate::state::FunctionState;
     use crate::test_helpers::make_event;
 
@@ -137,7 +125,7 @@ mod tests {
             concurrency: 3,
             routes: vec![],
         };
-        FunctionState::user("api", c)
+        FunctionState::user("api", c, "$default", 0)
     }
 
     #[tokio::test]
@@ -175,6 +163,7 @@ mod tests {
         s.register(FunctionState::system(
             "_riz_health",
             vec!["GET /_riz/health".into()],
+            "$default",
         ))
         .await;
         let h = RegistryHandler::new(s);

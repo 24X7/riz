@@ -20,24 +20,28 @@ async fn make_state() -> Arc<riz::state::AppState> {
         .register(riz::state::FunctionState::system(
             "_riz_health",
             vec!["GET /_riz/health".into()],
+            "$default",
         ))
         .await;
     riz_state
         .register(riz::state::FunctionState::system(
             "_riz_metrics",
             vec!["GET /_riz/metrics".into()],
+            "$default",
         ))
         .await;
     riz_state
         .register(riz::state::FunctionState::system(
             "_riz_registry",
             vec!["GET /_riz/registry".into()],
+            "$default",
         ))
         .await;
     riz_state
         .register(riz::state::FunctionState::system(
             "_riz_mcp",
             vec!["POST /_riz/mcp".into()],
+            "$default",
         ))
         .await;
 
@@ -58,7 +62,7 @@ async fn make_state() -> Arc<riz::state::AppState> {
         }],
     };
     riz_state
-        .register(riz::state::FunctionState::user("echo", cfg))
+        .register(riz::state::FunctionState::user("echo", cfg, "$default", 0))
         .await;
     riz_state.record_invocation("echo", 12.5, true, false).await;
 
@@ -81,7 +85,6 @@ async fn make_state() -> Arc<riz::state::AppState> {
         cache,
         metrics,
         runtime_registry: registry,
-        route_stats: tokio::sync::RwLock::new(Default::default()),
         log_tx,
         log_rx: tokio::sync::Mutex::new(log_rx),
         riz_state,

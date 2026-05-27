@@ -44,7 +44,6 @@ fn make_state_with_functions(
         cache,
         metrics,
         runtime_registry: registry,
-        route_stats: tokio::sync::RwLock::new(Default::default()),
         log_tx,
         log_rx: tokio::sync::Mutex::new(log_rx),
         riz_state,

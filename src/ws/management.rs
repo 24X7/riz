@@ -7,10 +7,13 @@
 //! - DELETE /_riz/connections/{connectionId}  → disconnect
 
 use async_trait::async_trait;
-use http::{header, HeaderMap, HeaderValue};
 
-use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse, Body};
-use crate::runtime::{error_response, HandlerError, LambdaHandler, RouteEntry, RouteMethod};
+use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
+use crate::runtime::{
+    error_response,
+    response::{empty_response, json_response},
+    HandlerError, LambdaHandler, RouteEntry, RouteMethod,
+};
 use crate::ws::connection::{ConnectionId, OutboundMessage};
 use crate::ws::ConnectionStore;
 
@@ -84,7 +87,7 @@ impl ConnectionsHandler {
             "function": conn.function_name,
             "connectedAgeSecs": connected_secs,
         });
-        json_response(200, &body)
+        Ok(json_response(200, &body))
     }
 
     fn post(
@@ -118,37 +121,6 @@ impl ConnectionsHandler {
         // the client; the reader and writer now wind down in parallel.
         let _ = conn.outbound.send(OutboundMessage::Close);
         Ok(empty_response(204))
-    }
-}
-
-fn json_response(
-    status: u16,
-    value: &serde_json::Value,
-) -> Result<ApiGatewayV2httpResponse, HandlerError> {
-    let body = serde_json::to_string(value).map_err(|e| HandlerError::Internal(e.to_string()))?;
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/json"),
-    );
-    Ok(ApiGatewayV2httpResponse {
-        status_code: status as i64,
-        headers,
-        multi_value_headers: HeaderMap::new(),
-        body: Some(Body::Text(body)),
-        is_base64_encoded: false,
-        cookies: Vec::new(),
-    })
-}
-
-fn empty_response(status: u16) -> ApiGatewayV2httpResponse {
-    ApiGatewayV2httpResponse {
-        status_code: status as i64,
-        headers: HeaderMap::new(),
-        multi_value_headers: HeaderMap::new(),
-        body: None,
-        is_base64_encoded: false,
-        cookies: Vec::new(),
     }
 }
 

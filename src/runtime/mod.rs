@@ -2,11 +2,10 @@
 //! All handlers (user functions and system functions) implement LambdaHandler.
 
 pub mod process;
+pub mod response;
 
-use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse, Body};
+use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
 use async_trait::async_trait;
-use http::HeaderMap;
-use serde::Serialize;
 use std::collections::HashMap;
 
 #[async_trait]
@@ -20,6 +19,8 @@ pub trait LambdaHandler: Send + Sync {
 
     /// Optional: synchronous shutdown hook (e.g. kill child processes).
     /// Default: no-op.
+    // FIXME(wave-2): called during SIGTERM shutdown once Python/Rust adapters ship.
+    #[allow(dead_code)]
     fn on_shutdown(&self) {}
 
     /// Process one event. Returns Ok(response) on success, Err for runtime
@@ -30,29 +31,11 @@ pub trait LambdaHandler: Send + Sync {
     ) -> Result<ApiGatewayV2httpResponse, HandlerError>;
 }
 
-/// Canonical error-shape response builder. Replaces the old
-/// `GatewayResponse::error` constructor. Body is a JSON `{"message": "..."}`
-/// so it round-trips through the AWS Body::Text encoding.
+/// Canonical error-shape response builder. Thin wrapper around
+/// `response::json_response` for compatibility within the codebase.
+/// Body is a JSON `{"message": "..."}`.
 pub fn error_response(status_code: u16, message: &str) -> ApiGatewayV2httpResponse {
-    #[derive(Serialize)]
-    struct E<'a> {
-        message: &'a str,
-    }
-    let body = serde_json::to_string(&E { message })
-        .unwrap_or_else(|_| String::from(r#"{"message":"internal"}"#));
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        http::header::CONTENT_TYPE,
-        http::HeaderValue::from_static("application/json"),
-    );
-    ApiGatewayV2httpResponse {
-        status_code: status_code as i64,
-        headers,
-        multi_value_headers: HeaderMap::new(),
-        body: Some(Body::Text(body)),
-        is_base64_encoded: false,
-        cookies: Vec::new(),
-    }
+    response::json_response(status_code, &serde_json::json!({ "message": message }))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -132,6 +115,8 @@ impl RouteEntry {
     }
 
     /// Convenience boolean form for tests / callers that don't need the params.
+    // FIXME(wave-4): used by CORS preflight layer and in unit tests.
+    #[allow(dead_code)]
     pub fn matches(&self, method: &str, path: &str) -> bool {
         self.match_path(method, path).is_some()
     }
@@ -194,6 +179,8 @@ pub enum HandlerError {
     Overloaded(usize),
     #[error("process error: {0}")]
     Process(String),
+    // FIXME(wave-5): constructed in process/mod.rs once deadline propagation lands.
+    #[allow(dead_code)]
     #[error("invalid response: {0}")]
     InvalidResponse(String),
     #[error("internal: {0}")]
@@ -219,6 +206,7 @@ impl HandlerError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gateway::Body;
 
     #[test]
     fn route_method_matches_any() {

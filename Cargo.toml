@@ -40,6 +40,7 @@ indexmap = { version = "2", features = ["serde"] }
 aws_lambda_events = { version = "0.15", default-features = false, features = ["apigw"] }
 http = "1"
 futures-util = "0.3"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 
 [profile.release]
 opt-level = 3
@@ -56,6 +57,8 @@ tempfile = "3"
 tokio-test = "0.4"
 tokio-tungstenite = "0.24"
 regex = "1"
+proptest = "1"
+rand = "0.8"
 
 # Config for 'cargo dist'
 [workspace.metadata.dist]
