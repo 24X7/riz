@@ -12,14 +12,61 @@ use crate::process::runtime::RuntimeRegistry;
 use crate::runtime::error_response;
 use crate::state::{LogEntry, RizState};
 use anyhow::Context;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
 use tokio::time::{timeout, Duration};
-use tracing::{error, warn};
+use tracing::{error, trace, warn};
+
+/// Wire envelope wrapping an invocation event with sidecar metadata.
+///
+/// Sent as a single JSON line to the Bun adapter via stdin.
+/// The adapter unwraps the event and uses the metadata to populate the
+/// Lambda context object (deadline, function name, synthetic ARN).
+#[derive(Serialize)]
+struct InvocationEnvelope<'a, E: Serialize> {
+    event: &'a E,
+    #[serde(rename = "__riz_deadline_ms")]
+    deadline_ms: i64,
+    #[serde(rename = "__riz_function_name")]
+    function_name: &'a str,
+}
+
+/// Build a JSON-encoded invocation envelope for the Bun adapter wire protocol.
+///
+/// The envelope wraps the user event with two sidecar fields:
+/// - `__riz_deadline_ms`: epoch millis at which the timeout expires.
+/// - `__riz_function_name`: the riz.toml function name (e.g. `"api"`).
+///
+/// If the system clock is pre-epoch (impossible in practice), `deadline_ms`
+/// falls back to `0` and a warning is emitted. The adapter will then return
+/// `getRemainingTimeInMillis() == 0`, signalling the handler to bail early.
+pub fn build_envelope_payload<E: Serialize>(
+    event: &E,
+    function_name: &str,
+    timeout_ms: u64,
+) -> Result<String, serde_json::Error> {
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or_else(|_| {
+            warn!("system clock is pre-epoch; setting deadline_ms=0 for function {function_name}");
+            0
+        });
+    let deadline_ms = now_ms.saturating_add(timeout_ms as i64);
+    trace!(function_name, deadline_ms, "building invocation envelope");
+    let envelope = InvocationEnvelope {
+        event,
+        deadline_ms,
+        function_name,
+    };
+    serde_json::to_string(&envelope)
+}
 
 /// Typed error variants for pool-level invocation failures.
 ///
@@ -173,7 +220,7 @@ impl ProcessManager {
         };
         let mut handle = arc.lock().await;
 
-        let payload = serde_json::to_string(request)
+        let payload = build_envelope_payload(request, function_name, timeout_ms)
             .map_err(|e| PoolError::Other(function_name.into(), e.into()))?
             + "\n";
 
@@ -316,7 +363,7 @@ impl ProcessManager {
         };
         let mut handle = arc.lock().await;
 
-        let payload = serde_json::to_string(request)
+        let payload = build_envelope_payload(request, function_name, timeout_ms)
             .map_err(|e| PoolError::Other(function_name.into(), e.into()))?
             + "\n";
         let result = timeout(Duration::from_millis(timeout_ms), async {
@@ -562,6 +609,48 @@ impl ProcessManager {
 mod tests {
     use super::*;
     use crate::process::pool::kill_process_group;
+
+    #[test]
+    fn build_envelope_payload_has_correct_keys() {
+        #[derive(serde::Serialize)]
+        struct FakeEvent {
+            path: &'static str,
+        }
+        let event = FakeEvent { path: "/hello" };
+        let json_str = build_envelope_payload(&event, "api", 5000)
+            .expect("envelope must serialize without error");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("envelope must be valid JSON");
+
+        // Event field is nested.
+        assert_eq!(parsed["event"]["path"], "/hello");
+
+        // Function name must match the argument.
+        assert_eq!(parsed["__riz_function_name"], "api");
+
+        // Deadline must be a positive integer in epoch-millis range.
+        let deadline = parsed["__riz_deadline_ms"]
+            .as_i64()
+            .expect("__riz_deadline_ms must be an integer");
+        assert!(
+            deadline > 0,
+            "__riz_deadline_ms must be > 0, got {deadline}"
+        );
+
+        // The deadline must be at least now+5000ms (epoch ms sanity check).
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        assert!(
+            deadline >= now_ms,
+            "__riz_deadline_ms {deadline} must be >= now {now_ms}"
+        );
+        assert!(
+            deadline <= now_ms + 6000,
+            "__riz_deadline_ms {deadline} must be <= now+6000ms (clock skew guard)"
+        );
+    }
 
     #[test]
     fn kill_process_group_nonexistent_pid_does_not_panic() {
