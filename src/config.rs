@@ -7,6 +7,26 @@ pub struct AuthConfig {
     pub bearer_token: Option<String>,
 }
 
+/// CORS policy configuration. Can appear as a top-level `[cors]` block
+/// (applies to all user functions) or as a `[function.<name>.cors]` block
+/// (overrides the global policy for that function's routes only).
+///
+/// CORS spec references: MDN Web Docs → CORS.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct CorsConfig {
+    pub allow_origins: Vec<String>,
+    pub allow_methods: Vec<String>,
+    pub allow_headers: Vec<String>,
+    pub allow_credentials: bool,
+    pub max_age_secs: u64,
+    pub expose_headers: Vec<String>,
+    /// Set internally when a per-function block is parsed; means "explicit
+    /// override even if all fields are empty".
+    #[serde(skip)]
+    pub configured: bool,
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct Config {
     #[serde(default)]
@@ -21,6 +41,10 @@ pub struct Config {
     pub aws: AwsConfig,
     #[serde(default)]
     pub auth: AuthConfig,
+    /// Global CORS policy. Applied to every user function unless the function
+    /// declares its own `[function.<name>.cors]` override.
+    #[serde(default)]
+    pub cors: CorsConfig,
     /// Function-centric: one entry per function. Each function is a single
     /// process pool serving one or more routes (mirrors AWS Lambda + API GW v2
     /// — one Lambda, N route → function mappings, one execution environment).
@@ -182,6 +206,10 @@ pub struct FunctionConfig {
     /// `[{ path: "/<name>", method: "ANY" }]`.
     #[serde(default)]
     pub routes: Vec<RouteSpec>,
+    /// Per-function CORS override. When present, overrides the global `[cors]`
+    /// block for this function's routes. Absent → global policy applies.
+    #[serde(default)]
+    pub cors: Option<CorsConfig>,
 }
 
 impl FunctionConfig {
@@ -340,6 +368,20 @@ impl Config {
             .or_else(|| self.auth.bearer_token.clone())
     }
 
+    /// Returns the effective CORS policy for the named function. The
+    /// per-function `[function.<name>.cors]` block (if present) takes
+    /// precedence over the global `[cors]` block.
+    ///
+    /// The returned config is a clone so callers may cache it cheaply.
+    pub fn effective_cors_for(&self, function_name: &str) -> CorsConfig {
+        if let Some(func) = self.functions.get(function_name) {
+            if let Some(per_fn) = &func.cors {
+                return per_fn.clone();
+            }
+        }
+        self.cors.clone()
+    }
+
     /// Reject configurations that overlap Riz's reserved /_riz/* namespace,
     /// use the reserved `_riz` prefix in function names, or declare a runtime
     /// Riz doesn't actually support yet (refuses to start rather than silently
@@ -356,7 +398,28 @@ impl Config {
                 );
             }
         }
+        // CORS spec violation (MDN): allow_credentials=true with an empty
+        // allow_origins list means no origin will ever be echoed back, so
+        // credentials can never flow — almost certainly a misconfiguration.
+        // Warn (not error) because the user might be intentionally restricting
+        // all origins while debugging.
+        if self.cors.allow_credentials && self.cors.allow_origins.is_empty() {
+            tracing::warn!(
+                "[cors] allow_credentials = true with an empty allow_origins list is a CORS spec \
+                 violation (MDN): no Origin will ever be echoed back, so credentials can never \
+                 flow. Add at least one origin or set allow_credentials = false."
+            );
+        }
         for (name, func) in &self.functions {
+            // Per-function CORS: same credentials + empty origins check.
+            if let Some(fn_cors) = &func.cors {
+                if fn_cors.allow_credentials && fn_cors.allow_origins.is_empty() {
+                    tracing::warn!(
+                        "[function.{name}.cors] allow_credentials = true with an empty \
+                         allow_origins list is a CORS spec violation (MDN)."
+                    );
+                }
+            }
             if name == "_riz" || name.starts_with("_riz") {
                 return Err(format!(
                     "function name '{name}' uses reserved '_riz' prefix"
@@ -664,6 +727,7 @@ handler = "./h.ts"
             concurrency: 1,
             cache_ttl_secs: None,
             routes: vec![],
+            cors: None,
         }
     }
 

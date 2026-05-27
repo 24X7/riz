@@ -197,6 +197,7 @@ mod tests {
             cache_ttl_secs: None,
             concurrency,
             routes: vec![],
+            cors: None,
         }
     }
 

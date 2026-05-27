@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod cache;
 pub mod config;
+pub mod cors;
 pub mod deploy;
 pub mod gateway;
 pub mod hotreload;

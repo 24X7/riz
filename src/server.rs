@@ -1,4 +1,5 @@
 use crate::cache::CacheLayer;
+use crate::cors;
 use crate::gateway::{
     ApiGatewayV2httpRequest, ApiGatewayV2httpRequestContext,
     ApiGatewayV2httpRequestContextHttpDescription, ApiGatewayV2httpResponse, Body,
@@ -161,6 +162,56 @@ async fn dispatch_lambda(
     let path = req.uri().path().to_string();
     let query = req.uri().query().unwrap_or("").to_string();
     let source_ip = peer.ip().to_string();
+
+    // ── CORS preflight (OPTIONS) ─────────────────────────────────────────────
+    // Extract the Origin header up-front; needed for both OPTIONS and non-OPTIONS
+    // CORS handling below. Invalid (non-ASCII / newline-containing) values are
+    // treated as absent by the cors module.
+    let request_origin: Option<String> = req
+        .headers()
+        .get(http::header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    if method_str == "OPTIONS" {
+        // Look up whether the path has any registered handler (method-agnostic).
+        let function_name_for_path = {
+            let router = state.router.read().await;
+            router.function_for_path(&path)
+        };
+        match function_name_for_path {
+            None => {
+                // No handler owns this path → OPTIONS on an unregistered path
+                // must return 404, not 204 (acceptance criterion 4).
+                tracing::debug!(path, "CORS preflight: path not registered — returning 404");
+                return StatusCode::NOT_FOUND.into_response();
+            }
+            Some(fn_name) => {
+                // Path is registered → return 204 with preflight headers.
+                let cors_cfg = {
+                    let cfg = state.config.read().await;
+                    cfg.effective_cors_for(&fn_name)
+                };
+                let origin_ref = request_origin.as_deref().unwrap_or("");
+                let preflight_hdrs = cors::preflight_headers(&cors_cfg, origin_ref);
+                tracing::debug!(
+                    path,
+                    fn_name,
+                    origin = origin_ref,
+                    headers_count = preflight_hdrs.len(),
+                    "CORS preflight: returning 204"
+                );
+                let mut builder =
+                    axum::http::response::Builder::new().status(StatusCode::NO_CONTENT);
+                for (k, v) in &preflight_hdrs {
+                    builder = builder.header(k, v);
+                }
+                return builder
+                    .body(AxumBody::empty())
+                    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+            }
+        }
+    }
     let user_agent = req
         .headers()
         .get(http::header::USER_AGENT)
@@ -216,13 +267,23 @@ async fn dispatch_lambda(
                     })
                     .map(|f| f.name.clone())
             };
+            // Compute CORS response headers for the cache-hit path.
+            // Use the attributed function name when known; fall back to global.
+            let cors_hdrs = {
+                let cfg = state.config.read().await;
+                let cors_cfg = fn_name
+                    .as_deref()
+                    .map(|n| cfg.effective_cors_for(n))
+                    .unwrap_or_else(|| cfg.cors.clone());
+                cors::response_headers(&cors_cfg, request_origin.as_deref())
+            };
             if let Some(fn_name) = fn_name {
                 state
                     .riz_state
                     .record_invocation(&fn_name, latency, true, true)
                     .await;
             }
-            return gateway_to_axum(&cached);
+            return apply_cors_response_headers(gateway_to_axum(&cached), &cors_hdrs);
         }
     }
 
@@ -400,7 +461,13 @@ async fn dispatch_lambda(
                     .await;
             }
 
-            gateway_to_axum(&gw_resp)
+            // Append CORS response headers for this function.
+            let cors_hdrs = {
+                let cfg = state.config.read().await;
+                let cors_cfg = cfg.effective_cors_for(&function_name);
+                cors::response_headers(&cors_cfg, request_origin.as_deref())
+            };
+            apply_cors_response_headers(gateway_to_axum(&gw_resp), &cors_hdrs)
         }
         Err(e) => {
             let resp = e.to_response();
@@ -411,9 +478,28 @@ async fn dispatch_lambda(
                 None,
                 format!("dispatch error {method_str} {path}: {e}"),
             );
-            gateway_to_axum(&resp)
+            // Apply global CORS config for error responses (unmatched routes).
+            let cors_hdrs = {
+                let cfg = state.config.read().await;
+                cors::response_headers(&cfg.cors, request_origin.as_deref())
+            };
+            apply_cors_response_headers(gateway_to_axum(&resp), &cors_hdrs)
         }
     }
+}
+
+/// Merge CORS response headers into an existing axum `Response`.
+///
+/// Called after `gateway_to_axum` to attach `Access-Control-*` headers to
+/// every non-OPTIONS response when the request Origin is in the allow-list.
+/// Headers are inserted; any existing CORS headers from the handler are
+/// overwritten (riz is authoritative for CORS, not the Lambda function).
+fn apply_cors_response_headers(mut response: Response, cors_hdrs: &http::HeaderMap) -> Response {
+    let headers = response.headers_mut();
+    for (k, v) in cors_hdrs {
+        headers.insert(k, v.clone());
+    }
+    response
 }
 
 /// Convert an AWS API Gateway v2 response into an axum HTTP response.

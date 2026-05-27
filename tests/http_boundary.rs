@@ -144,6 +144,7 @@ async fn oversized_body_returns_413_for_routed_request() {
                 path: "/sink".into(),
                 method: "POST".into(),
             }],
+            cors: None,
         },
     );
     let state = make_state_with_functions(functions);
