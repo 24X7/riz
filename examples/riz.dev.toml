@@ -39,3 +39,18 @@ concurrency = 1
 [[function.events.routes]]
 path = "/events"
 method = "POST"
+
+# WebSocket API. The connection upgrade happens at the route path (/chat).
+# Handler receives $connect / $default / $disconnect events shaped exactly
+# like AWS API Gateway WebSocket (ApiGatewayWebsocketProxyRequest).
+# Push messages back to the client by POSTing to /_riz/connections/{id}.
+[function.chat]
+protocol    = "websocket"
+runtime     = "bun"
+handler     = "./examples/lambdas/chat/index.ts"
+timeout_ms  = 5000
+concurrency = 10
+
+[[function.chat.routes]]
+path = "/chat"
+method = "ANY"
