@@ -60,6 +60,49 @@ fn fixture_apigw_v2_http_post_with_body_round_trips() {
 }
 
 #[test]
+fn fixture_apigw_v2_http_put_round_trips() {
+    let raw = include_str!("fixtures/aws/apigw_v2_http_put.json");
+    let parsed: ApiGatewayV2httpRequest = serde_json::from_str(raw).expect("deserialize");
+    assert_eq!(parsed.request_context.http.method.as_str(), "PUT");
+    assert_eq!(
+        parsed.path_parameters.get("id").map(String::as_str),
+        Some("42")
+    );
+    let reserialized: Value = serde_json::to_value(&parsed).unwrap();
+    let original: Value = serde_json::from_str(raw).unwrap();
+    assert_eq!(deep_normalize(reserialized), deep_normalize(original));
+}
+
+#[test]
+fn fixture_apigw_v2_http_delete_round_trips() {
+    let raw = include_str!("fixtures/aws/apigw_v2_http_delete.json");
+    let parsed: ApiGatewayV2httpRequest = serde_json::from_str(raw).expect("deserialize");
+    assert_eq!(parsed.request_context.http.method.as_str(), "DELETE");
+    assert_eq!(
+        parsed.path_parameters.get("id").map(String::as_str),
+        Some("42")
+    );
+    let reserialized: Value = serde_json::to_value(&parsed).unwrap();
+    let original: Value = serde_json::from_str(raw).unwrap();
+    assert_eq!(deep_normalize(reserialized), deep_normalize(original));
+}
+
+#[test]
+fn fixture_apigw_v2_http_patch_round_trips() {
+    let raw = include_str!("fixtures/aws/apigw_v2_http_patch.json");
+    let parsed: ApiGatewayV2httpRequest = serde_json::from_str(raw).expect("deserialize");
+    assert_eq!(parsed.request_context.http.method.as_str(), "PATCH");
+    assert!(parsed
+        .body
+        .as_deref()
+        .unwrap_or("")
+        .contains("\"op\":\"replace\""));
+    let reserialized: Value = serde_json::to_value(&parsed).unwrap();
+    let original: Value = serde_json::from_str(raw).unwrap();
+    assert_eq!(deep_normalize(reserialized), deep_normalize(original));
+}
+
+#[test]
 fn fixture_apigw_v2_websocket_connect_round_trips() {
     let raw = include_str!("fixtures/aws/apigw_v2_websocket_connect.json");
     let parsed: ApiGatewayWebsocketProxyRequest = serde_json::from_str(raw).expect("deserialize");
