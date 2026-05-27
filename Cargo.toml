@@ -1,3 +1,6 @@
+[workspace]
+members = [".", "crates/riz-rust-runtime", "examples/lambdas/echo-rust"]
+
 [package]
 name = "riz"
 version = "0.1.0"

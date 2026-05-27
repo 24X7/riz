@@ -362,23 +362,16 @@ impl Config {
                     "function name '{name}' uses reserved '_riz' prefix"
                 ));
             }
-            // Riz currently ships only the Bun runtime. Python and Rust are
-            // planned (see runtime/process.rs). Refuse to start rather than
-            // silently mis-spawning them as Bun modules.
+            // Riz currently ships Bun and Rust runtimes. Python is planned
+            // (see runtime/process.rs). Refuse to start rather than silently
+            // mis-spawning Python handlers as Bun modules.
             match func.runtime {
-                RuntimeKind::Bun => {}
+                RuntimeKind::Bun | RuntimeKind::Rust => {}
                 RuntimeKind::Python => {
                     return Err(format!(
                         "function '{name}' declares runtime = \"python\" but the Python adapter \
-                         is not yet shipped in this riz build. Use runtime = \"bun\" or wait for \
-                         the python runtime to land."
-                    ));
-                }
-                RuntimeKind::Rust => {
-                    return Err(format!(
-                        "function '{name}' declares runtime = \"rust\" but the Rust adapter is \
-                         not yet shipped in this riz build. Use runtime = \"bun\" or wait for \
-                         the rust runtime to land."
+                         is not yet shipped in this riz build. Use runtime = \"bun\" or \
+                         runtime = \"rust\", or wait for the python runtime to land."
                     ));
                 }
             }

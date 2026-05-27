@@ -1,35 +1,36 @@
 use crate::config::{FunctionConfig, RuntimeKind};
 use crate::process::bun::BunRuntime;
+use crate::process::rust::RustRuntime;
 use tokio::process::Command;
 
 pub trait LambdaRuntime: Send + Sync + 'static {
     fn spawn_command(&self, route: &FunctionConfig) -> Command;
-    // FIXME(wave-2): used by Python/Rust adapter logging once those runtimes ship.
-    #[allow(dead_code)]
     fn name(&self) -> &'static str;
 }
 
 pub struct RuntimeRegistry {
     bun: BunRuntime,
+    rust: RustRuntime,
 }
 
 impl RuntimeRegistry {
     pub fn new() -> anyhow::Result<Self> {
         Ok(Self {
             bun: BunRuntime::new()?,
+            rust: RustRuntime::new(),
         })
     }
 
     pub fn get(&self, kind: &RuntimeKind) -> &dyn LambdaRuntime {
         match kind {
             RuntimeKind::Bun => &self.bun,
-            RuntimeKind::Rust | RuntimeKind::Python => {
-                // Should never be reached: Config::validate rejects unsupported
-                // runtimes at load time. Panic loudly so we never silently run
-                // a Python handler under Bun (which would simply fail to parse
-                // the `.py` file as a JS module).
+            RuntimeKind::Rust => &self.rust,
+            RuntimeKind::Python => {
+                // Should never be reached: Config::validate rejects Python at
+                // load time. Panic loudly so we never silently mis-spawn a
+                // Python handler under a different runtime.
                 panic!(
-                    "runtime {:?} is not yet implemented. Riz currently supports only `bun`. \
+                    "runtime {:?} is not yet implemented. \
                      This panic indicates Config::validate did not reject the unsupported runtime.",
                     kind
                 );

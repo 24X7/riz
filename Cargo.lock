@@ -1337,6 +1337,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "echo-rust"
+version = "0.1.0"
+dependencies = [
+ "aws_lambda_events",
+ "http 1.4.0",
+ "riz-rust-runtime",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2957,6 +2968,17 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "zip",
+]
+
+[[package]]
+name = "riz-rust-runtime"
+version = "0.1.0"
+dependencies = [
+ "aws_lambda_events",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

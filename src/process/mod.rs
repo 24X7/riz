@@ -2,6 +2,7 @@ pub mod bun;
 pub mod liveness;
 pub mod pool;
 pub mod runtime;
+pub mod rust;
 
 use crate::config::FunctionConfig;
 use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
