@@ -355,6 +355,7 @@ fn validate_rejects_jwt_authorizer_with_wrong_type() {
                     cache_ttl_secs: None,
                     stage_variables: Default::default(),
                     routes: vec![],
+                    cors: None,
                     authorizer: Some(AuthorizerConfig::Jwt(JwtAuthorizerConfig {
                         r#type: "not-jwt".into(),
                         issuer: "https://example.com".into(),

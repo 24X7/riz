@@ -178,6 +178,7 @@ async fn request_authorizer_allows_valid_token() {
                 path: "/auth".into(),
                 method: "ANY".into(),
             }],
+            cors: None,
             authorizer: None,
         },
     );
@@ -196,6 +197,7 @@ async fn request_authorizer_allows_valid_token() {
                 path: "/api".into(),
                 method: "GET".into(),
             }],
+            cors: None,
             authorizer: Some(AuthorizerConfig::FunctionRef("auth-fn".into())),
         },
     );
@@ -267,6 +269,7 @@ async fn request_authorizer_rejects_invalid_token() {
                 path: "/auth".into(),
                 method: "ANY".into(),
             }],
+            cors: None,
             authorizer: None,
         },
     );
@@ -285,6 +288,7 @@ async fn request_authorizer_rejects_invalid_token() {
                 path: "/api".into(),
                 method: "GET".into(),
             }],
+            cors: None,
             authorizer: Some(AuthorizerConfig::FunctionRef("auth-fn".into())),
         },
     );
@@ -354,6 +358,7 @@ async fn authorizer_none_opt_out_allows_any_request() {
                 path: "/api".into(),
                 method: "GET".into(),
             }],
+            cors: None,
             // Explicit opt-out.
             authorizer: Some(AuthorizerConfig::FunctionRef("none".into())),
         },
