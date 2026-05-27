@@ -61,6 +61,7 @@ async fn make_state() -> Arc<riz::state::AppState> {
             method: "GET".into(),
         }],
         cors: None,
+        authorizer: None,
     };
     riz_state
         .register(riz::state::FunctionState::user("echo", cfg, "$default", 0))
@@ -88,6 +89,7 @@ async fn make_state() -> Arc<riz::state::AppState> {
         router: tokio::sync::RwLock::new(riz::router::Router::new(handlers)),
         process_manager,
         cache,
+        auth_cache: riz::auth::authorizer::AuthCache::new(),
         metrics,
         runtime_registry: registry,
         log_tx,

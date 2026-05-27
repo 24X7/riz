@@ -252,6 +252,7 @@ async fn main() -> anyhow::Result<()> {
         router: tokio::sync::RwLock::new(router),
         process_manager,
         cache,
+        auth_cache: crate::auth::authorizer::AuthCache::new(),
         metrics,
         runtime_registry: registry,
         log_tx,

@@ -124,6 +124,7 @@ mod tests {
             concurrency: 1,
             routes: vec![],
             cors: None,
+            authorizer: None,
         }
     }
 

@@ -2,6 +2,48 @@ use indexmap::IndexMap;
 use serde::Deserialize;
 use std::path::PathBuf;
 
+/// Per-function authorizer configuration.
+///
+/// Two forms are supported in `riz.toml`:
+///
+/// ```toml
+/// # REQUEST authorizer — name of another function in this config:
+/// [function.api]
+/// authorizer = "myAuth"
+///
+/// # Opt-out — skip auth even if a global authorizer is declared:
+/// [function.api]
+/// authorizer = "none"
+///
+/// # JWT authorizer — inline block:
+/// [function.api.authorizer]
+/// type = "jwt"
+/// issuer = "https://example.com"
+/// audience = "myapp"
+/// jwks_uri = "https://example.com/.well-known/jwks.json"
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum AuthorizerConfig {
+    /// A string value: either `"none"` (opt-out) or a function name (REQUEST authorizer).
+    FunctionRef(String),
+    /// An inline JWT authorizer block.
+    Jwt(JwtAuthorizerConfig),
+}
+
+/// Inline JWT authorizer configuration block.
+#[derive(Debug, Clone, Deserialize)]
+pub struct JwtAuthorizerConfig {
+    /// Must be `"jwt"`.
+    pub r#type: String,
+    /// Token issuer URI (validated against `iss` claim).
+    pub issuer: String,
+    /// Expected audience (validated against `aud` claim).
+    pub audience: String,
+    /// JWKS endpoint URL.
+    pub jwks_uri: String,
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct AuthConfig {
     pub bearer_token: Option<String>,
@@ -210,6 +252,13 @@ pub struct FunctionConfig {
     /// block for this function's routes. Absent → global policy applies.
     #[serde(default)]
     pub cors: Option<CorsConfig>,
+    /// Optional authorizer for this function.
+    ///
+    /// - `authorizer = "none"` — skip auth even if a global authorizer exists.
+    /// - `authorizer = "myAuth"` — call the named function as a REQUEST authorizer.
+    /// - `[function.X.authorizer]` block with `type = "jwt"` — JWT authorizer.
+    #[serde(default)]
+    pub authorizer: Option<AuthorizerConfig>,
 }
 
 impl FunctionConfig {
@@ -447,6 +496,41 @@ impl Config {
                     return Err(format!(
                         "function '{name}' has route path '{}' that uses reserved /_riz/* namespace",
                         r.path
+                    ));
+                }
+            }
+            // Validate authorizer references: a FunctionRef that is not "none"
+            // must name an existing function in this config.
+            if let Some(AuthorizerConfig::FunctionRef(ref auth_name)) = func.authorizer {
+                if auth_name != "none" && !self.functions.contains_key(auth_name.as_str()) {
+                    return Err(format!(
+                        "function '{name}' authorizer = \"{auth_name}\" references a function \
+                         that does not exist in this config"
+                    ));
+                }
+            }
+            // Validate JWT authorizer: type must be "jwt".
+            if let Some(AuthorizerConfig::Jwt(ref jwt_cfg)) = func.authorizer {
+                if jwt_cfg.r#type != "jwt" {
+                    return Err(format!(
+                        "function '{name}' inline authorizer block has type = \"{}\" but only \
+                         type = \"jwt\" is supported",
+                        jwt_cfg.r#type
+                    ));
+                }
+                if jwt_cfg.jwks_uri.is_empty() {
+                    return Err(format!(
+                        "function '{name}' JWT authorizer must have a non-empty jwks_uri"
+                    ));
+                }
+                if jwt_cfg.issuer.is_empty() {
+                    return Err(format!(
+                        "function '{name}' JWT authorizer must have a non-empty issuer"
+                    ));
+                }
+                if jwt_cfg.audience.is_empty() {
+                    return Err(format!(
+                        "function '{name}' JWT authorizer must have a non-empty audience"
                     ));
                 }
             }
@@ -728,6 +812,7 @@ handler = "./h.ts"
             cache_ttl_secs: None,
             routes: vec![],
             cors: None,
+            authorizer: None,
         }
     }
 

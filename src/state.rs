@@ -1,3 +1,4 @@
+use crate::auth::authorizer::AuthCache;
 use crate::cache::CacheLayer;
 use crate::config::Config;
 use crate::metrics::MetricsEmitter;
@@ -15,6 +16,8 @@ pub struct AppState {
     pub router: RwLock<Router>,
     pub process_manager: Arc<ProcessManager>,
     pub cache: CacheLayer,
+    /// Authorizer response cache (keyed by source_ip + auth_header_hash + function_name).
+    pub auth_cache: AuthCache,
     pub metrics: MetricsEmitter,
     pub runtime_registry: Arc<RuntimeRegistry>,
     pub log_tx: mpsc::Sender<LogEntry>,
@@ -543,6 +546,7 @@ mod riz_state_tests {
             concurrency: 1,
             routes: vec![],
             cors: None,
+            authorizer: None,
         }
     }
 
