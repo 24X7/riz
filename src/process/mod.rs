@@ -1,8 +1,13 @@
 pub mod bun;
+pub mod liveness;
+pub mod pool;
 pub mod runtime;
 
 use crate::config::FunctionConfig;
 use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
+use crate::process::liveness::{handle_process_failure, spawn_liveness_watcher};
+pub use crate::process::pool::kill_process_group;
+use crate::process::pool::{spawn_process, spawn_with_cold_start_record, ProcessHandle, RoutePool};
 use crate::process::runtime::RuntimeRegistry;
 use crate::runtime::error_response;
 use crate::state::{LogEntry, RizState};
@@ -10,10 +15,8 @@ use anyhow::Context;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
 use tokio::time::{timeout, Duration};
 use tracing::{error, warn};
@@ -37,37 +40,6 @@ pub enum PoolError {
     #[error("function {0}: {1}")]
     Other(String, #[source] anyhow::Error),
 }
-
-struct ProcessHandle {
-    pid: u32,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
-    #[allow(dead_code)]
-    spawned_at: Instant,
-    _child: Child,
-}
-
-/// One pool per FUNCTION (not per route). All routes belonging to a
-/// function share the pool's processes — matches AWS Lambda execution
-/// environments where N routes can target the same Lambda.
-struct RoutePool {
-    /// Function name (`api`, `users`) — used as the map key in
-    /// ProcessManager.pools and as the cold_starts attribution key.
-    #[allow(dead_code)]
-    name: String,
-    config: FunctionConfig,
-    handles: RwLock<Vec<Arc<Mutex<ProcessHandle>>>>,
-    semaphore: Arc<Semaphore>,
-    restart_count: AtomicU32,
-    consecutive_crashes: AtomicU32,
-    healthy: AtomicBool,
-    runtime_registry: Arc<RuntimeRegistry>,
-    log_tx: mpsc::Sender<LogEntry>,
-    /// Shared RizState used to bump cold_starts on every successful spawn.
-    riz_state: Arc<RizState>,
-}
-
-const CRASH_THRESHOLD: u32 = 5;
 
 pub struct ProcessManager {
     pools: RwLock<HashMap<String, Arc<RoutePool>>>,
@@ -131,10 +103,9 @@ impl ProcessManager {
             });
             let mut handle_vec = pool.handles.write().await;
             for _ in 0..cfg.concurrency {
-                let handle = spawn_process(cfg, registry, &log_tx)
+                let handle = spawn_with_cold_start_record(&pool, name)
                     .await
                     .with_context(|| format!("failed to spawn lambda for {name}"))?;
-                self.riz_state.note_cold_start(name).await;
                 let handle_arc = Arc::new(Mutex::new(handle));
                 let pid = handle_arc.lock().await.pid;
                 spawn_liveness_watcher(pid, handle_arc.clone(), pool.clone(), name.clone());
@@ -261,10 +232,9 @@ impl ProcessManager {
                 warn!("lambda timeout on {function_name} after {timeout_ms}ms — killing and restarting");
                 kill_process_group(handle.pid);
                 let _ = handle._child.kill().await;
-                match spawn_process(&pool.config, &pool.runtime_registry, &pool.log_tx).await {
+                match spawn_with_cold_start_record(&pool, function_name).await {
                     Ok(new_handle) => {
                         *handle = new_handle;
-                        pool.riz_state.note_cold_start(function_name).await;
                         spawn_liveness_watcher(
                             handle.pid,
                             arc.clone(),
@@ -419,10 +389,10 @@ impl ProcessManager {
         let mut first_pid = 0;
         for _ in 0..new_config.concurrency {
             let h = spawn_process(&new_config, registry, &pool.log_tx).await?;
+            pool.riz_state.note_cold_start(function_name).await;
             if first_pid == 0 {
                 first_pid = h.pid;
             }
-            pool.riz_state.note_cold_start(function_name).await;
             let handle_arc = Arc::new(Mutex::new(h));
             let pid = handle_arc.lock().await.pid;
             spawn_liveness_watcher(
@@ -484,10 +454,9 @@ impl ProcessManager {
         });
         let mut handle_vec = pool.handles.write().await;
         for _ in 0..cfg.concurrency {
-            let handle = spawn_process(cfg, registry, &log_tx)
+            let handle = spawn_with_cold_start_record(&pool, name)
                 .await
                 .with_context(|| format!("failed to spawn lambda for {name}"))?;
-            self.riz_state.note_cold_start(name).await;
             let handle_arc = Arc::new(Mutex::new(handle));
             let pid = handle_arc.lock().await.pid;
             spawn_liveness_watcher(pid, handle_arc.clone(), pool.clone(), name.to_string());
@@ -584,148 +553,10 @@ impl ProcessManager {
     }
 }
 
-async fn handle_process_failure(
-    pool: &Arc<RoutePool>,
-    handle: &mut ProcessHandle,
-    function_name: &str,
-) {
-    pool.restart_count.fetch_add(1, Ordering::Relaxed);
-    let crashes = pool.consecutive_crashes.fetch_add(1, Ordering::Relaxed) + 1;
-    if crashes >= CRASH_THRESHOLD {
-        pool.healthy.store(false, Ordering::Relaxed);
-        error!("function {function_name} marked unhealthy after {crashes} crashes");
-    }
-    kill_process_group(handle.pid);
-    let _ = handle._child.kill().await;
-    match spawn_process(&pool.config, &pool.runtime_registry, &pool.log_tx).await {
-        Ok(new_handle) => {
-            pool.riz_state.note_cold_start(function_name).await;
-            *handle = new_handle;
-            pool.consecutive_crashes.store(0, Ordering::Relaxed);
-        }
-        Err(spawn_err) => {
-            error!("failed to respawn {function_name}: {spawn_err}");
-            pool.healthy.store(false, Ordering::Relaxed);
-        }
-    }
-}
-
-#[cfg(unix)]
-pub(crate) fn kill_process_group(pid: u32) {
-    if pid == 0 {
-        return;
-    }
-    let _ = nix::sys::signal::killpg(
-        nix::unistd::Pid::from_raw(pid as i32),
-        nix::sys::signal::Signal::SIGKILL,
-    );
-}
-
-#[cfg(not(unix))]
-pub(crate) fn kill_process_group(_pid: u32) {}
-
-fn spawn_liveness_watcher(
-    pid: u32,
-    handle_arc: Arc<Mutex<ProcessHandle>>,
-    pool: Arc<RoutePool>,
-    function_name: String,
-) {
-    if pid == 0 {
-        return;
-    }
-    #[cfg(not(unix))]
-    {
-        return;
-    }
-    #[cfg(unix)]
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-            use nix::sys::signal;
-            use nix::unistd::Pid;
-            if signal::kill(Pid::from_raw(pid as i32), None).is_err() {
-                break;
-            }
-        }
-
-        warn!("lambda process {pid} for {function_name} exited unexpectedly — respawning");
-        let new_pid: Option<u32> = {
-            if let Ok(mut guard) = handle_arc.try_lock() {
-                if guard.pid == pid {
-                    let _ = handle_process_failure(&pool, &mut guard, &function_name).await;
-                    Some(guard.pid)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        };
-        if let Some(new_pid) = new_pid {
-            spawn_liveness_watcher(new_pid, handle_arc, pool, function_name);
-        }
-    });
-}
-
-async fn spawn_process(
-    cfg: &FunctionConfig,
-    registry: &RuntimeRegistry,
-    log_tx: &mpsc::Sender<LogEntry>,
-) -> anyhow::Result<ProcessHandle> {
-    let runtime = registry.get(&cfg.runtime);
-    let mut cmd = runtime.spawn_command(cfg);
-    cmd.stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-
-    #[cfg(unix)]
-    cmd.process_group(0);
-
-    let mut child = cmd
-        .spawn()
-        .with_context(|| format!("failed to spawn {:?}", cfg.handler))?;
-
-    let pid = child.id().unwrap_or(0);
-    let stdin = child.stdin.take().expect("stdin piped");
-    let stdout = BufReader::new(child.stdout.take().expect("stdout piped"));
-
-    if let Some(stderr) = child.stderr.take() {
-        // Tag stderr logs with the handler filename — best signal we have
-        // about which function it came from at this layer.
-        let tag = cfg
-            .handler
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "lambda".into());
-        let tx = log_tx.clone();
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                if line.trim().is_empty() {
-                    continue;
-                }
-                let _ = tx.try_send(LogEntry {
-                    timestamp: std::time::SystemTime::now(),
-                    level: "WARN".into(),
-                    message: format!("stderr: {line}"),
-                    route_key: Some(tag.clone()),
-                });
-            }
-        });
-    }
-
-    Ok(ProcessHandle {
-        pid,
-        stdin,
-        stdout,
-        spawned_at: Instant::now(),
-        _child: child,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::process::pool::kill_process_group;
 
     #[test]
     fn kill_process_group_nonexistent_pid_does_not_panic() {
