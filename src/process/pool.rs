@@ -60,6 +60,7 @@ pub(super) async fn spawn_process(
     log_tx: &mpsc::Sender<LogEntry>,
 ) -> anyhow::Result<ProcessHandle> {
     let runtime = registry.get(&cfg.runtime);
+    tracing::debug!(runtime = runtime.name(), handler = ?cfg.handler, "spawning lambda process");
     let mut cmd = runtime.spawn_command(cfg);
     cmd.stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
