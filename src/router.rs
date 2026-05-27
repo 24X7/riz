@@ -354,3 +354,45 @@ mod tests {
         assert_eq!(percent_decode("normal"), "normal");
     }
 }
+
+#[cfg(test)]
+mod proptest_tests {
+    use crate::runtime::{RouteEntry, RouteMethod};
+    use proptest::prelude::*;
+
+    proptest! {
+        /// A path with N {param} segments should produce N extracted params
+        /// with the right names + values, regardless of the segment contents.
+        #[test]
+        fn path_param_extraction_round_trips(
+            param_count in 1usize..5,
+            seed in any::<u64>(),
+        ) {
+            use rand::{Rng, SeedableRng};
+            let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+            let mut pattern_segments = Vec::new();
+            let mut concrete_segments = Vec::new();
+            let mut expected_params = std::collections::HashMap::new();
+            for i in 0..param_count {
+                let name = format!("p{i}");
+                let value: String = (0..rng.gen_range(1..=8))
+                    .map(|_| (b'a' + rng.gen_range(0u8..26)) as char)
+                    .collect();
+                pattern_segments.push(format!("{{{name}}}"));
+                concrete_segments.push(value.clone());
+                expected_params.insert(name, value);
+            }
+            let pattern = format!("/{}", pattern_segments.join("/"));
+            let concrete = format!("/{}", concrete_segments.join("/"));
+
+            let route = RouteEntry {
+                method: RouteMethod::Get,
+                path: pattern,
+            };
+            let extracted = route
+                .match_path("GET", &concrete)
+                .expect("pattern should match");
+            prop_assert_eq!(extracted, expected_params);
+        }
+    }
+}
