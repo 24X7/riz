@@ -109,6 +109,13 @@ impl ConnectionsHandler {
         let Some(conn) = self.connections.get(id) else {
             return Ok(error_response(404, "connection not found"));
         };
+        // Fire the reader-exit signal first so the reader task exits immediately
+        // rather than waiting for the next client message (~1 RTT delay).
+        if let Some(tx) = conn.take_close_signal() {
+            let _ = tx.send(());
+        }
+        // Queue a Close frame so the writer sends a clean WebSocket CLOSE to
+        // the client; the reader and writer now wind down in parallel.
         let _ = conn.outbound.send(OutboundMessage::Close);
         Ok(empty_response(204))
     }
@@ -207,5 +214,29 @@ mod tests {
         ev.path_parameters.insert("id".into(), "c1".into());
         let resp = h.invoke(ev).await.unwrap();
         assert_eq!(resp.status_code, 204);
+    }
+
+    /// DELETE must fire the oneshot close signal so the reader exits immediately,
+    /// and must also enqueue OutboundMessage::Close so the writer sends a CLOSE frame.
+    /// This validates the dual-path teardown introduced to fix the RTT delay bug.
+    #[tokio::test]
+    async fn delete_fires_close_signal_and_queues_close_frame() {
+        let (store, mut outbound_rx, close_rx) = fake_store_with_conn("c2");
+        let h = ConnectionsHandler::new(store);
+        let mut ev = make_event("DELETE", "/_riz/connections/c2");
+        ev.path_parameters.insert("id".into(), "c2".into());
+        let resp = h.invoke(ev).await.unwrap();
+        assert_eq!(resp.status_code, 204);
+
+        // The oneshot must have been fired — close_rx resolves immediately.
+        close_rx
+            .await
+            .expect("DELETE must fire the reader-exit close signal");
+
+        // The outbound channel must have a Close message queued for the writer.
+        match outbound_rx.try_recv() {
+            Ok(OutboundMessage::Close) => {}
+            other => panic!("expected OutboundMessage::Close, got {other:?}"),
+        }
     }
 }
