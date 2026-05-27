@@ -12,7 +12,9 @@ path = "/echo"
 method = "GET"
 "#;
     let config: riz::config::Config = toml::from_str(toml_str).expect("toml must parse");
-    config.validate().expect("rust runtime should be accepted by Wave 6");
+    config
+        .validate()
+        .expect("rust runtime should be accepted by Wave 6");
 }
 
 #[test]
@@ -28,7 +30,9 @@ path = "/echo"
 method = "GET"
 "#;
     let config: riz::config::Config = toml::from_str(toml_str).expect("toml must parse");
-    config.validate().expect("rust binary subprocess requires Wave 6 runtime support");
+    config
+        .validate()
+        .expect("rust binary subprocess requires Wave 6 runtime support");
 }
 
 #[test]

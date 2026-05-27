@@ -56,7 +56,10 @@ fn dispatch_hot_path_coverage_complete() {
     // Wave 8.5: verify the dispatch hot path test file exists with the required coverage.
     // As a proxy, check that the http_boundary test file covers the expected cases.
     let path = std::path::Path::new("tests/http_boundary.rs");
-    assert!(path.exists(), "missing tests/http_boundary.rs — Wave 8.5 not yet shipped");
+    assert!(
+        path.exists(),
+        "missing tests/http_boundary.rs — Wave 8.5 not yet shipped"
+    );
     let contents = std::fs::read_to_string(path).expect("must read http_boundary.rs");
     // Wave 8.5 requires 413 and 504 coverage in the dispatch hot path tests.
     assert!(

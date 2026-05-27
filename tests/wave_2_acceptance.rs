@@ -12,7 +12,9 @@ path = "/echo"
 method = "GET"
 "#;
     let config: riz::config::Config = toml::from_str(toml_str).expect("toml must parse");
-    config.validate().expect("python runtime should be accepted by Wave 2");
+    config
+        .validate()
+        .expect("python runtime should be accepted by Wave 2");
 }
 
 #[test]
@@ -28,7 +30,9 @@ path = "/echo"
 method = "GET"
 "#;
     let config: riz::config::Config = toml::from_str(toml_str).expect("toml must parse");
-    config.validate().expect("python handler syntax accepted in Wave 2");
+    config
+        .validate()
+        .expect("python handler syntax accepted in Wave 2");
 }
 
 #[test]
@@ -75,7 +79,9 @@ path = "/echo"
 method = "GET"
 "#;
     let config: riz::config::Config = toml::from_str(toml_str).expect("toml must parse");
-    config.validate().expect("python context surface requires Wave 2 runtime support");
+    config
+        .validate()
+        .expect("python context surface requires Wave 2 runtime support");
 }
 
 #[test]
@@ -114,5 +120,7 @@ path = "/echo"
 method = "GET"
 "#;
     let config: riz::config::Config = toml::from_str(toml_str).expect("toml must parse");
-    config.validate().expect("python runtime must be accepted before integration tests run");
+    config
+        .validate()
+        .expect("python runtime must be accepted before integration tests run");
 }
