@@ -10,6 +10,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{mpsc, oneshot};
+use tokio::time::Duration;
 use tracing::{info, warn};
 
 use crate::gateway::ApiGatewayProxyResponse;
@@ -91,6 +92,9 @@ async fn handle_socket(
 
     // 2. Register connection.
     let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<OutboundMessage>();
+    // Keep a local sender clone so the teardown path can queue a Close frame
+    // and then drop both senders, terminating the writer's recv() loop naturally.
+    let outbound_local = outbound_tx.clone();
     let (close_tx, mut close_rx) = oneshot::channel::<()>();
     let conn = Arc::new(Connection {
         id: connection_id.clone(),
@@ -168,7 +172,31 @@ async fn handle_socket(
         .process_manager
         .invoke_generic::<_, ApiGatewayProxyResponse>(&function_name, &disc_evt, timeout_ms)
         .await;
+
+    // Remove from store — this drops the Arc<Connection> held by the store,
+    // but `conn` (this task) and `outbound_local` still hold sender references.
     state.ws_connections.remove(&read_id);
-    writer.abort();
+
+    // Queue a Close frame so the writer sends a clean WebSocket close to the
+    // client (idempotent: if management API already queued one, it drains first).
+    let _ = outbound_local.send(OutboundMessage::Close);
+
+    // Drop both remaining sender handles (the local clone and the conn Arc) so
+    // the writer's unbounded_channel recv() returns None after draining the queue.
+    drop(outbound_local);
+    drop(conn);
+
+    // Wait up to 5 s for the writer to flush queued messages and exit cleanly.
+    // Fall back to abort() only on timeout — clients see CLOSE instead of RST.
+    let writer_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    tokio::pin!(writer);
+    tokio::select! {
+        _ = &mut writer => {}
+        _ = tokio::time::sleep_until(writer_deadline) => {
+            warn!("ws writer task timed out for {} — aborting", read_id);
+            writer.abort();
+        }
+    }
+
     info!("ws disconnected: {} (function {})", read_id, function_name);
 }
