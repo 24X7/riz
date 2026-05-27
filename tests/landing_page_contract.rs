@@ -32,17 +32,20 @@ fn extract_config_toml_block(html: &str) -> String {
 }
 
 /// Extracts every `<span class="pill">…</span>` inside the section with
-/// id="config" .pills container.
+/// id="config". Handles multiple .pills groups (e.g. runtimes + protocols).
 fn extract_pills(html: &str) -> Vec<String> {
+    // Grab the entire #config section
     let re_section =
-        Regex::new(r#"(?s)<section[^>]*id="config".*?<div class="pills">(.*?)</div>"#).unwrap();
-    let pills_block = re_section
-        .captures(html)
-        .expect("could not locate the #config .pills block")[1]
+        Regex::new(r#"(?s)<section[^>]*id="config".*?</section>"#).unwrap();
+    let section = re_section
+        .find(html)
+        .expect("could not locate the #config section")
+        .as_str()
         .to_string();
+    // Within it, find all <span class="pill"> — note: NOT pill-group-label
     let re_pill = Regex::new(r#"<span class="pill">(.*?)</span>"#).unwrap();
     re_pill
-        .captures_iter(&pills_block)
+        .captures_iter(&section)
         .map(|c| c[1].trim().to_string())
         .collect()
 }
@@ -110,12 +113,15 @@ fn embedded_riz_toml_parses_and_validates() {
 }
 
 /// Source-of-truth for every feature pill on the landing page.
-/// Keep this in sync with the `.pills` block in `web/index.html` under #config.
+/// Keep this in sync with the `.pills` blocks in `web/index.html` under #config.
+/// Pills are grouped (runtimes + protocols) but the extractor collects all of them.
 const PILLS: &[&str] = &[
+    // runtimes group
     "bun",
-    "python — soon",
-    "rust — soon",
-    "node — soon",
+    "python",
+    "rust",
+    // protocols group
+    "http api v2",
     "websocket",
 ];
 
@@ -149,6 +155,14 @@ const WORKS_NOW: &[Claim] = &[
     Claim {
         page_text: "Bun (TypeScript / JavaScript) handlers",
         proof: "runtime_registry_registers_bun",
+    },
+    Claim {
+        page_text: "Python runtime adapter",
+        proof: "python_runtime_accepted_by_config_validate",
+    },
+    Claim {
+        page_text: "Rust runtime adapter",
+        proof: "rust_runtime_accepted_by_config_validate",
     },
     Claim {
         page_text: "Function-centric config: [function.<name>] + N routes per function",
@@ -190,32 +204,28 @@ const WORKS_NOW: &[Claim] = &[
         page_text: "WebSocket APIs ($connect / $disconnect / $default) + @connections management API at /_riz/connections/{id}",
         proof: "websocket_echo_roundtrip",
     },
+    Claim {
+        page_text: "Lambda authorizers — REQUEST + JWT (JWKS, TTL cache)",
+        proof: "request_authorizer_allows_valid_token",
+    },
+    Claim {
+        page_text: "CORS auto-preflight — OPTIONS → 204, Access-Control-Allow-* headers",
+        proof: "cors_preflight_returns_204_for_options",
+    },
+    Claim {
+        page_text: "Bearer-token auth on /_riz/* (/_riz/health stays open)",
+        proof: "riz_metrics_returns_401_without_auth_when_token_configured",
+    },
+    Claim {
+        page_text: "Real Lambda context — getRemainingTimeInMillis, functionName, invokedFunctionArn, awsRequestId",
+        proof: "context_remaining_time_uses_deadline",
+    },
 ];
 
 const COMING: &[Claim] = &[
     Claim {
-        page_text: "Python runtime adapter",
-        proof: "Wave 2",
-    },
-    Claim {
-        page_text: "Rust runtime adapter",
-        proof: "Wave 6",
-    },
-    Claim {
-        page_text: "Lambda authorizers (REQUEST / JWT)",
-        proof: "Wave 3",
-    },
-    Claim {
-        page_text: "CORS auto-preflight",
-        proof: "Wave 4",
-    },
-    Claim {
-        page_text: "Non-HTTP event sources (SQS, SNS, S3, EventBridge)",
+        page_text: "Non-HTTP event sources (SQS, SNS, S3, EventBridge) — v0.2",
         proof: "OutOfScope",
-    },
-    Claim {
-        page_text: "Bearer-token auth on /_riz/*",
-        proof: "Wave 4.5",
     },
 ];
 
