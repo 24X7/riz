@@ -11,7 +11,6 @@ use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
 
 #[tokio::test]
-#[ignore = "requires bun on PATH"]
 async fn websocket_echo_roundtrip() {
     let handler_path = concat!(
         env!("CARGO_MANIFEST_DIR"),

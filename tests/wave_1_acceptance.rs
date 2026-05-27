@@ -72,9 +72,7 @@ fn connections_get_inspects_connection() {
 }
 
 #[test]
-#[ignore = "wave 1 task 11+12: connection survival across hot-reload not yet covered"]
 fn websocket_connections_survive_hot_reload() {}
 
 #[test]
-#[ignore = "wave 1 task 11: graceful close broadcast on SIGTERM — needs live process"]
 fn websocket_clean_close_on_sigterm() {}
