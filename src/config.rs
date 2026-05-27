@@ -328,6 +328,10 @@ impl Config {
     /// use the reserved `_riz` prefix in function names, or declare a runtime
     /// Riz doesn't actually support yet (refuses to start rather than silently
     /// falling back to a different runtime).
+    ///
+    /// Reserved /_riz/* paths apply ONLY to user functions. System handlers
+    /// (HealthHandler, ConnectionsHandler, etc.) mount their routes through
+    /// LambdaHandler::routes() and bypass this validation.
     pub fn validate(&self) -> Result<(), String> {
         for (name, func) in &self.functions {
             if name == "_riz" || name.starts_with("_riz") {

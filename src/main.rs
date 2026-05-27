@@ -188,12 +188,16 @@ async fn main() -> anyhow::Result<()> {
 
     // Build the handler list. System handlers mount FIRST so /_riz/* always
     // beats any user attempt to shadow those paths.
+    let ws_connections = ws::ConnectionStore::new();
     let mcp = Arc::new(system::mcp::McpHandler::new(riz_state.clone()));
     let mut handlers: Vec<Arc<dyn runtime::LambdaHandler>> = vec![
         Arc::new(system::health::HealthHandler::new(riz_state.clone())),
         Arc::new(system::metrics::MetricsHandler::new(riz_state.clone())),
         Arc::new(system::registry::RegistryHandler::new(riz_state.clone())),
         mcp.clone() as Arc<dyn runtime::LambdaHandler>,
+        Arc::new(ws::management::ConnectionsHandler::new(
+            ws_connections.clone(),
+        )),
     ];
     // One ProcessHandler per HTTP function — it declares every route the
     // function serves (including implicit `ANY /<name>` when no routes block
@@ -233,7 +237,7 @@ async fn main() -> anyhow::Result<()> {
         log_tx,
         log_rx: tokio::sync::Mutex::new(log_rx),
         riz_state,
-        ws_connections: crate::ws::ConnectionStore::new(),
+        ws_connections,
     });
 
     // Dev mode forces TUI on regardless of --no-tui and atty check.

@@ -2,6 +2,7 @@
 
 pub mod connection;
 pub mod event;
+pub mod management;
 pub mod store;
 pub mod upgrade;
 
