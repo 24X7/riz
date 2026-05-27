@@ -50,6 +50,7 @@ pub struct ProcessManager {
     riz_state: Arc<RizState>,
 }
 
+#[derive(Clone, Debug)]
 pub struct PoolStats {
     /// Function name (e.g. "api").
     pub name: String,

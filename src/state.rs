@@ -23,7 +23,7 @@ pub struct AppState {
     pub ws_connections: crate::ws::ConnectionStore,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LogEntry {
     pub timestamp: SystemTime,
     pub level: String,
