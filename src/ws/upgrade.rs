@@ -50,6 +50,12 @@ async fn handle_socket(
         .unwrap_or_default()
         .as_millis() as i64;
 
+    // Record per-connection trace context. We use Span::current() to attach
+    // fields to the ambient span rather than entering a new one across awaits
+    // (EnteredSpan is !Send and cannot be held across .await points).
+    tracing::Span::current().record("ws_connection_id", connection_id.as_str());
+    tracing::Span::current().record("ws_function", function_name.as_str());
+
     // Look up the function config to get timeout_ms.
     let timeout_ms = {
         let cfg = state.config.read().await;

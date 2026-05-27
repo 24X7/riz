@@ -53,6 +53,7 @@ pub(super) async fn spawn_with_cold_start_record(
     Ok(handle)
 }
 
+#[tracing::instrument(skip(cfg, registry, log_tx), fields(handler = ?cfg.handler, runtime = ?cfg.runtime))]
 pub(super) async fn spawn_process(
     cfg: &FunctionConfig,
     registry: &RuntimeRegistry,
@@ -110,6 +111,7 @@ pub(super) async fn spawn_process(
 }
 
 #[cfg(unix)]
+#[tracing::instrument(fields(pid))]
 pub fn kill_process_group(pid: u32) {
     if pid == 0 {
         return;
@@ -121,4 +123,5 @@ pub fn kill_process_group(pid: u32) {
 }
 
 #[cfg(not(unix))]
+#[tracing::instrument(fields(pid))]
 pub fn kill_process_group(_pid: u32) {}

@@ -122,6 +122,7 @@ impl ProcessManager {
 
     /// Invoke a function by its name. `function_name` keys into the pool map
     /// (one pool per function, shared by all routes the function declares).
+    #[tracing::instrument(skip(self, request), fields(function = %function_name, timeout_ms))]
     pub async fn invoke(
         &self,
         function_name: &str,
@@ -260,6 +261,7 @@ impl ProcessManager {
     /// future event sources). Same pool plumbing as `invoke`; only the wire
     /// payload type differs. Returns the response deserialized into `R`, or a
     /// typed [`PoolError`] on failure.
+    #[tracing::instrument(skip(self, request), fields(function = %function_name, timeout_ms))]
     pub async fn invoke_generic<E, R>(
         &self,
         function_name: &str,

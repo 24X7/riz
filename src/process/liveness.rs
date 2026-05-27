@@ -7,6 +7,7 @@ use tokio::sync::Mutex;
 use tracing::error;
 use tracing::warn;
 
+#[tracing::instrument(skip(pool, handle), fields(function = %function_name))]
 pub(super) async fn handle_process_failure(
     pool: &Arc<RoutePool>,
     handle: &mut ProcessHandle,
@@ -63,9 +64,21 @@ pub(super) fn spawn_liveness_watcher(
                     let _ = handle_process_failure(&pool, &mut guard, &function_name).await;
                     Some(guard.pid)
                 } else {
+                    // PID changed mid-flight — another watcher already respawned.
+                    warn!(
+                        function = %function_name,
+                        old_pid = pid,
+                        new_pid = guard.pid,
+                        "liveness watcher: PID changed before lock — skipping duplicate respawn"
+                    );
                     None
                 }
             } else {
+                warn!(
+                    function = %function_name,
+                    pid = pid,
+                    "liveness watcher: could not acquire handle lock — respawn deferred"
+                );
                 None
             }
         };
