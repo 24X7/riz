@@ -175,16 +175,10 @@ async fn dispatch_lambda(
     let has_auth =
         req.headers().contains_key("authorization") || req.headers().contains_key("cookie");
 
-    let (default_ttl, stage) = {
-        let cfg = state.config.read().await;
-        (cfg.cache.default_ttl_secs, cfg.server.stage.clone())
-    };
-
     // Cache check — only when no auth headers present. The cache is keyed
     // by raw method+path+query (a cached response is the request's response,
-    // not the function's). Attribution to function name happens via the
-    // first router pass we need to do for the lookup; for cache-hit we use
-    // the request path as the log key.
+    // not the function's). Attribution to function name happens via a
+    // RizState lookup — no config or router lock required on this path.
     if !has_auth {
         if let Some(cached) = state.cache.get(&cache_key).await {
             let latency = start.elapsed().as_secs_f64() * 1000.0;
@@ -195,20 +189,32 @@ async fn dispatch_lambda(
                 Some(&route_key_for_logs),
                 format!("{method_str} {path} 200 {latency:.0}ms [cache] req={request_id} ip={source_ip}"),
             );
-            // Attribute the cache hit to the function that owns the route so
-            // FunctionState.cache_hits stays accurate (mirrors the cache-miss
-            // path which calls riz_state.record_invocation with cache_hit=false).
+            // Attribute the cache hit to the function whose routes include
+            // this path. We scan FunctionState.routes (a Vec<String> of
+            // "METHOD /path" display strings) for a matching route key — this
+            // avoids locking state.router. For a more exact match we fall back
+            // to the route_key_for_logs label when no function claims the path,
+            // which preserves the cache_hit metric without a wrong attribution.
             let fn_name = {
-                let router = state.router.read().await;
-                router
-                    .handlers()
-                    .iter()
-                    .find(|h| {
-                        h.routes()
-                            .iter()
-                            .any(|r| r.match_path(&method_str, &path).is_some())
+                let functions = state.riz_state.functions.read().await;
+                functions
+                    .values()
+                    .find(|f| {
+                        f.routes.iter().any(|r| {
+                            // Routes are stored as "METHOD /path" or "ANY /path".
+                            // Match when the stored method is ANY or equals the
+                            // request method, and the path component matches.
+                            if let Some((stored_method, stored_path)) = r.split_once(' ') {
+                                let method_ok =
+                                    stored_method == "ANY" || stored_method == method_str.as_str();
+                                let path_ok = stored_path == path.as_str();
+                                method_ok && path_ok
+                            } else {
+                                false
+                            }
+                        })
                     })
-                    .map(|h| h.name().to_string())
+                    .map(|f| f.name.clone())
             };
             if let Some(fn_name) = fn_name {
                 state
@@ -278,6 +284,18 @@ async fn dispatch_lambda(
     // AWS v2 time format: "01/Jan/2025:12:00:00 +0000"
     let time_str = format_aws_time(time_epoch);
 
+    // Read stage from the first registered user function, or fall back to the
+    // well-known default. All functions share the same server-level stage, so
+    // any entry suffices. We do NOT lock state.config here.
+    let stage = {
+        let functions = state.riz_state.functions.read().await;
+        functions
+            .values()
+            .next()
+            .and_then(|f| f.stage.lock().ok().map(|s| s.clone()))
+            .unwrap_or_else(|| "$default".to_string())
+    };
+
     let ctx = ApiGatewayV2httpRequestContext {
         route_key: Some(route_key_for_logs.clone()),
         account_id: Some("riz".into()),
@@ -330,13 +348,18 @@ async fn dispatch_lambda(
             let function_name = outcome.function_name.clone();
             let gw_resp = outcome.response;
 
-            // Look up the function config to get the runtime tag for metrics
-            // and the per-function cache TTL override.
-            let (runtime_tag, fn_cache_ttl) = {
-                let cfg = state.config.read().await;
-                match cfg.functions.get(&function_name) {
-                    Some(fc) => (fc.runtime.as_str().to_string(), fc.cache_ttl_secs),
-                    None => ("system".to_string(), None),
+            // Read per-function metadata from RizState — no config lock needed.
+            let (runtime_tag, effective_ttl) = {
+                let functions = state.riz_state.functions.read().await;
+                match functions.get(&function_name) {
+                    Some(fs) => (
+                        fs.runtime_tag
+                            .lock()
+                            .map(|r| r.clone())
+                            .unwrap_or_else(|_| "system".to_string()),
+                        fs.cache_ttl_secs.load(std::sync::atomic::Ordering::Relaxed),
+                    ),
+                    None => ("system".to_string(), 0),
                 }
             };
 
@@ -370,9 +393,11 @@ async fn dispatch_lambda(
                 format!("{method_str} {path} {status_u16} {latency:.0}ms req={request_id} ip={source_ip} fn={function_name}"),
             );
 
-            let ttl = fn_cache_ttl.unwrap_or(default_ttl);
-            if !has_auth && ttl > 0 && status_u16 < 400 {
-                state.cache.set(cache_key, gw_resp.clone(), ttl).await;
+            if !has_auth && effective_ttl > 0 && status_u16 < 400 {
+                state
+                    .cache
+                    .set(cache_key, gw_resp.clone(), effective_ttl)
+                    .await;
             }
 
             gateway_to_axum(&gw_resp)

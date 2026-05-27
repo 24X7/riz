@@ -146,35 +146,46 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let riz_state = Arc::new(state::RizState::new());
+    let stage = config.server.stage.clone();
+    let default_ttl = config.cache.default_ttl_secs;
     // Register system endpoints first.
     riz_state
         .register(state::FunctionState::system(
             "_riz_health",
             vec!["GET /_riz/health".into()],
+            &stage,
         ))
         .await;
     riz_state
         .register(state::FunctionState::system(
             "_riz_metrics",
             vec!["GET /_riz/metrics".into()],
+            &stage,
         ))
         .await;
     riz_state
         .register(state::FunctionState::system(
             "_riz_registry",
             vec!["GET /_riz/registry".into()],
+            &stage,
         ))
         .await;
     riz_state
         .register(state::FunctionState::system(
             "_riz_mcp",
             vec!["POST /_riz/mcp".into()],
+            &stage,
         ))
         .await;
     // Register user functions by name.
     for (name, cfg) in &config.functions {
         riz_state
-            .register(state::FunctionState::user(name.clone(), cfg.clone()))
+            .register(state::FunctionState::user(
+                name.clone(),
+                cfg.clone(),
+                &stage,
+                default_ttl,
+            ))
             .await;
     }
 

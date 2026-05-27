@@ -125,7 +125,7 @@ mod tests {
             concurrency: 3,
             routes: vec![],
         };
-        FunctionState::user("api", c)
+        FunctionState::user("api", c, "$default", 0)
     }
 
     #[tokio::test]
@@ -163,6 +163,7 @@ mod tests {
         s.register(FunctionState::system(
             "_riz_health",
             vec!["GET /_riz/health".into()],
+            "$default",
         ))
         .await;
         let h = RegistryHandler::new(s);

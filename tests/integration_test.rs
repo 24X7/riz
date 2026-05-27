@@ -37,9 +37,16 @@ method = "GET"
     let (log_tx, log_rx) = tokio::sync::mpsc::channel::<riz::state::LogEntry>(10_000);
 
     let riz_state = Arc::new(riz::state::RizState::new());
+    let stage = config.server.stage.clone();
+    let default_ttl = config.cache.default_ttl_secs;
     for (name, cfg) in &config.functions {
         riz_state
-            .register(riz::state::FunctionState::user(name.clone(), cfg.clone()))
+            .register(riz::state::FunctionState::user(
+                name.clone(),
+                cfg.clone(),
+                &stage,
+                default_ttl,
+            ))
             .await;
     }
 
@@ -137,9 +144,16 @@ method = "GET"
     let (log_tx, log_rx) = tokio::sync::mpsc::channel::<riz::state::LogEntry>(10_000);
 
     let riz_state = Arc::new(riz::state::RizState::new());
+    let stage = config.server.stage.clone();
+    let default_ttl = config.cache.default_ttl_secs;
     for (name, cfg) in &config.functions {
         riz_state
-            .register(riz::state::FunctionState::user(name.clone(), cfg.clone()))
+            .register(riz::state::FunctionState::user(
+                name.clone(),
+                cfg.clone(),
+                &stage,
+                default_ttl,
+            ))
             .await;
     }
 
@@ -250,9 +264,16 @@ method = "ANY"
     let (log_tx, log_rx) = tokio::sync::mpsc::channel::<riz::state::LogEntry>(10_000);
 
     let riz_state = Arc::new(riz::state::RizState::new());
+    let stage = config.server.stage.clone();
+    let default_ttl = config.cache.default_ttl_secs;
     for (name, cfg) in &config.functions {
         riz_state
-            .register(riz::state::FunctionState::user(name.clone(), cfg.clone()))
+            .register(riz::state::FunctionState::user(
+                name.clone(),
+                cfg.clone(),
+                &stage,
+                default_ttl,
+            ))
             .await;
     }
 
