@@ -5,6 +5,34 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Sanity check that the Bun adapter asset is embedded in the binary.
+/// This test runs without Bun — it only checks that the source asset exists.
+#[test]
+fn bun_adapter_asset_exists() {
+    let adapter = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/bun-adapter.mjs");
+    assert!(
+        adapter.exists(),
+        "assets/bun-adapter.mjs must exist — Bun integration requires this adapter"
+    );
+}
+
+/// Sanity check that the echo lambda fixture exists and is non-empty.
+/// This test runs without Bun — it validates the test fixture setup.
+#[test]
+fn echo_lambda_fixture_exists() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/echo-lambda/index.ts");
+    assert!(
+        fixture.exists(),
+        "tests/fixtures/echo-lambda/index.ts must exist — Bun integration test fixture"
+    );
+    let content = std::fs::read_to_string(&fixture).expect("fixture must be readable");
+    assert!(
+        content.contains("export const handler"),
+        "echo lambda fixture must export a handler function"
+    );
+}
+
 #[tokio::test]
 async fn echo_lambda_returns_200() {
     let config_toml = format!(
@@ -367,4 +395,150 @@ method = "ANY"
         assert_eq!(body["echo"], "/echo", "{method} echoed path");
         assert_eq!(body["method"], method, "{method} echoed method");
     }
+}
+
+/// Real workload: fire 1 000 concurrent GET requests through the echo function
+/// and assert that every one returns 200 (zero 5xx).
+///
+/// Gate: `cargo nextest run --include-ignored` (or `--run-ignored all`).
+/// Requires `bun` on PATH. The test skips gracefully when bun is absent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "real-workload test: run with --include-ignored; requires bun"]
+async fn echo_lambda_1000_requests_no_5xx() {
+    // Skip if bun is not present.
+    if std::process::Command::new("bun")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("echo_lambda_1000_requests_no_5xx: bun not on PATH — skipping");
+        return;
+    }
+
+    let config_toml = format!(
+        r#"
+[server]
+port = 0
+host = "127.0.0.1"
+
+[function.echo]
+runtime = "bun"
+handler = "{handler}"
+timeout_ms = 10000
+concurrency = 4
+
+[[function.echo.routes]]
+path = "/echo"
+method = "GET"
+"#,
+        handler = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/echo-lambda/index.ts"
+        )
+    );
+
+    let config: riz::config::Config = toml::from_str(&config_toml).unwrap();
+    let registry = Arc::new(riz::process::runtime::RuntimeRegistry::new().unwrap());
+    let cache = riz::cache::CacheLayer::new(&config.cache);
+    let metrics = riz::metrics::MetricsEmitter::new(&config.datadog);
+    let (log_tx, log_rx) = tokio::sync::mpsc::channel::<riz::state::LogEntry>(100_000);
+
+    let riz_state = Arc::new(riz::state::RizState::new());
+    let stage = config.server.stage.clone();
+    let default_ttl = config.cache.default_ttl_secs;
+    for (name, cfg) in &config.functions {
+        riz_state
+            .register(riz::state::FunctionState::user(
+                name.clone(),
+                cfg.clone(),
+                &stage,
+                default_ttl,
+            ))
+            .await;
+    }
+
+    let process_manager = Arc::new(riz::process::ProcessManager::new(riz_state.clone()));
+    process_manager
+        .spawn_all(&config.functions, &registry, log_tx.clone())
+        .await
+        .unwrap();
+
+    let handlers: Vec<Arc<dyn riz::runtime::LambdaHandler>> = config
+        .functions
+        .iter()
+        .map(|(name, cfg)| {
+            Arc::new(riz::runtime::process::ProcessHandler::for_function(
+                name,
+                cfg,
+                process_manager.clone(),
+            )) as Arc<dyn riz::runtime::LambdaHandler>
+        })
+        .collect();
+    let router = riz::router::Router::new(handlers);
+
+    let app_state = Arc::new(riz::state::AppState {
+        config: tokio::sync::RwLock::new(config),
+        router: tokio::sync::RwLock::new(router),
+        process_manager,
+        cache,
+        auth_cache: riz::auth::authorizer::AuthCache::new(),
+        metrics,
+        runtime_registry: registry,
+        log_tx,
+        log_rx: tokio::sync::Mutex::new(log_rx),
+        riz_state,
+        ws_connections: riz::ws::ConnectionStore::new(),
+    });
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let bound_addr: SocketAddr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        let app =
+            riz::server::build_app(app_state).into_make_service_with_connect_info::<SocketAddr>();
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let url = format!("http://{bound_addr}/echo");
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .unwrap();
+
+    // Wait for first successful response.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        if client.get(&url).send().await.is_ok() {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "server did not start within 15s"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // Fire 1 000 concurrent requests.
+    const N: usize = 1_000;
+    let futs: Vec<_> = (0..N)
+        .map(|_| {
+            let client = client.clone();
+            let url = url.clone();
+            tokio::spawn(async move { client.get(&url).send().await.map(|r| r.status().as_u16()) })
+        })
+        .collect();
+
+    let mut five_xx_count = 0usize;
+    for fut in futs {
+        match fut.await {
+            Ok(Ok(status)) if status >= 500 => five_xx_count += 1,
+            Ok(Err(_)) => five_xx_count += 1, // connection error counts as failure
+            _ => {}
+        }
+    }
+
+    assert_eq!(
+        five_xx_count, 0,
+        "real workload: {five_xx_count}/{N} requests returned 5xx — zero expected"
+    );
 }

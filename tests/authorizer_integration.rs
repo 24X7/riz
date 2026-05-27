@@ -332,7 +332,6 @@ async fn request_authorizer_rejects_invalid_token() {
 }
 
 #[tokio::test]
-#[ignore = "requires Bun runtime"]
 async fn authorizer_none_opt_out_allows_any_request() {
     if !bun_available() {
         return;

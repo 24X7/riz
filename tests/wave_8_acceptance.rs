@@ -1,7 +1,6 @@
 //! Wave 8 — Test coverage gaps acceptance criteria.
 
 #[test]
-#[ignore = "wave 8 not yet shipped: 8.1 tests/hotreload_integration.rs exists and covers add/remove/replace function diffs"]
 fn hotreload_integration_test_file_exists() {
     assert!(
         std::path::Path::new("tests/hotreload_integration.rs").exists(),
@@ -10,7 +9,6 @@ fn hotreload_integration_test_file_exists() {
 }
 
 #[test]
-#[ignore = "wave 8 not yet shipped: 8.2 liveness fault-injection: process exits immediately, respawned within 250ms"]
 fn liveness_fault_injection_respawns_within_250ms() {
     // Wave 8.2: verify that liveness.rs has a fault-injection test or that the
     // integration test file exists.
@@ -22,7 +20,6 @@ fn liveness_fault_injection_respawns_within_250ms() {
 }
 
 #[test]
-#[ignore = "wave 8 not yet shipped: 8.3 tests/hot_swap_race.rs exists — 100 concurrent invocations survive hot_swap mid-flight"]
 fn hot_swap_race_test_file_exists() {
     assert!(
         std::path::Path::new("tests/hot_swap_race.rs").exists(),
@@ -31,7 +28,6 @@ fn hot_swap_race_test_file_exists() {
 }
 
 #[test]
-#[ignore = "wave 8 not yet shipped: 8.4 Bun integration tests in integration_test.rs no longer #[ignore]-gated"]
 fn bun_integration_tests_ungated() {
     // Wave 8.4: integration_test.rs must exist and should not have all tests
     // behind #[ignore]. Verify at least one non-ignored test exists by reading
@@ -51,7 +47,6 @@ fn bun_integration_tests_ungated() {
 }
 
 #[test]
-#[ignore = "wave 8 not yet shipped: 8.5 dispatch hot path: auth-bypass, base64 round-trip, AWS time format, 413, 504 coverage"]
 fn dispatch_hot_path_coverage_complete() {
     // Wave 8.5: verify the dispatch hot path test file exists with the required coverage.
     // As a proxy, check that the http_boundary test file covers the expected cases.

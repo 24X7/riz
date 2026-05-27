@@ -46,7 +46,6 @@ fn examples_use_aws_handler_syntax() {
 }
 
 #[test]
-#[ignore = "wave 9 not yet shipped: 9.4 landing page hero subhead uses corrected HTTP-specific microcopy"]
 fn landing_page_hero_microcopy_updated() {
     let path = std::path::Path::new("web/index.html");
     assert!(
