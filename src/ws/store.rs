@@ -6,6 +6,10 @@ use crate::ws::connection::{Connection, ConnectionId};
 use dashmap::DashMap;
 use std::sync::Arc;
 
+/// Hard ceiling on simultaneous WebSocket connections. Protects against
+/// unbounded memory growth on high-cardinality clients.
+pub const RIZ_MAX_CONNECTIONS: usize = 10_000;
+
 #[derive(Clone, Default)]
 pub struct ConnectionStore {
     inner: Arc<DashMap<ConnectionId, Arc<Connection>>>,
@@ -16,8 +20,21 @@ impl ConnectionStore {
         Self::default()
     }
 
+    // Used by management.rs tests and by pre-wave-D code paths that don't need
+    // the ceiling check. Production callers should prefer try_insert.
+    #[allow(dead_code)]
     pub fn insert(&self, conn: Arc<Connection>) {
         self.inner.insert(conn.id.clone(), conn);
+    }
+
+    /// Insert a connection, returning `Err("connection ceiling reached")` if
+    /// the store already holds `RIZ_MAX_CONNECTIONS` entries.
+    pub fn try_insert(&self, conn: Arc<Connection>) -> Result<(), &'static str> {
+        if self.len() >= RIZ_MAX_CONNECTIONS {
+            return Err("connection ceiling reached");
+        }
+        self.inner.insert(conn.id.clone(), conn);
+        Ok(())
     }
 
     pub fn get(&self, id: &ConnectionId) -> Option<Arc<Connection>> {
@@ -28,13 +45,11 @@ impl ConnectionStore {
         self.inner.remove(id).map(|(_, v)| v)
     }
 
-    // FIXME(wave-7-D): used by try_insert ceiling check and metrics endpoint.
-    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.inner.len()
     }
 
-    // FIXME(wave-7-D): used by try_insert ceiling check and connection count metrics.
+    // FIXME(wave-7-D): used by tests and future connection-count metrics.
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
@@ -106,5 +121,28 @@ mod tests {
         assert_eq!(store.by_function("chat").len(), 2);
         assert_eq!(store.by_function("notifications").len(), 1);
         assert_eq!(store.by_function("missing").len(), 0);
+    }
+
+    #[test]
+    fn try_insert_succeeds_below_ceiling() {
+        let store = ConnectionStore::new();
+        let result = store.try_insert(fake_conn("c1", "chat"));
+        assert!(result.is_ok());
+        assert_eq!(store.len(), 1);
+    }
+
+    #[test]
+    fn try_insert_returns_err_at_ceiling() {
+        let store = ConnectionStore::new();
+        // Fill to the ceiling.
+        for i in 0..RIZ_MAX_CONNECTIONS {
+            store.insert(fake_conn(&format!("c{i}"), "chat"));
+        }
+        assert_eq!(store.len(), RIZ_MAX_CONNECTIONS);
+        // The 10_001st must be rejected.
+        let result = store.try_insert(fake_conn("overflow", "chat"));
+        assert_eq!(result, Err("connection ceiling reached"));
+        // Store count must remain at ceiling.
+        assert_eq!(store.len(), RIZ_MAX_CONNECTIONS);
     }
 }

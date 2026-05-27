@@ -120,7 +120,15 @@ async fn handle_socket(
         outbound: outbound_tx,
         close_signal: std::sync::Mutex::new(Some(close_tx)),
     });
-    state.ws_connections.insert(conn.clone());
+    if let Err(reason) = state.ws_connections.try_insert(conn.clone()) {
+        warn!(
+            function = %function_name,
+            connection_id = %connection_id,
+            "ws connection rejected: {reason} (RIZ_MAX_CONNECTIONS ceiling)"
+        );
+        let _ = socket.send(Message::Close(None)).await;
+        return;
+    }
     info!(
         "ws connected: {} (function {})",
         connection_id, function_name
