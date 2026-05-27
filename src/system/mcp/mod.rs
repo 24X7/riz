@@ -255,6 +255,7 @@ mod tests {
             concurrency: 1,
             routes: vec![],
             cors: None,
+            authorizer: None,
         };
         FunctionState::user("api", c, "$default", 0)
     }

@@ -1,3 +1,5 @@
+use crate::auth::authorizer::AuthCacheKey;
+use crate::auth::middleware::{enforce_authorizer, inject_authorizer_context};
 use crate::cache::CacheLayer;
 use crate::cors;
 use crate::gateway::{
@@ -394,6 +396,101 @@ async fn dispatch_lambda(
         authorization_token: None,
         resource: None,
     };
+
+    // ── Authorizer enforcement ────────────────────────────────────────────────
+    // Look up the authorizer for the matched function (if any) BEFORE
+    // dispatching. We do a cheap route-match to find the function name, then
+    // read the authorizer config from the shared config RwLock (one lock
+    // acquisition per request on the auth path, none when no authorizer
+    // is configured for the matched function).
+    let gw_request = {
+        let authorizer_config = {
+            // Phase 1: find the function name for this route.
+            let function_name_opt = {
+                let router = state.router.read().await;
+                router.find_function_name(&method_str, &path)
+            };
+            // Phase 2: look up its authorizer config.
+            if let Some(ref fn_name) = function_name_opt {
+                let cfg = state.config.read().await;
+                cfg.functions
+                    .get(fn_name.as_str())
+                    .and_then(|f| f.authorizer.clone())
+            } else {
+                None
+            }
+        };
+
+        if authorizer_config.is_some() {
+            let auth_header = gw_request
+                .headers
+                .get(http::header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+
+            // Find function name again for cache key (borrow already dropped).
+            let function_name = {
+                let router = state.router.read().await;
+                router
+                    .find_function_name(&method_str, &path)
+                    .unwrap_or_else(|| "_unmatched".to_string())
+            };
+
+            let cache_key = AuthCacheKey::new(&source_ip, auth_header.as_deref(), &function_name);
+
+            // Cache hit check — skip the full enforce_authorizer call.
+            if let Some(cached_output) = state.auth_cache.get(&cache_key).await {
+                inject_authorizer_context(gw_request, &cached_output)
+            } else {
+                match enforce_authorizer(
+                    authorizer_config.as_ref(),
+                    &source_ip,
+                    auth_header.as_deref(),
+                    &function_name,
+                    gw_request,
+                    &state.auth_cache,
+                    &state.process_manager,
+                )
+                .await
+                {
+                    Ok(event) => event,
+                    Err(crate::auth::authorizer::AuthError::Unauthorized(msg)) => {
+                        tracing::warn!(
+                            source_ip = %source_ip,
+                            function = %function_name,
+                            "authorizer: 401 Unauthorized — {msg}"
+                        );
+                        return gateway_to_axum(&crate::runtime::error_response(
+                            401,
+                            "Unauthorized",
+                        ));
+                    }
+                    Err(crate::auth::authorizer::AuthError::Forbidden(msg)) => {
+                        tracing::warn!(
+                            source_ip = %source_ip,
+                            function = %function_name,
+                            "authorizer: 403 Forbidden — {msg}"
+                        );
+                        return gateway_to_axum(&crate::runtime::error_response(403, "Forbidden"));
+                    }
+                    Err(crate::auth::authorizer::AuthError::Other(msg)) => {
+                        tracing::warn!(
+                            source_ip = %source_ip,
+                            function = %function_name,
+                            "authorizer: 500 transient error — {msg}"
+                        );
+                        return gateway_to_axum(&crate::runtime::error_response(
+                            500,
+                            "Internal Server Error",
+                        ));
+                    }
+                }
+            }
+        } else {
+            gw_request
+        }
+    };
+    // ── End authorizer enforcement ────────────────────────────────────────────
 
     let result = {
         let router = state.router.read().await;

@@ -69,6 +69,20 @@ impl Router {
         &self.handlers
     }
 
+    /// Return the name of the first handler whose routes match `method` + `path`,
+    /// without invoking the handler. Used by the authorizer middleware to look up
+    /// the function's auth config before dispatching.
+    pub fn find_function_name(&self, method: &str, path: &str) -> Option<String> {
+        for h in &self.handlers {
+            for r in h.routes() {
+                if r.match_path(method, path).is_some() {
+                    return Some(h.name().to_string());
+                }
+            }
+        }
+        None
+    }
+
     /// Dispatch one event through the first matching handler. Extracts any
     /// path parameters from `:name`-style segments into `event.path_parameters`.
     /// Returns the matched route_key alongside the handler's response (or a

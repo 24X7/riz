@@ -42,6 +42,7 @@ fn make_state_with_functions(
         router: tokio::sync::RwLock::new(router),
         process_manager,
         cache,
+        auth_cache: riz::auth::authorizer::AuthCache::new(),
         metrics,
         runtime_registry: registry,
         log_tx,
@@ -145,6 +146,7 @@ async fn oversized_body_returns_413_for_routed_request() {
                 method: "POST".into(),
             }],
             cors: None,
+            authorizer: None,
         },
     );
     let state = make_state_with_functions(functions);
