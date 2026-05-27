@@ -66,7 +66,7 @@ path = "/chat"
 
     let ws_connections = riz::ws::ConnectionStore::new();
     let handlers: Vec<Arc<dyn riz::runtime::LambdaHandler>> = vec![Arc::new(
-        riz::ws::management::ConnectionsHandler::new(ws_connections.clone()),
+        riz::ws::management::ConnectionsHandler::new(ws_connections.clone(), None),
     )];
     let router = riz::router::Router::new(handlers);
 

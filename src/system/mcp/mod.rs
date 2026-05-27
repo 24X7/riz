@@ -22,6 +22,7 @@ mod encoding;
 mod protocol;
 mod tools;
 
+use crate::auth::bearer::validate_bearer;
 use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
 use crate::router::Router;
 use crate::runtime::{HandlerError, LambdaHandler, RouteEntry, RouteMethod};
@@ -29,6 +30,7 @@ use crate::state::RizState;
 use async_trait::async_trait;
 use std::sync::Arc;
 
+use crate::runtime::response::json_response as http_json_response;
 use encoding::{json_response, jsonrpc_error_response, jsonrpc_error_value, no_content_response};
 use protocol::{JsonRpcError, JsonRpcRequest};
 
@@ -36,10 +38,11 @@ pub struct McpHandler {
     routes: Vec<RouteEntry>,
     pub(super) riz_state: Arc<RizState>,
     pub(super) router: tokio::sync::RwLock<Option<Arc<Router>>>,
+    bearer_token: Option<String>,
 }
 
 impl McpHandler {
-    pub fn new(riz_state: Arc<RizState>) -> Self {
+    pub fn new(riz_state: Arc<RizState>, bearer_token: Option<String>) -> Self {
         Self {
             routes: vec![RouteEntry {
                 method: RouteMethod::Post,
@@ -47,6 +50,7 @@ impl McpHandler {
             }],
             riz_state,
             router: tokio::sync::RwLock::new(None),
+            bearer_token,
         }
     }
 
@@ -70,6 +74,28 @@ impl LambdaHandler for McpHandler {
         &self,
         event: ApiGatewayV2httpRequest,
     ) -> Result<ApiGatewayV2httpResponse, HandlerError> {
+        // Auth check MUST be first — before any body parsing — so a wrong token
+        // with a malformed body returns 401, not a JSON-RPC parse error.
+        if let Some(expected) = &self.bearer_token {
+            let auth_header = event
+                .headers
+                .get(http::header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok());
+            if !validate_bearer(auth_header, expected) {
+                let path = event.raw_path.as_deref().unwrap_or("/_riz/mcp");
+                let ip = event
+                    .request_context
+                    .http
+                    .source_ip
+                    .as_deref()
+                    .unwrap_or("-");
+                tracing::warn!(path = %path, source_ip = %ip, "unauthorized request");
+                return Ok(http_json_response(
+                    401,
+                    &serde_json::json!({"error": "unauthorized"}),
+                ));
+            }
+        }
         let body = event.body.as_deref().unwrap_or("{}");
         // Parse as raw JSON first to detect batch (array) vs single (object)
         let raw: serde_json::Value = match serde_json::from_str(body) {
@@ -201,6 +227,15 @@ mod tests {
         make_event_with_body("POST", "/_riz/mcp", body)
     }
 
+    fn evt_with_auth(body: &str, token: &str) -> ApiGatewayV2httpRequest {
+        let mut e = make_event_with_body("POST", "/_riz/mcp", body);
+        e.headers.insert(
+            http::header::AUTHORIZATION,
+            http::HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+        );
+        e
+    }
+
     fn body_text(resp: &ApiGatewayV2httpResponse) -> String {
         match resp.body.as_ref().expect("body") {
             Body::Text(s) => s.clone(),
@@ -223,11 +258,65 @@ mod tests {
         FunctionState::user("api", c, "$default", 0)
     }
 
+    // ─── Auth tests ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn mcp_returns_401_when_token_required_and_missing() {
+        let s = Arc::new(RizState::new());
+        let h = McpHandler::new(s, Some("secret".into()));
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        assert_eq!(resp.status_code, 401);
+    }
+
+    #[tokio::test]
+    async fn mcp_returns_401_when_token_required_and_wrong() {
+        let s = Arc::new(RizState::new());
+        let h = McpHandler::new(s, Some("secret".into()));
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
+        let resp = h.invoke(evt_with_auth(req, "wrong")).await.unwrap();
+        assert_eq!(resp.status_code, 401);
+    }
+
+    #[tokio::test]
+    async fn mcp_returns_200_when_token_required_and_correct() {
+        let s = Arc::new(RizState::new());
+        let h = McpHandler::new(s, Some("secret".into()));
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
+        let resp = h.invoke(evt_with_auth(req, "secret")).await.unwrap();
+        assert_eq!(resp.status_code, 200);
+    }
+
+    #[tokio::test]
+    async fn mcp_returns_200_when_no_token_configured() {
+        let s = Arc::new(RizState::new());
+        let h = McpHandler::new(s, None);
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        assert_eq!(resp.status_code, 200);
+    }
+
+    /// Auth check runs BEFORE body parsing: malformed body + wrong token → 401 not 400/parse error.
+    #[tokio::test]
+    async fn mcp_wrong_token_with_malformed_body_returns_401_not_parse_error() {
+        let s = Arc::new(RizState::new());
+        let h = McpHandler::new(s, Some("secret".into()));
+        let malformed_body = "this is definitely not json {{{{";
+        let resp = h
+            .invoke(evt_with_auth(malformed_body, "wrong-token"))
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status_code, 401,
+            "wrong token + malformed body must return 401, not a parse error"
+        );
+    }
+
     #[tokio::test]
     async fn tools_list_returns_user_functions_as_tools() {
         let s = Arc::new(RizState::new());
         s.register(user_state()).await;
-        let h = McpHandler::new(s);
+        let h = McpHandler::new(s, None);
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
@@ -247,7 +336,7 @@ mod tests {
         ))
         .await;
         s.register(user_state()).await;
-        let h = McpHandler::new(s);
+        let h = McpHandler::new(s, None);
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
@@ -259,7 +348,7 @@ mod tests {
     #[tokio::test]
     async fn unknown_method_returns_jsonrpc_error() {
         let s = Arc::new(RizState::new());
-        let h = McpHandler::new(s);
+        let h = McpHandler::new(s, None);
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"unknown/method"}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
@@ -269,7 +358,7 @@ mod tests {
     #[tokio::test]
     async fn malformed_json_returns_parse_error() {
         let s = Arc::new(RizState::new());
-        let h = McpHandler::new(s);
+        let h = McpHandler::new(s, None);
         let req = "not json";
         let resp = h.invoke(evt(req)).await.unwrap();
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
@@ -280,7 +369,7 @@ mod tests {
     async fn tools_call_with_missing_router_returns_internal_error() {
         let s = Arc::new(RizState::new());
         s.register(user_state()).await;
-        let h = McpHandler::new(s);
+        let h = McpHandler::new(s, None);
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"api","arguments":{}}}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
@@ -290,7 +379,7 @@ mod tests {
     #[tokio::test]
     async fn tools_call_with_unknown_tool_returns_jsonrpc_error() {
         let s = Arc::new(RizState::new());
-        let h = McpHandler::new(s);
+        let h = McpHandler::new(s, None);
         h.set_router(Arc::new(Router::empty())).await;
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"nope","arguments":{}}}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
@@ -341,7 +430,7 @@ mod tests {
     #[tokio::test]
     async fn mcp_spec_2024_11_05_lifecycle() {
         let s = Arc::new(RizState::new());
-        let h = McpHandler::new(s);
+        let h = McpHandler::new(s, None);
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
         assert_eq!(resp.status_code, 200);
@@ -359,7 +448,7 @@ mod tests {
     #[tokio::test]
     async fn initialize_echoes_supported_client_version() {
         let s = Arc::new(RizState::new());
-        let h = McpHandler::new(s);
+        let h = McpHandler::new(s, None);
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
@@ -369,7 +458,7 @@ mod tests {
     #[tokio::test]
     async fn initialize_falls_back_to_default_for_unknown_version() {
         let s = Arc::new(RizState::new());
-        let h = McpHandler::new(s);
+        let h = McpHandler::new(s, None);
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"9999-99-99"}}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
@@ -382,7 +471,7 @@ mod tests {
     #[tokio::test]
     async fn ping_returns_empty_object() {
         let s = Arc::new(RizState::new());
-        let h = McpHandler::new(s);
+        let h = McpHandler::new(s, None);
         let req = r#"{"jsonrpc":"2.0","id":42,"method":"ping"}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
         assert_eq!(resp.status_code, 200);
@@ -395,7 +484,7 @@ mod tests {
     #[tokio::test]
     async fn notification_without_id_returns_204_no_content() {
         let s = Arc::new(RizState::new());
-        let h = McpHandler::new(s);
+        let h = McpHandler::new(s, None);
         let req = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
         assert_eq!(
@@ -409,7 +498,7 @@ mod tests {
     async fn notification_with_unknown_method_still_no_response() {
         // Per JSON-RPC 2.0: even errors from notifications produce no response.
         let s = Arc::new(RizState::new());
-        let h = McpHandler::new(s);
+        let h = McpHandler::new(s, None);
         let req = r#"{"jsonrpc":"2.0","method":"nonsense/method"}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
         assert_eq!(resp.status_code, 204);
@@ -418,7 +507,7 @@ mod tests {
     #[tokio::test]
     async fn resources_list_returns_empty_array() {
         let s = Arc::new(RizState::new());
-        let h = McpHandler::new(s);
+        let h = McpHandler::new(s, None);
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"resources/list"}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
@@ -428,7 +517,7 @@ mod tests {
     #[tokio::test]
     async fn prompts_list_returns_empty_array() {
         let s = Arc::new(RizState::new());
-        let h = McpHandler::new(s);
+        let h = McpHandler::new(s, None);
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"prompts/list"}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
@@ -438,7 +527,7 @@ mod tests {
     #[tokio::test]
     async fn resources_templates_list_returns_empty_array() {
         let s = Arc::new(RizState::new());
-        let h = McpHandler::new(s);
+        let h = McpHandler::new(s, None);
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"resources/templates/list"}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
@@ -448,7 +537,7 @@ mod tests {
     #[tokio::test]
     async fn batch_request_returns_array_of_responses() {
         let s = Arc::new(RizState::new());
-        let h = McpHandler::new(s);
+        let h = McpHandler::new(s, None);
         let req = r#"[
             {"jsonrpc":"2.0","id":1,"method":"ping"},
             {"jsonrpc":"2.0","id":2,"method":"resources/list"}
@@ -466,7 +555,7 @@ mod tests {
     #[tokio::test]
     async fn batch_with_only_notifications_returns_204() {
         let s = Arc::new(RizState::new());
-        let h = McpHandler::new(s);
+        let h = McpHandler::new(s, None);
         let req = r#"[
             {"jsonrpc":"2.0","method":"notifications/initialized"},
             {"jsonrpc":"2.0","method":"some/notification"}
@@ -478,7 +567,7 @@ mod tests {
     #[tokio::test]
     async fn batch_skips_notifications_keeps_request_responses() {
         let s = Arc::new(RizState::new());
-        let h = McpHandler::new(s);
+        let h = McpHandler::new(s, None);
         let req = r#"[
             {"jsonrpc":"2.0","method":"notifications/initialized"},
             {"jsonrpc":"2.0","id":7,"method":"ping"}
@@ -493,7 +582,7 @@ mod tests {
     #[tokio::test]
     async fn empty_batch_returns_invalid_request_error() {
         let s = Arc::new(RizState::new());
-        let h = McpHandler::new(s);
+        let h = McpHandler::new(s, None);
         let req = r#"[]"#;
         let resp = h.invoke(evt(req)).await.unwrap();
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();

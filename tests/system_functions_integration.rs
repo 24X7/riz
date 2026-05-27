@@ -66,12 +66,16 @@ async fn make_state() -> Arc<riz::state::AppState> {
         .await;
     riz_state.record_invocation("echo", 12.5, true, false).await;
 
-    let mcp = Arc::new(riz::system::mcp::McpHandler::new(riz_state.clone()));
+    let mcp = Arc::new(riz::system::mcp::McpHandler::new(riz_state.clone(), None));
     let handlers: Vec<Arc<dyn riz::runtime::LambdaHandler>> = vec![
         Arc::new(riz::system::health::HealthHandler::new(riz_state.clone())),
-        Arc::new(riz::system::metrics::MetricsHandler::new(riz_state.clone())),
+        Arc::new(riz::system::metrics::MetricsHandler::new(
+            riz_state.clone(),
+            None,
+        )),
         Arc::new(riz::system::registry::RegistryHandler::new(
             riz_state.clone(),
+            None,
         )),
         mcp.clone() as Arc<dyn riz::runtime::LambdaHandler>,
     ];

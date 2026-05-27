@@ -3,6 +3,11 @@ use serde::Deserialize;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Deserialize, Default)]
+pub struct AuthConfig {
+    pub bearer_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct Config {
     #[serde(default)]
     pub server: ServerConfig,
@@ -14,6 +19,8 @@ pub struct Config {
     pub deploy: DeployConfig,
     #[serde(default)]
     pub aws: AwsConfig,
+    #[serde(default)]
+    pub auth: AuthConfig,
     /// Function-centric: one entry per function. Each function is a single
     /// process pool serving one or more routes (mirrors AWS Lambda + API GW v2
     /// — one Lambda, N route → function mappings, one execution environment).
@@ -324,6 +331,15 @@ impl Config {
             .or_else(|| self.deploy.deploy_key.clone())
     }
 
+    /// Effective bearer token: env var `RIZ_AUTH_BEARER_TOKEN` wins over the
+    /// `[auth] bearer_token` config field. Returns `None` when neither is set
+    /// (open mode — all `/_riz/*` endpoints are public).
+    pub fn effective_bearer_token(&self) -> Option<String> {
+        std::env::var("RIZ_AUTH_BEARER_TOKEN")
+            .ok()
+            .or_else(|| self.auth.bearer_token.clone())
+    }
+
     /// Reject configurations that overlap Riz's reserved /_riz/* namespace,
     /// use the reserved `_riz` prefix in function names, or declare a runtime
     /// Riz doesn't actually support yet (refuses to start rather than silently
@@ -333,6 +349,13 @@ impl Config {
     /// (HealthHandler, ConnectionsHandler, etc.) mount their routes through
     /// LambdaHandler::routes() and bypass this validation.
     pub fn validate(&self) -> Result<(), String> {
+        if let Some(token) = &self.auth.bearer_token {
+            if token.is_empty() {
+                return Err(
+                    "[auth] bearer_token must not be empty — remove the field or supply a non-empty value".into(),
+                );
+            }
+        }
         for (name, func) in &self.functions {
             if name == "_riz" || name.starts_with("_riz") {
                 return Err(format!(

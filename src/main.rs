@@ -1,3 +1,4 @@
+mod auth;
 mod cache;
 mod config;
 mod deploy;
@@ -196,15 +197,26 @@ async fn main() -> anyhow::Result<()> {
 
     // Build the handler list. System handlers mount FIRST so /_riz/* always
     // beats any user attempt to shadow those paths.
+    let bearer = config.effective_bearer_token();
     let ws_connections = ws::ConnectionStore::new();
-    let mcp = Arc::new(system::mcp::McpHandler::new(riz_state.clone()));
+    let mcp = Arc::new(system::mcp::McpHandler::new(
+        riz_state.clone(),
+        bearer.clone(),
+    ));
     let mut handlers: Vec<Arc<dyn runtime::LambdaHandler>> = vec![
         Arc::new(system::health::HealthHandler::new(riz_state.clone())),
-        Arc::new(system::metrics::MetricsHandler::new(riz_state.clone())),
-        Arc::new(system::registry::RegistryHandler::new(riz_state.clone())),
+        Arc::new(system::metrics::MetricsHandler::new(
+            riz_state.clone(),
+            bearer.clone(),
+        )),
+        Arc::new(system::registry::RegistryHandler::new(
+            riz_state.clone(),
+            bearer.clone(),
+        )),
         mcp.clone() as Arc<dyn runtime::LambdaHandler>,
         Arc::new(ws::management::ConnectionsHandler::new(
             ws_connections.clone(),
+            bearer,
         )),
     ];
     // One ProcessHandler per HTTP function — it declares every route the

@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod cache;
 pub mod config;
 pub mod deploy;
@@ -13,5 +14,4 @@ pub mod system;
 pub mod tui;
 pub mod ws;
 
-#[cfg(test)]
 pub mod test_helpers;
