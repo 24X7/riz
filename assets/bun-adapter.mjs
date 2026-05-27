@@ -1,14 +1,17 @@
 // Bridges AWS Lambda HTTP API Gateway v2 handler → riz stdin/stdout protocol.
 // Spawned by riz as: bun run bun-adapter.mjs <handler_path>
 //
-// Wire format on stdin:  one JSON-encoded `aws_lambda_events::apigw::ApiGatewayV2httpRequest`
-//                        per line (the canonical AWS HTTP API GW v2 event shape).
+// Wire format on stdin:  one JSON-encoded envelope per line:
+//   { "event": <ApiGatewayV2httpRequest>, "__riz_deadline_ms": <epoch_ms>, "__riz_function_name": "<name>" }
+// Falls back to bare event JSON (no envelope) for manual/direct invocations.
+//
 // Wire format on stdout: one JSON-encoded `ApiGatewayV2httpResponse` per line
 //                        (statusCode, headers, multiValueHeaders, body, isBase64Encoded, cookies).
 //
 // The handler signature matches real AWS Lambda:
 //   exports.handler = async (event, context) => ({ statusCode, headers, body, ... })
 import { createInterface } from "readline";
+import { randomUUID } from "crypto";
 
 // Redirect console output to stderr so it doesn't corrupt the stdout protocol stream.
 const _toStderr = (...args) => process.stderr.write(args.map(String).join(' ') + '\n');
@@ -37,9 +40,9 @@ if (typeof handler !== "function") {
 const rl = createInterface({ input: process.stdin, terminal: false });
 
 rl.on("line", async (line) => {
-  let event;
+  let parsed;
   try {
-    event = JSON.parse(line);
+    parsed = JSON.parse(line);
   } catch {
     // Emit a canonical v2 response with a JSON error body.
     process.stdout.write(JSON.stringify({
@@ -52,16 +55,27 @@ rl.on("line", async (line) => {
     return;
   }
 
+  // Envelope is { event, __riz_deadline_ms, __riz_function_name }.
+  // Fall back to bare event if envelope keys missing (for manual invocations).
+  const event = parsed.event ?? parsed;
+  const deadline_ms = parsed.__riz_deadline_ms ?? (Date.now() + 30000);
+  const function_name = parsed.__riz_function_name
+    ?? process.env.AWS_LAMBDA_FUNCTION_NAME
+    ?? "unknown";
+
+  const arn = process.env.AWS_LAMBDA_FUNCTION_ARN
+    ?? `arn:riz:lambda:local:000000000000:function:${function_name}`;
+
   // AWS Lambda context object — same shape as the real runtime.
   const context = {
-    functionName: process.env.AWS_LAMBDA_FUNCTION_NAME ?? "riz",
+    functionName: function_name,
     functionVersion: "$LATEST",
-    invokedFunctionArn: process.env.AWS_LAMBDA_FUNCTION_ARN ?? "",
+    invokedFunctionArn: arn,
     memoryLimitInMB: process.env.AWS_LAMBDA_FUNCTION_MEMORY_SIZE ?? "512",
-    awsRequestId: event?.requestContext?.requestId ?? crypto.randomUUID(),
+    awsRequestId: event?.requestContext?.requestId ?? randomUUID(),
     logGroupName: process.env.AWS_LAMBDA_LOG_GROUP_NAME ?? "/riz",
     logStreamName: process.env.AWS_LAMBDA_LOG_STREAM_NAME ?? "local",
-    getRemainingTimeInMillis: () => 30000,
+    getRemainingTimeInMillis: () => Math.max(0, deadline_ms - Date.now()),
     done: () => {},
     fail: () => {},
     succeed: () => {},

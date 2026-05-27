@@ -110,6 +110,23 @@ method = "GET"
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["echo"], "/echo");
     assert_eq!(body["method"], "GET");
+    assert_eq!(body["functionName"], "echo");
+    assert_eq!(
+        body["invokedFunctionArn"],
+        "arn:riz:lambda:local:000000000000:function:echo"
+    );
+    assert!(
+        body["awsRequestId"].is_string(),
+        "awsRequestId must be a string"
+    );
+    let remaining = body["remainingMs"]
+        .as_i64()
+        .expect("remainingMs must be a number");
+    // Echo lambda has timeout_ms = 5000; remaining must be positive and <= 5000.
+    assert!(
+        remaining > 0 && remaining <= 5000,
+        "remainingMs out of range: {remaining}"
+    );
 }
 
 #[tokio::test]
