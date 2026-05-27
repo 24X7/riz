@@ -19,12 +19,45 @@ impl Router {
         Self { handlers }
     }
 
-    // FIXME(wave-4): used by MCP handler tests and future CORS preflight layer.
+    // Used in tests (wave_4_acceptance, mcp tests); not called from the binary.
     #[allow(dead_code)]
     pub fn empty() -> Self {
         Self {
             handlers: Vec::new(),
         }
+    }
+
+    /// Returns the function name whose routes cover `path` (ignoring the HTTP
+    /// method), or `None` when no handler owns that path.
+    ///
+    /// Used by the CORS preflight layer to decide whether an OPTIONS request
+    /// to a given path should return 204 (route exists) or 404 (route absent).
+    /// Method is intentionally ignored — a route registered for GET /foo also
+    /// covers OPTIONS /foo for preflight purposes, matching the CORS spec.
+    pub fn function_for_path(&self, path: &str) -> Option<String> {
+        for h in &self.handlers {
+            for r in h.routes() {
+                // Check with a dummy method that we know will match "ANY"
+                // entries, or try each entry's actual method irrelevant of
+                // what was passed — the goal is purely path existence.
+                //
+                // Strategy: try "GET" first (covers RouteMethod::Get and
+                // RouteMethod::Any), then try "OPTIONS" (covers
+                // RouteMethod::Options if present). For paths with a
+                // RouteMethod that isn't GET or Any we do a second pass with
+                // the stored method string.
+                if r.match_path("GET", path).is_some()
+                    || r.match_path("POST", path).is_some()
+                    || r.match_path("PUT", path).is_some()
+                    || r.match_path("DELETE", path).is_some()
+                    || r.match_path("PATCH", path).is_some()
+                    || r.match_path("OPTIONS", path).is_some()
+                {
+                    return Some(h.name().to_string());
+                }
+            }
+        }
+        None
     }
 
     /// Stable key format used in logs/metrics/registry.

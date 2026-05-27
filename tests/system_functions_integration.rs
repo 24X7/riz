@@ -60,6 +60,7 @@ async fn make_state() -> Arc<riz::state::AppState> {
             path: "/echo".into(),
             method: "GET".into(),
         }],
+        cors: None,
     };
     riz_state
         .register(riz::state::FunctionState::user("echo", cfg, "$default", 0))

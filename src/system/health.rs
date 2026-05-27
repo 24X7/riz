@@ -128,6 +128,7 @@ mod tests {
             cache_ttl_secs: None,
             concurrency: 1,
             routes: vec![],
+            cors: None,
         };
         FunctionState::user("api", c, "$default", 0)
     }

@@ -1,6 +1,7 @@
 mod auth;
 mod cache;
 mod config;
+mod cors;
 mod deploy;
 mod gateway;
 mod hotreload;
