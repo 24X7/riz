@@ -1,6 +1,7 @@
 pub mod bun;
 pub mod liveness;
 pub mod pool;
+pub mod python;
 pub mod runtime;
 pub mod rust;
 
