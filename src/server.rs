@@ -197,7 +197,7 @@ async fn dispatch_lambda(
             );
             // Attribute the cache hit to the function that owns the route so
             // FunctionState.cache_hits stays accurate (mirrors the cache-miss
-            // path which calls record_request with cache_hit=false).
+            // path which calls riz_state.record_invocation with cache_hit=false).
             let fn_name = {
                 let router = state.router.read().await;
                 router
@@ -211,7 +211,10 @@ async fn dispatch_lambda(
                     .map(|h| h.name().to_string())
             };
             if let Some(fn_name) = fn_name {
-                state.record_request(&fn_name, true, latency, true).await;
+                state
+                    .riz_state
+                    .record_invocation(&fn_name, latency, true, true)
+                    .await;
             }
             return gateway_to_axum(&cached);
         }
@@ -357,7 +360,8 @@ async fn dispatch_lambda(
             }
 
             state
-                .record_request(&function_name, false, latency, healthy)
+                .riz_state
+                .record_invocation(&function_name, latency, healthy, false)
                 .await;
 
             state.push_log(

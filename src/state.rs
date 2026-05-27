@@ -4,7 +4,7 @@ use crate::metrics::MetricsEmitter;
 use crate::process::runtime::RuntimeRegistry;
 use crate::process::ProcessManager;
 use crate::router::Router;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -17,81 +17,10 @@ pub struct AppState {
     pub cache: CacheLayer,
     pub metrics: MetricsEmitter,
     pub runtime_registry: Arc<RuntimeRegistry>,
-    pub route_stats: RwLock<HashMap<String, Arc<RouteStats>>>,
     pub log_tx: mpsc::Sender<LogEntry>,
     pub log_rx: Mutex<mpsc::Receiver<LogEntry>>,
     pub riz_state: Arc<RizState>,
     pub ws_connections: crate::ws::ConnectionStore,
-}
-
-/// Per-route counters stored as atomics so the hot path only needs a READ lock
-/// on the outer HashMap (to find the Arc), not a write lock.
-pub struct RouteStats {
-    pub total_requests: AtomicU64,
-    pub cache_hits: AtomicU64,
-    pub cache_misses: AtomicU64,
-    pub error_count: AtomicU64,
-    /// Sum of all request latencies in microseconds.
-    pub total_latency_us: AtomicU64,
-    pub healthy: AtomicBool,
-}
-
-impl Default for RouteStats {
-    fn default() -> Self {
-        Self {
-            total_requests: AtomicU64::new(0),
-            cache_hits: AtomicU64::new(0),
-            cache_misses: AtomicU64::new(0),
-            error_count: AtomicU64::new(0),
-            total_latency_us: AtomicU64::new(0),
-            healthy: AtomicBool::new(true),
-        }
-    }
-}
-
-impl RouteStats {
-    /// Produce a plain-data snapshot for display/testing purposes.
-    pub fn snapshot(&self) -> RouteStatsSnapshot {
-        RouteStatsSnapshot {
-            total_requests: self.total_requests.load(Ordering::Relaxed),
-            cache_hits: self.cache_hits.load(Ordering::Relaxed),
-            cache_misses: self.cache_misses.load(Ordering::Relaxed),
-            error_count: self.error_count.load(Ordering::Relaxed),
-            total_latency_us: self.total_latency_us.load(Ordering::Relaxed),
-            healthy: self.healthy.load(Ordering::Relaxed),
-        }
-    }
-}
-
-/// Plain-data snapshot of [`RouteStats`] suitable for the TUI and tests.
-#[derive(Default, Clone)]
-pub struct RouteStatsSnapshot {
-    pub total_requests: u64,
-    pub cache_hits: u64,
-    pub cache_misses: u64,
-    pub error_count: u64,
-    pub total_latency_us: u64,
-    pub healthy: bool,
-}
-
-impl RouteStatsSnapshot {
-    /// Average latency in milliseconds (used as p50 approximation in the TUI).
-    pub fn avg_latency_ms(&self) -> f64 {
-        if self.total_requests == 0 {
-            return 0.0;
-        }
-        (self.total_latency_us as f64 / self.total_requests as f64) / 1000.0
-    }
-
-    /// p50 approximation: returns average latency.
-    pub fn p50_ms(&self) -> f64 {
-        self.avg_latency_ms()
-    }
-
-    /// p95 approximation: returns average latency (best possible without per-sample storage).
-    pub fn p95_ms(&self) -> f64 {
-        self.avg_latency_ms()
-    }
 }
 
 #[derive(Clone)]
@@ -111,100 +40,11 @@ impl AppState {
             route_key: route_key.map(|s| s.to_string()),
         });
     }
-
-    pub async fn record_request(
-        &self,
-        route_key: &str,
-        cache_hit: bool,
-        latency_ms: f64,
-        healthy: bool,
-    ) {
-        let latency_us = (latency_ms * 1000.0) as u64;
-
-        // Fast path: read lock — no write contention on the hot path.
-        let updated = {
-            let stats = self.route_stats.read().await;
-            if let Some(entry) = stats.get(route_key) {
-                entry.total_requests.fetch_add(1, Ordering::Relaxed);
-                if cache_hit {
-                    entry.cache_hits.fetch_add(1, Ordering::Relaxed);
-                } else {
-                    entry.cache_misses.fetch_add(1, Ordering::Relaxed);
-                }
-                if !healthy {
-                    entry.error_count.fetch_add(1, Ordering::Relaxed);
-                }
-                entry
-                    .total_latency_us
-                    .fetch_add(latency_us, Ordering::Relaxed);
-                entry.healthy.store(healthy, Ordering::Relaxed);
-                true
-            } else {
-                false
-            }
-        };
-
-        if !updated {
-            // Slow path: write lock only on first request to this route.
-            let mut stats = self.route_stats.write().await;
-            let entry = stats
-                .entry(route_key.to_string())
-                .or_insert_with(|| Arc::new(RouteStats::default()));
-            entry.total_requests.fetch_add(1, Ordering::Relaxed);
-            if cache_hit {
-                entry.cache_hits.fetch_add(1, Ordering::Relaxed);
-            } else {
-                entry.cache_misses.fetch_add(1, Ordering::Relaxed);
-            }
-            if !healthy {
-                entry.error_count.fetch_add(1, Ordering::Relaxed);
-            }
-            entry
-                .total_latency_us
-                .fetch_add(latency_us, Ordering::Relaxed);
-            entry.healthy.store(healthy, Ordering::Relaxed);
-        }
-
-        // Dual-write to RizState — this is what /_riz/health, /_riz/metrics,
-        // and the TUI's future migration will read from. record_invocation
-        // is a noop if the route_key isn't registered, so it's safe to call
-        // unconditionally.
-        self.riz_state
-            .record_invocation(route_key, latency_ms, healthy, cache_hit)
-            .await;
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    #[test]
-    fn route_stats_fetch_add_is_atomic() {
-        let counter = AtomicU64::new(0);
-        counter.fetch_add(1, Ordering::Relaxed);
-        counter.fetch_add(1, Ordering::Relaxed);
-        assert_eq!(counter.load(Ordering::Relaxed), 2);
-    }
-
-    #[test]
-    fn snapshot_avg_latency_ms_correct() {
-        let s = RouteStats::default();
-        s.total_requests.store(2, Ordering::Relaxed);
-        // 10 ms + 30 ms = 40 000 us total
-        s.total_latency_us.store(40_000, Ordering::Relaxed);
-        let snap = s.snapshot();
-        assert_eq!(snap.p50_ms(), 20.0);
-    }
-
-    #[test]
-    fn snapshot_zero_requests_returns_zero_latency() {
-        let s = RouteStats::default();
-        let snap = s.snapshot();
-        assert_eq!(snap.p50_ms(), 0.0);
-        assert_eq!(snap.p95_ms(), 0.0);
-    }
 
     #[test]
     fn bounded_channel_applies_backpressure() {
@@ -541,8 +381,7 @@ impl FunctionState {
     }
 }
 
-/// Shared runtime state. Replaces AppState.route_stats (which is kept for the
-/// TUI during the bridge period and will be removed in Task 15).
+/// Shared runtime state. Single source of truth for all per-function metrics.
 pub struct RizState {
     pub functions: RwLock<IndexMap<String, Arc<FunctionState>>>,
     pub start_time: Instant,
