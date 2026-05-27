@@ -135,6 +135,13 @@ async fn shutdown_signal() {
 }
 
 async fn kill_all_processes(state: &AppState) {
+    // 1. Close every WebSocket connection cleanly so clients see a CLOSE
+    //    frame rather than a TCP reset on shutdown.
+    for conn in state.ws_connections.all() {
+        let _ = conn.outbound.send(crate::ws::OutboundMessage::Close);
+    }
+
+    // 2. Existing pool-shutdown logic.
     let stats = state.process_manager.pool_stats().await;
     for s in &stats {
         for &pid in &s.pids {
