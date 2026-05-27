@@ -147,17 +147,23 @@ async fn handle_socket(
                 match msg {
                     Message::Text(text) => {
                         let ev = build_message(&stage, read_id.as_str(), connected_at_ms, Some(text), false);
-                        let _ = read_state.process_manager
+                        if let Err(e) = read_state.process_manager
                             .invoke_generic::<_, ApiGatewayProxyResponse>(&read_fn, &ev, timeout_ms)
-                            .await;
+                            .await
+                        {
+                            warn!("ws $default dispatch error on {read_fn}: {e}");
+                        }
                     }
                     Message::Binary(bytes) => {
                         use base64::Engine;
                         let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
                         let ev = build_message(&stage, read_id.as_str(), connected_at_ms, Some(b64), true);
-                        let _ = read_state.process_manager
+                        if let Err(e) = read_state.process_manager
                             .invoke_generic::<_, ApiGatewayProxyResponse>(&read_fn, &ev, timeout_ms)
-                            .await;
+                            .await
+                        {
+                            warn!("ws $default dispatch error on {read_fn}: {e}");
+                        }
                     }
                     Message::Close(_) => break,
                     Message::Ping(_) | Message::Pong(_) => {} // axum auto-pongs

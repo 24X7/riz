@@ -283,7 +283,14 @@ impl ProcessManager {
 
         let _permit = match pool.semaphore.try_acquire() {
             Ok(p) => p,
-            Err(_) => return Ok(R::default()),
+            Err(tokio::sync::TryAcquireError::NoPermits) => {
+                return Err(anyhow::anyhow!(
+                    "function {function_name} at concurrency limit"
+                ))
+            }
+            Err(tokio::sync::TryAcquireError::Closed) => {
+                return Err(anyhow::anyhow!("function {function_name} pool closed"))
+            }
         };
 
         let free_arc = {
