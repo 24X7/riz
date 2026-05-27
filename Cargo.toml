@@ -41,6 +41,7 @@ aws_lambda_events = { version = "0.15", default-features = false, features = ["a
 http = "1"
 futures-util = "0.3"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+subtle = "2"
 
 [profile.release]
 opt-level = 3

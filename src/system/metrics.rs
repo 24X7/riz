@@ -1,8 +1,10 @@
 //! /_riz/metrics handler — emits Prometheus text format 0.0.4.
 
+use crate::auth::bearer::validate_bearer;
 use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
 use crate::runtime::{
-    response::text_response, HandlerError, LambdaHandler, RouteEntry, RouteMethod,
+    response::{json_response, text_response},
+    HandlerError, LambdaHandler, RouteEntry, RouteMethod,
 };
 use crate::state::{FunctionKind, RizState};
 use async_trait::async_trait;
@@ -13,16 +15,18 @@ use std::sync::Arc;
 pub struct MetricsHandler {
     routes: Vec<RouteEntry>,
     riz_state: Arc<RizState>,
+    bearer_token: Option<String>,
 }
 
 impl MetricsHandler {
-    pub fn new(riz_state: Arc<RizState>) -> Self {
+    pub fn new(riz_state: Arc<RizState>, bearer_token: Option<String>) -> Self {
         Self {
             routes: vec![RouteEntry {
                 method: RouteMethod::Get,
                 path: "/_riz/metrics".into(),
             }],
             riz_state,
+            bearer_token,
         }
     }
 }
@@ -44,8 +48,28 @@ impl LambdaHandler for MetricsHandler {
 
     async fn invoke(
         &self,
-        _event: ApiGatewayV2httpRequest,
+        event: ApiGatewayV2httpRequest,
     ) -> Result<ApiGatewayV2httpResponse, HandlerError> {
+        if let Some(expected) = &self.bearer_token {
+            let auth_header = event
+                .headers
+                .get(http::header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok());
+            if !validate_bearer(auth_header, expected) {
+                let path = event.raw_path.as_deref().unwrap_or("/_riz/metrics");
+                let ip = event
+                    .request_context
+                    .http
+                    .source_ip
+                    .as_deref()
+                    .unwrap_or("-");
+                tracing::warn!(path = %path, source_ip = %ip, "unauthorized request");
+                return Ok(json_response(
+                    401,
+                    &serde_json::json!({"error": "unauthorized"}),
+                ));
+            }
+        }
         let now = std::time::Instant::now();
         let functions = self.riz_state.functions.read().await;
         let mut out = String::with_capacity(4096);
@@ -181,6 +205,15 @@ mod tests {
         make_event("GET", "/_riz/metrics")
     }
 
+    fn evt_with_auth(token: &str) -> ApiGatewayV2httpRequest {
+        let mut e = make_event("GET", "/_riz/metrics");
+        e.headers.insert(
+            http::header::AUTHORIZATION,
+            http::HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+        );
+        e
+    }
+
     fn body_text(resp: &ApiGatewayV2httpResponse) -> String {
         match resp.body.as_ref().expect("body") {
             Body::Text(s) => s.clone(),
@@ -204,9 +237,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn metrics_returns_401_when_token_required_and_missing() {
+        let s = Arc::new(RizState::new());
+        let h = MetricsHandler::new(s, Some("secret".into()));
+        let resp = h.invoke(evt()).await.unwrap();
+        assert_eq!(resp.status_code, 401);
+    }
+
+    #[tokio::test]
+    async fn metrics_returns_401_when_token_required_and_wrong() {
+        let s = Arc::new(RizState::new());
+        let h = MetricsHandler::new(s, Some("secret".into()));
+        let resp = h.invoke(evt_with_auth("wrong")).await.unwrap();
+        assert_eq!(resp.status_code, 401);
+    }
+
+    #[tokio::test]
+    async fn metrics_returns_200_when_token_required_and_correct() {
+        let s = Arc::new(RizState::new());
+        let h = MetricsHandler::new(s, Some("secret".into()));
+        let resp = h.invoke(evt_with_auth("secret")).await.unwrap();
+        assert_eq!(resp.status_code, 200);
+    }
+
+    #[tokio::test]
+    async fn metrics_returns_200_when_no_token_configured() {
+        let s = Arc::new(RizState::new());
+        let h = MetricsHandler::new(s, None);
+        let resp = h.invoke(evt()).await.unwrap();
+        assert_eq!(resp.status_code, 200);
+    }
+
+    #[tokio::test]
     async fn metrics_content_type_is_prometheus_text() {
         let s = Arc::new(RizState::new());
-        let h = MetricsHandler::new(s);
+        let h = MetricsHandler::new(s, None);
         let resp = h.invoke(evt()).await.unwrap();
         assert_eq!(resp.status_code, 200);
         let ct = resp
@@ -222,7 +287,7 @@ mod tests {
     #[tokio::test]
     async fn metrics_emits_help_and_type_lines() {
         let s = Arc::new(RizState::new());
-        let h = MetricsHandler::new(s);
+        let h = MetricsHandler::new(s, None);
         let resp = h.invoke(evt()).await.unwrap();
         let body = body_text(&resp);
         assert!(body.contains("# HELP riz_invocations_total"));
@@ -237,7 +302,7 @@ mod tests {
         s.register(user_state()).await;
         s.record_invocation("api", 5.0, true, false).await;
         s.record_invocation("api", 10.0, false, false).await;
-        let h = MetricsHandler::new(s);
+        let h = MetricsHandler::new(s, None);
         let resp = h.invoke(evt()).await.unwrap();
         let body = body_text(&resp);
         assert!(
@@ -256,7 +321,7 @@ mod tests {
             "$default",
         ))
         .await;
-        let h = MetricsHandler::new(s);
+        let h = MetricsHandler::new(s, None);
         let resp = h.invoke(evt()).await.unwrap();
         let body = body_text(&resp);
         assert!(

@@ -8,6 +8,7 @@
 
 use async_trait::async_trait;
 
+use crate::auth::bearer::validate_bearer;
 use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
 use crate::runtime::{
     error_response,
@@ -20,10 +21,11 @@ use crate::ws::ConnectionStore;
 pub struct ConnectionsHandler {
     routes: Vec<RouteEntry>,
     connections: ConnectionStore,
+    bearer_token: Option<String>,
 }
 
 impl ConnectionsHandler {
-    pub fn new(connections: ConnectionStore) -> Self {
+    pub fn new(connections: ConnectionStore, bearer_token: Option<String>) -> Self {
         Self {
             // Mount three routes — same path, three methods. The router
             // first-matches by method so all three live in this handler.
@@ -42,6 +44,7 @@ impl ConnectionsHandler {
                 },
             ],
             connections,
+            bearer_token,
         }
     }
 }
@@ -59,6 +62,26 @@ impl LambdaHandler for ConnectionsHandler {
         &self,
         event: ApiGatewayV2httpRequest,
     ) -> Result<ApiGatewayV2httpResponse, HandlerError> {
+        if let Some(expected) = &self.bearer_token {
+            let auth_header = event
+                .headers
+                .get(http::header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok());
+            if !validate_bearer(auth_header, expected) {
+                let path = event.raw_path.as_deref().unwrap_or("/_riz/connections");
+                let ip = event
+                    .request_context
+                    .http
+                    .source_ip
+                    .as_deref()
+                    .unwrap_or("-");
+                tracing::warn!(path = %path, source_ip = %ip, "unauthorized request");
+                return Ok(json_response(
+                    401,
+                    &serde_json::json!({"error": "unauthorized"}),
+                ));
+            }
+        }
         let id = event
             .path_parameters
             .get("id")
@@ -157,10 +180,87 @@ mod tests {
         (store, rx, close_rx)
     }
 
+    fn make_ev_with_auth(
+        method: &str,
+        path: &str,
+        conn_id: &str,
+        token: &str,
+    ) -> crate::gateway::ApiGatewayV2httpRequest {
+        let mut ev = make_event(method, path);
+        ev.path_parameters.insert("id".into(), conn_id.into());
+        ev.headers.insert(
+            http::header::AUTHORIZATION,
+            http::HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+        );
+        ev
+    }
+
+    // ─── Auth tests (representative verb: GET) ─────────────────────────────
+
+    #[tokio::test]
+    async fn connections_returns_401_when_token_required_and_missing() {
+        let (store, _rx, _close_rx) = fake_store_with_conn("c1");
+        let h = ConnectionsHandler::new(store, Some("secret".into()));
+        let mut ev = make_event("GET", "/_riz/connections/c1");
+        ev.path_parameters.insert("id".into(), "c1".into());
+        let resp = h.invoke(ev).await.unwrap();
+        assert_eq!(resp.status_code, 401);
+    }
+
+    #[tokio::test]
+    async fn connections_returns_401_when_token_required_and_wrong() {
+        let (store, _rx, _close_rx) = fake_store_with_conn("c1");
+        let h = ConnectionsHandler::new(store, Some("secret".into()));
+        let ev = make_ev_with_auth("GET", "/_riz/connections/c1", "c1", "wrong");
+        let resp = h.invoke(ev).await.unwrap();
+        assert_eq!(resp.status_code, 401);
+    }
+
+    #[tokio::test]
+    async fn connections_returns_200_when_token_required_and_correct() {
+        let (store, _rx, _close_rx) = fake_store_with_conn("c1");
+        let h = ConnectionsHandler::new(store, Some("secret".into()));
+        let ev = make_ev_with_auth("GET", "/_riz/connections/c1", "c1", "secret");
+        let resp = h.invoke(ev).await.unwrap();
+        // connection exists → 200 info response
+        assert_eq!(resp.status_code, 200);
+    }
+
+    #[tokio::test]
+    async fn connections_returns_200_when_no_token_configured() {
+        let (store, _rx, _close_rx) = fake_store_with_conn("c1");
+        let h = ConnectionsHandler::new(store, None);
+        let mut ev = make_event("GET", "/_riz/connections/c1");
+        ev.path_parameters.insert("id".into(), "c1".into());
+        let resp = h.invoke(ev).await.unwrap();
+        assert_eq!(resp.status_code, 200);
+    }
+
+    /// All three verbs (GET, POST, DELETE) must reject wrong tokens.
+    #[tokio::test]
+    async fn connections_post_rejects_wrong_token() {
+        let (store, _rx, _close_rx) = fake_store_with_conn("c1");
+        let h = ConnectionsHandler::new(store, Some("secret".into()));
+        let ev = make_ev_with_auth("POST", "/_riz/connections/c1", "c1", "wrong");
+        let resp = h.invoke(ev).await.unwrap();
+        assert_eq!(resp.status_code, 401);
+    }
+
+    #[tokio::test]
+    async fn connections_delete_rejects_wrong_token() {
+        let (store, _rx, _close_rx) = fake_store_with_conn("c1");
+        let h = ConnectionsHandler::new(store, Some("secret".into()));
+        let ev = make_ev_with_auth("DELETE", "/_riz/connections/c1", "c1", "wrong");
+        let resp = h.invoke(ev).await.unwrap();
+        assert_eq!(resp.status_code, 401);
+    }
+
+    // ─── Functional tests ──────────────────────────────────────────────────
+
     #[tokio::test]
     async fn get_unknown_connection_returns_404() {
         let (store, _rx, _close_rx) = fake_store_with_conn("c1");
-        let h = ConnectionsHandler::new(store);
+        let h = ConnectionsHandler::new(store, None);
         let mut ev = make_event("GET", "/_riz/connections/missing");
         ev.path_parameters.insert("id".into(), "missing".into());
         let resp = h.invoke(ev).await.unwrap();
@@ -170,7 +270,7 @@ mod tests {
     #[tokio::test]
     async fn post_to_known_connection_returns_200() {
         let (store, _rx, _close_rx) = fake_store_with_conn("c1");
-        let h = ConnectionsHandler::new(store);
+        let h = ConnectionsHandler::new(store, None);
         let mut ev = make_event("POST", "/_riz/connections/c1");
         ev.path_parameters.insert("id".into(), "c1".into());
         ev.body = Some("hello".into());
@@ -181,7 +281,7 @@ mod tests {
     #[tokio::test]
     async fn delete_known_connection_returns_204() {
         let (store, _rx, _close_rx) = fake_store_with_conn("c1");
-        let h = ConnectionsHandler::new(store);
+        let h = ConnectionsHandler::new(store, None);
         let mut ev = make_event("DELETE", "/_riz/connections/c1");
         ev.path_parameters.insert("id".into(), "c1".into());
         let resp = h.invoke(ev).await.unwrap();
@@ -194,7 +294,7 @@ mod tests {
     #[tokio::test]
     async fn delete_fires_close_signal_and_queues_close_frame() {
         let (store, mut outbound_rx, close_rx) = fake_store_with_conn("c2");
-        let h = ConnectionsHandler::new(store);
+        let h = ConnectionsHandler::new(store, None);
         let mut ev = make_event("DELETE", "/_riz/connections/c2");
         ev.path_parameters.insert("id".into(), "c2".into());
         let resp = h.invoke(ev).await.unwrap();
