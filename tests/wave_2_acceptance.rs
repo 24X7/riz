@@ -1,7 +1,6 @@
 //! Wave 2 — Python runtime adapter acceptance criteria.
 
 #[test]
-#[ignore = "wave 2 not yet shipped: runtime = python accepted by Config::validate"]
 fn python_runtime_accepted_by_config_validate() {
     let toml_str = r#"
 [function.echo]
@@ -18,7 +17,6 @@ method = "GET"
 }
 
 #[test]
-#[ignore = "wave 2 not yet shipped: handler = app.lambda_handler resolves to app.py + lambda_handler attribute"]
 fn python_handler_syntax_resolves_to_file_and_attribute() {
     // Wave 2: python handler syntax "app.lambda_handler" must be accepted by validate.
     let toml_str = r#"
@@ -36,7 +34,6 @@ method = "GET"
 }
 
 #[test]
-#[ignore = "wave 2 not yet shipped: python3 subprocess spawned per concurrency slot"]
 fn python_subprocess_spawned_per_concurrency_slot() {
     // Wave 2: a Python adapter script must exist for the subprocess to invoke.
     let adapter_paths = [
@@ -52,7 +49,6 @@ fn python_subprocess_spawned_per_concurrency_slot() {
 }
 
 #[test]
-#[ignore = "wave 2 not yet shipped: adapter reads event per line, invokes handler(event, context), writes AWS-shaped response"]
 fn python_adapter_line_protocol_roundtrip() {
     // Wave 2: the python adapter script must exist on disk (extracted or embedded).
     let adapter_paths = [
@@ -67,7 +63,6 @@ fn python_adapter_line_protocol_roundtrip() {
 }
 
 #[test]
-#[ignore = "wave 2 not yet shipped: context exposes function_name, aws_request_id, get_remaining_time_in_millis"]
 fn python_context_surface_matches_bun_context() {
     // Wave 2: python runtime validate must pass (prerequisite for context surface).
     let toml_str = r#"
@@ -85,7 +80,6 @@ method = "GET"
 }
 
 #[test]
-#[ignore = "wave 2 not yet shipped: python adapter embedded in binary via include_str! written to ~/.riz/python-adapter.py on first run"]
 fn python_adapter_extracted_to_riz_dir_on_first_run() {
     let adapter_paths = [
         std::path::Path::new("src/process/python-adapter.py"),
@@ -99,7 +93,6 @@ fn python_adapter_extracted_to_riz_dir_on_first_run() {
 }
 
 #[test]
-#[ignore = "wave 2 not yet shipped: examples/lambdas/echo-python/main.py ships with working function block in examples/riz.dev.toml"]
 fn python_echo_example_exists_and_config_valid() {
     assert!(
         std::path::Path::new("examples/lambdas/echo-python/main.py").exists(),
@@ -108,7 +101,6 @@ fn python_echo_example_exists_and_config_valid() {
 }
 
 #[test]
-#[ignore = "wave 2 not yet shipped: integration test covers happy path + error path (gated on python3 presence)"]
 fn python_integration_happy_and_error_paths() {
     // Wave 2: validate must accept python before integration tests can run.
     let toml_str = r#"

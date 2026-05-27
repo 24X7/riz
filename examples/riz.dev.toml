@@ -40,6 +40,16 @@ concurrency = 1
 path = "/events"
 method = "POST"
 
+[function.echo-python]
+runtime = "python"
+handler = "./examples/lambdas/echo-python/main.lambda_handler"
+timeout_ms = 5000
+concurrency = 1
+
+[[function.echo-python.routes]]
+path = "/echo-python"
+method = "ANY"
+
 # WebSocket API. The connection upgrade happens at the route path (/chat).
 # Handler receives $connect / $default / $disconnect events shaped exactly
 # like AWS API Gateway WebSocket (ApiGatewayWebsocketProxyRequest).

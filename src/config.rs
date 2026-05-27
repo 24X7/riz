@@ -362,19 +362,9 @@ impl Config {
                     "function name '{name}' uses reserved '_riz' prefix"
                 ));
             }
-            // Riz currently ships Bun and Rust runtimes. Python is planned
-            // (see runtime/process.rs). Refuse to start rather than silently
-            // mis-spawning Python handlers as Bun modules.
-            match func.runtime {
-                RuntimeKind::Bun | RuntimeKind::Rust => {}
-                RuntimeKind::Python => {
-                    return Err(format!(
-                        "function '{name}' declares runtime = \"python\" but the Python adapter \
-                         is not yet shipped in this riz build. Use runtime = \"bun\" or \
-                         runtime = \"rust\", or wait for the python runtime to land."
-                    ));
-                }
-            }
+            // All three runtimes (Bun, Python, Rust) are shipped — no validation
+            // rejection needed. Adapters live in src/process/{bun,python,rust}.rs
+            // and the registry returns the right one per RuntimeKind.
             if matches!(func.protocol, Protocol::WebSocket) {
                 // Zero-route WS functions get the implicit ANY /<name> default,
                 // which is the upgrade endpoint — that's allowed. Multi-route
