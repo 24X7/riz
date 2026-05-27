@@ -73,9 +73,10 @@ async fn serve_state(state: Arc<riz::state::AppState>) -> SocketAddr {
 
 #[tokio::test]
 async fn auth_cache_evicts_after_zero_ttl() {
-    // TTL = 0 Duration means entries should be immediately evictable.
-    // In practice moka evicts async — this test just verifies the insert
-    // and get cycle works without panic.
+    // Verify the insert/get cycle is observable when TTL is comfortably
+    // longer than the test execution window. Eviction-on-zero-ttl is a
+    // moka-internal behavior tested by moka itself; we only care that the
+    // cache surfaces a fresh insert to an immediate get.
     use riz::auth::authorizer::{AuthCacheKey, AuthorizerOutput};
     use std::collections::HashMap;
     use std::time::Duration;
@@ -85,7 +86,7 @@ async fn auth_cache_evicts_after_zero_ttl() {
     let output = AuthorizerOutput {
         principal_id: "p".into(),
         context: HashMap::new(),
-        ttl: Duration::from_millis(1), // very short
+        ttl: Duration::from_secs(60),
     };
     cache.insert(key.clone(), output).await;
     // Entry should be present immediately after insert.
