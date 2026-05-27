@@ -90,7 +90,7 @@ git commit -m "chore: drop Start subcommand alias — Run is the only public nam
 
 ---
 
-## Wave 1 — WebSocket APIs (biggest user-flagged gap)
+## Wave 1 — WebSocket APIs (biggest user-flagged gap) ✅
 
 **Why first:** the user explicitly called this out as missing. WebSocket APIs are a first-class API Gateway type in AWS, not a fringe feature.
 
