@@ -426,52 +426,13 @@ fn percent_decode(s: &str) -> String {
 }
 
 /// Format a millisecond UNIX epoch into the AWS v2 `time` field format.
-/// Example: "01/Jan/2025:12:00:00 +0000". We approximate using time-of-day
-/// arithmetic — sufficient for handlers that just log it.
+/// Example: "04/Mar/2020:21:43:58 +0000".
 fn format_aws_time(epoch_ms: u128) -> String {
-    let secs = (epoch_ms / 1000) as u64;
-    // Days since 1970-01-01
-    let days = secs / 86_400;
-    let time_of_day = secs % 86_400;
-    let h = time_of_day / 3600;
-    let m = (time_of_day % 3600) / 60;
-    let s = time_of_day % 60;
-    let (year, month, day) = days_to_ymd(days);
-    let month_name = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ][month - 1];
-    format!(
-        "{:02}/{}/{}:{:02}:{:02}:{:02} +0000",
-        day, month_name, year, h, m, s
-    )
-}
-
-/// Convert days-since-epoch to (year, month-1-indexed, day-1-indexed).
-fn days_to_ymd(mut days: u64) -> (u64, usize, u64) {
-    let mut year = 1970u64;
-    loop {
-        let in_year = if is_leap(year) { 366 } else { 365 };
-        if days < in_year {
-            break;
-        }
-        days -= in_year;
-        year += 1;
-    }
-    let month_days = if is_leap(year) {
-        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    } else {
-        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    };
-    let mut month = 0usize;
-    while month < 12 && days >= month_days[month] as u64 {
-        days -= month_days[month] as u64;
-        month += 1;
-    }
-    (year, month + 1, days + 1)
-}
-
-fn is_leap(y: u64) -> bool {
-    (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400)
+    use chrono::{TimeZone, Utc};
+    Utc.timestamp_millis_opt(epoch_ms as i64)
+        .single()
+        .map(|t| t.format("%d/%b/%Y:%H:%M:%S +0000").to_string())
+        .unwrap_or_default()
 }
 
 async fn health_handler() -> impl IntoResponse {
@@ -578,5 +539,12 @@ mod tests {
         // Just sanity-check the format shape — month name, year, time, +0000
         assert!(formatted.contains("/May/2025:"), "got {formatted}");
         assert!(formatted.ends_with(" +0000"));
+    }
+
+    #[test]
+    fn aws_time_format_regression_aws_docs_epoch() {
+        // epoch 1583348638390 ms = 2020-03-04T19:03:58Z (UTC, verified via chrono)
+        let formatted = format_aws_time(1_583_348_638_390u128);
+        assert_eq!(formatted, "04/Mar/2020:19:03:58 +0000", "got {formatted}");
     }
 }
