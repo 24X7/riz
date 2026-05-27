@@ -116,7 +116,7 @@ const PILLS: &[&str] = &[
     "python — soon",
     "rust — soon",
     "node — soon",
-    "websocket — soon",
+    "websocket",
 ];
 
 #[test]
@@ -186,6 +186,10 @@ const WORKS_NOW: &[Claim] = &[
         page_text: "Datadog metrics emitter",
         proof: "datadog_emitter_constructs_from_config",
     },
+    Claim {
+        page_text: "WebSocket APIs ($connect / $disconnect / $default) + @connections management API at /_riz/connections/{id}",
+        proof: "websocket_echo_roundtrip",
+    },
 ];
 
 const COMING: &[Claim] = &[
@@ -196,10 +200,6 @@ const COMING: &[Claim] = &[
     Claim {
         page_text: "Rust runtime adapter",
         proof: "Wave 6",
-    },
-    Claim {
-        page_text: "WebSocket APIs ($connect / $disconnect / connectionId)",
-        proof: "Wave 1",
     },
     Claim {
         page_text: "Lambda authorizers (REQUEST / JWT)",

@@ -37,10 +37,10 @@ Function-centric config matches AWS exactly: one `[function.<name>]` block per f
 - **30-second graceful drain** on SIGTERM/SIGINT (hard cap enforced)
 - **Single Rust binary** with embedded Bun adapter (no install dance)
 - **Datadog metrics emitter** alongside Prometheus
+- **WebSocket APIs** — `$connect` / `$disconnect` / `$default` lifecycle events shaped as `ApiGatewayWebsocketProxyRequest`. Built-in `@connections` management API at `/_riz/connections/{id}` (GET / POST / DELETE) for handlers to push messages back to connected clients.
 
 ## Coming (v0.2 and beyond)
 
-- WebSocket APIs (`$connect`/`$disconnect`/`$default` route keys, `requestContext.connectionId`, `@connections` management)
 - Python runtime adapter
 - Rust runtime adapter (compiled binary handlers)
 - Node.js runtime adapter
