@@ -15,5 +15,8 @@ def lambda_handler(event, context):
             "body": event.get("body"),
             "pathParameters": event.get("pathParameters"),
             "queryStringParameters": event.get("queryStringParameters"),
+            "stageVariables": event.get("stageVariables"),
+            "cookies": event.get("cookies"),
+            "requestHeaders": event.get("headers"),
         }),
     }

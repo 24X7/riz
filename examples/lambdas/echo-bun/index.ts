@@ -16,6 +16,9 @@ export const handler = async (event: any, context: any) => {
       body: event.body ?? null,
       pathParameters: event.pathParameters ?? null,
       queryStringParameters: event.queryStringParameters ?? null,
+      stageVariables: event.stageVariables ?? null,
+      cookies: event.cookies ?? null,
+      requestHeaders: event.headers ?? null,
     }),
   };
 };

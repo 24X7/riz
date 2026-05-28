@@ -23,6 +23,19 @@ async fn handler(
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
 
+    // HeaderMap doesn't directly serialize as a JSON object via serde_json::json!
+    // — flatten to a HashMap<String, String> of lowercased name → first value.
+    let headers_flat: std::collections::HashMap<String, String> = event
+        .headers
+        .iter()
+        .map(|(k, v)| {
+            (
+                k.as_str().to_lowercase(),
+                v.to_str().unwrap_or("").to_string(),
+            )
+        })
+        .collect();
+
     let body = serde_json::json!({
         "echo": event.raw_path,
         "method": event.request_context.http.method.as_str(),
@@ -33,6 +46,9 @@ async fn handler(
         "body": event.body,
         "pathParameters": event.path_parameters,
         "queryStringParameters": qs_flat,
+        "stageVariables": event.stage_variables,
+        "cookies": event.cookies,
+        "requestHeaders": headers_flat,
     });
     Ok(ApiGatewayV2httpResponse {
         status_code: 200,
