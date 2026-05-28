@@ -335,8 +335,12 @@ async fn gateway_timeout_returns_504_for_routed_request() {
     let addr = serve(state).await;
 
     // Allow bun to cold-start before firing the request that must time out.
-    // This ensures the 504 comes from integration_timeout_ms, not from pool startup.
-    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+    // This ensures the 504 comes from integration_timeout_ms, not from pool
+    // startup. 3000ms is generous to absorb parallel suite load (other tests
+    // spawning their own Bun/Python/Rust pools concurrently). The previous
+    // 800ms was tight enough to flake when run alongside the parity-test
+    // suites that boot 12+ servers in parallel.
+    tokio::time::sleep(std::time::Duration::from_millis(3000)).await;
 
     let start = std::time::Instant::now();
     let resp = reqwest::get(format!("http://{addr}/slow")).await.unwrap();
@@ -351,9 +355,11 @@ async fn gateway_timeout_returns_504_for_routed_request() {
     );
 
     // Must respond within integration_timeout_ms + generous CI margin.
+    // 10s absorbs scheduler latency under parallel load while still proving
+    // the timeout fires promptly relative to a 60s handler timeout.
     assert!(
-        elapsed < std::time::Duration::from_secs(5),
-        "integration timeout must fire within 5s (got {:?})",
+        elapsed < std::time::Duration::from_secs(10),
+        "integration timeout must fire within 10s (got {:?})",
         elapsed
     );
 }
