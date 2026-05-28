@@ -11,6 +11,7 @@ async fn handler(
         "method": event.request_context.http.method.as_str(),
         "functionName": ctx.function_name,
         "invokedFunctionArn": ctx.invoked_function_arn,
+        "awsRequestId": ctx.aws_request_id,
         "remainingMs": ctx.get_remaining_time_in_millis(),
     });
     Ok(ApiGatewayV2httpResponse {
