@@ -14,6 +14,7 @@ def lambda_handler(event, context):
             "awsRequestId": context.aws_request_id,
             "remainingMs": context.get_remaining_time_in_millis(),
             "body": event.get("body"),
+            "isBase64Encoded": event.get("isBase64Encoded", False),
             "pathParameters": event.get("pathParameters"),
             "queryStringParameters": event.get("queryStringParameters"),
             "stageVariables": event.get("stageVariables"),

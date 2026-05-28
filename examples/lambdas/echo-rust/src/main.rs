@@ -44,6 +44,7 @@ async fn handler(
         "awsRequestId": ctx.aws_request_id,
         "remainingMs": ctx.get_remaining_time_in_millis(),
         "body": event.body,
+        "isBase64Encoded": event.is_base64_encoded,
         "pathParameters": event.path_parameters,
         "queryStringParameters": qs_flat,
         "stageVariables": event.stage_variables,
