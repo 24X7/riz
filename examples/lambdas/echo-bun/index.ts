@@ -6,6 +6,14 @@ export const handler = async (event: any, context: any) => {
   // Honor ?status=NNN for the parity-H error-status test.
   const statusOverride = parseInt(event?.queryStringParameters?.status, 10);
   const statusCode = Number.isFinite(statusOverride) ? statusOverride : 200;
+  // Per-process invocation counter for the parity-K cache test. Bun keeps
+  // module-level state across invocations (the process is reused per
+  // concurrency slot), so this monotonically increases until the process
+  // is replaced. A cache hit replays the prior response — including its
+  // captured invocationCount — without re-running the handler.
+  (globalThis as any).__invocationCount =
+    ((globalThis as any).__invocationCount ?? 0) + 1;
+  const invocationCount = (globalThis as any).__invocationCount;
   return {
     statusCode,
     headers: { "content-type": "application/json", "x-riz-echo": "ok" },
@@ -25,6 +33,7 @@ export const handler = async (event: any, context: any) => {
       cookies: event.cookies ?? null,
       requestHeaders: event.headers ?? null,
       authorizer: event?.requestContext?.authorizer ?? null,
+      invocationCount,
     }),
   };
 };
