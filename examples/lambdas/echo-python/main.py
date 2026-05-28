@@ -12,5 +12,6 @@ def lambda_handler(event, context):
             "invokedFunctionArn": context.invoked_function_arn,
             "awsRequestId": context.aws_request_id,
             "remainingMs": context.get_remaining_time_in_millis(),
+            "body": event.get("body"),
         }),
     }

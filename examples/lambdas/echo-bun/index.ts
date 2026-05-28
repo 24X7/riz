@@ -13,6 +13,7 @@ export const handler = async (event: any, context: any) => {
       invokedFunctionArn: context.invokedFunctionArn,
       awsRequestId: context.awsRequestId,
       remainingMs: context.getRemainingTimeInMillis(),
+      body: event.body ?? null,
     }),
   };
 };

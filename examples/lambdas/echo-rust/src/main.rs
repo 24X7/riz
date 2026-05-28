@@ -13,6 +13,7 @@ async fn handler(
         "invokedFunctionArn": ctx.invoked_function_arn,
         "awsRequestId": ctx.aws_request_id,
         "remainingMs": ctx.get_remaining_time_in_millis(),
+        "body": event.body,
     });
     Ok(ApiGatewayV2httpResponse {
         status_code: 200,
