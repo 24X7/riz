@@ -55,8 +55,15 @@ async fn handler(
     resp_headers.insert("content-type", "application/json".parse().unwrap());
     resp_headers.insert("x-riz-echo", "ok".parse().unwrap());
 
+    // Honor ?status=NNN for the parity-H error-status test.
+    let status_code: i64 = event
+        .query_string_parameters
+        .first("status")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(200);
+
     Ok(ApiGatewayV2httpResponse {
-        status_code: 200,
+        status_code,
         headers: resp_headers,
         multi_value_headers: HeaderMap::new(),
         body: Some(aws_lambda_events::encodings::Body::Text(body.to_string())),

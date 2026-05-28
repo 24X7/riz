@@ -2,8 +2,14 @@ import json
 
 
 def lambda_handler(event, context):
+    # Honor ?status=NNN for the parity-H error-status test.
+    qs = event.get("queryStringParameters") or {}
+    try:
+        status_code = int(qs.get("status", 200))
+    except (TypeError, ValueError):
+        status_code = 200
     return {
-        "statusCode": 200,
+        "statusCode": status_code,
         "headers": {"content-type": "application/json", "x-riz-echo": "ok"},
         "cookies": ["sid=abc; Path=/"],
         "body": json.dumps({

@@ -3,8 +3,11 @@
 // can prove wire-protocol conformance.
 
 export const handler = async (event: any, context: any) => {
+  // Honor ?status=NNN for the parity-H error-status test.
+  const statusOverride = parseInt(event?.queryStringParameters?.status, 10);
+  const statusCode = Number.isFinite(statusOverride) ? statusOverride : 200;
   return {
-    statusCode: 200,
+    statusCode,
     headers: { "content-type": "application/json", "x-riz-echo": "ok" },
     cookies: ["sid=abc; Path=/"],
     body: JSON.stringify({
