@@ -4,7 +4,8 @@ import json
 def lambda_handler(event, context):
     return {
         "statusCode": 200,
-        "headers": {"content-type": "application/json"},
+        "headers": {"content-type": "application/json", "x-riz-echo": "ok"},
+        "cookies": ["sid=abc; Path=/"],
         "body": json.dumps({
             "echo": event.get("rawPath", ""),
             "method": (event.get("requestContext") or {}).get("http", {}).get("method"),

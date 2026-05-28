@@ -50,13 +50,17 @@ async fn handler(
         "cookies": event.cookies,
         "requestHeaders": headers_flat,
     });
+    let mut resp_headers = HeaderMap::new();
+    resp_headers.insert("content-type", "application/json".parse().unwrap());
+    resp_headers.insert("x-riz-echo", "ok".parse().unwrap());
+
     Ok(ApiGatewayV2httpResponse {
         status_code: 200,
-        headers: HeaderMap::new(),
+        headers: resp_headers,
         multi_value_headers: HeaderMap::new(),
         body: Some(aws_lambda_events::encodings::Body::Text(body.to_string())),
         is_base64_encoded: false,
-        cookies: Vec::new(),
+        cookies: vec!["sid=abc; Path=/".to_string()],
     })
 }
 

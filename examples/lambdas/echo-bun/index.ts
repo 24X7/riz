@@ -5,7 +5,8 @@
 export const handler = async (event: any, context: any) => {
   return {
     statusCode: 200,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-riz-echo": "ok" },
+    cookies: ["sid=abc; Path=/"],
     body: JSON.stringify({
       echo: event.rawPath ?? "",
       method: event?.requestContext?.http?.method ?? null,
