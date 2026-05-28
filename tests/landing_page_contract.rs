@@ -35,8 +35,7 @@ fn extract_config_toml_block(html: &str) -> String {
 /// id="config". Handles multiple .pills groups (e.g. runtimes + protocols).
 fn extract_pills(html: &str) -> Vec<String> {
     // Grab the entire #config section
-    let re_section =
-        Regex::new(r#"(?s)<section[^>]*id="config".*?</section>"#).unwrap();
+    let re_section = Regex::new(r#"(?s)<section[^>]*id="config".*?</section>"#).unwrap();
     let section = re_section
         .find(html)
         .expect("could not locate the #config section")
@@ -222,12 +221,10 @@ const WORKS_NOW: &[Claim] = &[
     },
 ];
 
-const COMING: &[Claim] = &[
-    Claim {
-        page_text: "Non-HTTP event sources (SQS, SNS, S3, EventBridge) — v0.2",
-        proof: "OutOfScope",
-    },
-];
+const COMING: &[Claim] = &[Claim {
+    page_text: "Non-HTTP event sources (SQS, SNS, S3, EventBridge) — v0.2",
+    proof: "OutOfScope",
+}];
 
 fn normalize_li(s: &str) -> String {
     // Collapse internal whitespace so HTML formatting differences don't

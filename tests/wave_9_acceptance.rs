@@ -19,7 +19,6 @@ fn demo_svg_exists() {
 }
 
 #[test]
-#[ignore = "wave 9 not yet shipped: 9.2 README.md exists at repo root covering install, mental model, MCP, honest status, comparison table"]
 fn readme_exists() {
     assert!(
         std::path::Path::new("README.md").exists(),
@@ -28,7 +27,6 @@ fn readme_exists() {
 }
 
 #[test]
-#[ignore = "wave 9 not yet shipped: 9.3 examples/riz.dev.toml uses AWS handler syntax handler = file.export"]
 fn examples_use_aws_handler_syntax() {
     let path = std::path::Path::new("examples/riz.dev.toml");
     assert!(
