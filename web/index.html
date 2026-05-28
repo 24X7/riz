@@ -317,11 +317,16 @@
     }
     h2 em{font-style:italic;font-weight:300;color:var(--ink2)}
     .sp-t p{font-size:0.88rem;color:var(--ink3);line-height:1.75;margin-bottom:0.8rem;max-width:370px}
-    .pills{display:flex;gap:0.38rem;flex-wrap:wrap;margin-top:0.7rem}
+    .pills{display:flex;gap:0.38rem;flex-wrap:wrap;margin-top:0.7rem;align-items:center}
+    .pills+.pills{margin-top:0.38rem}
     .pill{
       font-family:var(--mono);font-size:0.6rem;
       color:var(--accent);background:var(--acc-bg);border:1px solid var(--acc-bd);
       padding:0.18rem 0.52rem;border-radius:2px;
+    }
+    .pill-group-label{
+      font-family:var(--mono);font-size:0.55rem;color:var(--ink4);
+      text-transform:uppercase;letter-spacing:0.1em;margin-right:0.18rem;
     }
 
     .sp-c{
@@ -496,8 +501,8 @@
 <nav>
   <a href="/" class="logo">riz<span class="tld">.dev</span></a>
   <div class="nav-r">
-    <a href="#config">Config</a>
     <a href="#mcp">MCP</a>
+    <a href="#config">Config</a>
     <a href="#status">Status</a>
     <a href="#author">About</a>
     <a href="https://github.com/crizzuto/riz" target="_blank">GitHub</a>
@@ -511,9 +516,9 @@
     <div class="eyebrow">// open source · rust · v0.1</div>
     <h1>Your Lambda.<br/><em>Your box.</em><br/>Your rules.</h1>
     <p class="sub">
-      Run any <strong>AWS Lambda function</strong> on your own infrastructure.
-      HTTP API Gateway v2 compatible — zero code changes, zero Docker,
-      zero cold start mystery.
+      <strong>Run your AWS HTTP API v2 + WebSocket Lambda handlers on a single Rust binary.</strong>
+      Zero code changes, zero Docker, real percentiles in your terminal, and an MCP server
+      so any function becomes an LLM tool.
     </p>
     <div class="install">
       <span class="pr">$</span>
@@ -607,49 +612,6 @@
   </div>
 </div>
 
-<!-- CONFIG -->
-<section class="split" id="config">
-  <div class="sp-t">
-    <span class="lbl">// configuration</span>
-    <h2>One file.<br/><em>All your functions.</em></h2>
-    <p>Define your entire function fleet in a single <code style="font-family:var(--mono);font-size:.82em;color:var(--accent)">riz.toml</code>. Routing, process management, and resource limits — automatic.</p>
-    <p>Point any HTTP client at Riz exactly as you would at API Gateway. Same format, different bill.</p>
-    <div class="pills">
-      <span class="pill">bun</span>
-      <span class="pill">python — soon</span>
-      <span class="pill">rust — soon</span>
-      <span class="pill">node — soon</span>
-      <span class="pill">websocket</span>
-    </div>
-  </div>
-  <div class="sp-c">
-    <div class="cc">
-      <div class="cc-hd">
-        <span class="cc-n">riz.toml</span>
-        <span class="cc-l">toml</span>
-      </div>
-      <pre><span class="tc"># one function = one process pool = N routes</span>
-<span class="tc"># mirrors AWS Lambda + API Gateway v2</span>
-
-<span class="tH">[function.api]</span>
-<span class="tk">runtime</span>     = <span class="ts">"bun"</span>
-<span class="tk">handler</span>     = <span class="ts">"src/api/index.handler"</span>  <span class="tc"># AWS file.export</span>
-<span class="tk">timeout_ms</span>  = <span class="tn">30000</span>
-<span class="tk">concurrency</span> = <span class="tn">10</span>
-
-<span class="tc"># Implicit default: ANY /api</span>
-<span class="tc"># Or explicit, with AWS-style path params + greedy proxy:</span>
-<span class="tH">[[function.api.routes]]</span>
-<span class="tk">path</span>   = <span class="ts">"/api/{id}"</span>
-<span class="tk">method</span> = <span class="ts">"GET"</span>
-
-<span class="tH">[[function.api.routes]]</span>
-<span class="tk">path</span>   = <span class="ts">"/api/{proxy+}"</span>
-<span class="tk">method</span> = <span class="ts">"ANY"</span></pre>
-    </div>
-  </div>
-</section>
-
 <!-- MCP -->
 <section class="split" id="mcp">
   <div class="sp-t">
@@ -686,6 +648,53 @@ $ claude mcp add riz-local \
   </div>
 </section>
 
+<!-- CONFIG -->
+<section class="split" id="config">
+  <div class="sp-t">
+    <span class="lbl">// configuration</span>
+    <h2>One file.<br/><em>All your functions.</em></h2>
+    <p>Define your entire function fleet in a single <code style="font-family:var(--mono);font-size:.82em;color:var(--accent)">riz.toml</code>. Routing, process management, and resource limits — automatic.</p>
+    <p>Point any HTTP client at Riz exactly as you would at API Gateway. Same format, different bill.</p>
+    <div class="pills">
+      <span class="pill-group-label">runtimes</span>
+      <span class="pill">bun</span>
+      <span class="pill">python</span>
+      <span class="pill">rust</span>
+    </div>
+    <div class="pills">
+      <span class="pill-group-label">protocols</span>
+      <span class="pill">http api v2</span>
+      <span class="pill">websocket</span>
+    </div>
+  </div>
+  <div class="sp-c">
+    <div class="cc">
+      <div class="cc-hd">
+        <span class="cc-n">riz.toml</span>
+        <span class="cc-l">toml</span>
+      </div>
+      <pre><span class="tc"># one function = one process pool = N routes</span>
+<span class="tc"># mirrors AWS Lambda + API Gateway v2</span>
+
+<span class="tH">[function.api]</span>
+<span class="tk">runtime</span>     = <span class="ts">"bun"</span>
+<span class="tk">handler</span>     = <span class="ts">"src/api/index.handler"</span>  <span class="tc"># AWS file.export</span>
+<span class="tk">timeout_ms</span>  = <span class="tn">30000</span>
+<span class="tk">concurrency</span> = <span class="tn">10</span>
+
+<span class="tc"># Implicit default: ANY /api</span>
+<span class="tc"># Or explicit, with AWS-style path params + greedy proxy:</span>
+<span class="tH">[[function.api.routes]]</span>
+<span class="tk">path</span>   = <span class="ts">"/api/{id}"</span>
+<span class="tk">method</span> = <span class="ts">"GET"</span>
+
+<span class="tH">[[function.api.routes]]</span>
+<span class="tk">path</span>   = <span class="ts">"/api/{proxy+}"</span>
+<span class="tk">method</span> = <span class="ts">"ANY"</span></pre>
+    </div>
+  </div>
+</section>
+
 <!-- HONEST STATUS -->
 <section class="status" id="status">
   <div class="status-inner">
@@ -697,6 +706,8 @@ $ claude mcp add riz-local \
         <ul>
           <li>AWS API Gateway v2 HTTP payload — exact <code>aws_lambda_events</code> types</li>
           <li>Bun (TypeScript / JavaScript) handlers</li>
+          <li>Python runtime adapter</li>
+          <li>Rust runtime adapter</li>
           <li>Function-centric config: <code>[function.&lt;name&gt;]</code> + N routes per function</li>
           <li>AWS path syntax: <code>{id}</code>, <code>{proxy+}</code>, <code>$default</code></li>
           <li>AWS handler syntax: <code>handler = "index.handler"</code></li>
@@ -707,17 +718,16 @@ $ claude mcp add riz-local \
           <li>Terminal dashboard: P50/P75/P90/P95/P99 over 5-min window</li>
           <li>Datadog metrics emitter</li>
           <li>WebSocket APIs (<code>$connect</code> / <code>$disconnect</code> / <code>$default</code>) + <code>@connections</code> management API at <code>/_riz/connections/{id}</code></li>
+          <li>Lambda authorizers — REQUEST + JWT (JWKS, TTL cache)</li>
+          <li>CORS auto-preflight — OPTIONS → 204, <code>Access-Control-Allow-*</code> headers</li>
+          <li>Bearer-token auth on <code>/_riz/*</code> (<code>/_riz/health</code> stays open)</li>
+          <li>Real Lambda context — <code>getRemainingTimeInMillis</code>, <code>functionName</code>, <code>invokedFunctionArn</code>, <code>awsRequestId</code></li>
         </ul>
       </div>
       <div class="status-col">
         <h3>🚧 Coming</h3>
         <ul>
-          <li>Python runtime adapter</li>
-          <li>Rust runtime adapter</li>
-          <li>Lambda authorizers (REQUEST / JWT)</li>
-          <li>CORS auto-preflight</li>
-          <li>Non-HTTP event sources (SQS, SNS, S3, EventBridge)</li>
-          <li>Bearer-token auth on <code>/_riz/*</code></li>
+          <li>Non-HTTP event sources (SQS, SNS, S3, EventBridge) — v0.2</li>
         </ul>
       </div>
     </div>

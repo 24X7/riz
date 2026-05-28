@@ -21,7 +21,9 @@ Function-centric config matches AWS exactly: one `[function.<name>]` block per f
 - **AWS API Gateway v2 HTTP payload** — exact `aws_lambda_events::apigw::ApiGatewayV2httpRequest`/`Response` types, including `cookies`, `queryStringParameters`, `multiValueHeaders`, full `requestContext` with `time`, `timeEpoch`, `userAgent`, `stage`, `accountId`, etc.
 - **Function-centric config** — `[function.<name>]` blocks with optional `[[function.<name>.routes]]`, mirroring AWS Lambda's "one function = one execution environment" model
 - **Bun runtime** (TypeScript / JavaScript)
-- **AWS-style handler syntax** — `handler = "index.handler"` resolves to file `index.ts` + export `handler`; `handler = "./api/index.ts:myFunc"` is also supported as an explicit form
+- **Python runtime** — `runtime = "python"`, `handler = "app.lambda_handler"` resolves to file `app.py` + attribute `lambda_handler`. Subprocess adapter embedded in the binary.
+- **Rust runtime** — `runtime = "rust"`, `handler = "./target/release/my-handler"` invokes the pre-compiled binary speaking line-delimited JSON stdin/stdout. Reference crate `riz-rust-runtime` provides the boilerplate.
+- **AWS-style handler syntax** — `handler = "index.handler"` resolves to file `index.ts` + export `handler`; explicit path form also supported
 - **AWS path patterns** — `{name}` single-segment captures, `{proxy+}` greedy multi-segment captures, `$default` HTTP catch-all
 - **`ANY` method** — matches all HTTP verbs (AWS API GW v2 semantic)
 - **Separate `timeout_ms` and `integration_timeout_ms`** — handler-side vs gateway-side limits, matching AWS Lambda + API Gateway behavior
@@ -35,19 +37,18 @@ Function-centric config matches AWS exactly: one `[function.<name>]` block per f
 - **MCP server** at `/_riz/mcp` — spec-compliant JSON-RPC 2.0 (`initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`, `resources/list`, `prompts/list`, batch). Every user function becomes an LLM-invokable tool with no code changes.
 - **Health endpoints** — `/health` (liveness 200), `/ready` (per-pool readiness), `/_riz/health` (rich per-function status)
 - **30-second graceful drain** on SIGTERM/SIGINT (hard cap enforced)
-- **Single Rust binary** with embedded Bun adapter (no install dance)
+- **Single Rust binary** with embedded Bun and Python adapters (no install dance)
 - **Datadog metrics emitter** alongside Prometheus
 - **WebSocket APIs** — `$connect` / `$disconnect` / `$default` lifecycle events shaped as `ApiGatewayWebsocketProxyRequest`. Built-in `@connections` management API at `/_riz/connections/{id}` (GET / POST / DELETE) for handlers to push messages back to connected clients.
+- **Lambda authorizers** — REQUEST type (calls a user-declared function) and JWT type (validates against a JWKS URL). Responses cached by source IP + Authorization header hash for configurable TTL (default 5 min). `requestContext.authorizer` populated on success.
+- **CORS auto-preflight** — `[cors]` config block (global + per-function override). OPTIONS requests return 204 with `Access-Control-Allow-*` headers; non-OPTIONS requests get origin echoed when in allowlist.
+- **Bearer-token auth on `/_riz/*`** — set `RIZ_AUTH_BEARER_TOKEN` or `[auth] bearer_token` in `riz.toml`. `/_riz/health` always open (liveness probes). Constant-time token comparison.
+- **Real Lambda context** — `getRemainingTimeInMillis()` uses the actual per-request deadline, `functionName` from `riz.toml`, `invokedFunctionArn` is a synthetic `arn:riz:lambda:local:...` ARN, `awsRequestId` matches `event.requestContext.requestId`.
 
 ## Coming (v0.2 and beyond)
 
-- Python runtime adapter
-- Rust runtime adapter (compiled binary handlers)
+- Non-HTTP event sources (SQS, SNS, S3, EventBridge, scheduled) — requires polling/push-source adapters; different product surface
 - Node.js runtime adapter
-- Lambda authorizers (REQUEST + JWT)
-- CORS auto-preflight
-- Non-HTTP event sources (SQS, SNS, S3, EventBridge, scheduled)
-- Bearer-token auth on `/_riz/*` system endpoints
 
 ## Requirements
 
