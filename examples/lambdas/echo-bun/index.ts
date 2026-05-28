@@ -14,6 +14,8 @@ export const handler = async (event: any, context: any) => {
       awsRequestId: context.awsRequestId,
       remainingMs: context.getRemainingTimeInMillis(),
       body: event.body ?? null,
+      pathParameters: event.pathParameters ?? null,
+      queryStringParameters: event.queryStringParameters ?? null,
     }),
   };
 };

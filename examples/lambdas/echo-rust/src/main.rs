@@ -6,6 +6,23 @@ async fn handler(
     event: ApiGatewayV2httpRequest,
     ctx: Context,
 ) -> Result<ApiGatewayV2httpResponse, Box<dyn std::error::Error + Send + Sync>> {
+    // FOOTGUN: aws_lambda_events::query_map::QueryMap deserializes correctly
+    // from the AWS v2 single-string shape (`{"name": "alice"}`) BUT its
+    // default Serialize impl emits the multi-value shape (`{"name": ["alice"]}`)
+    // when used through serde_json::json! / serde_json::Value. The field-level
+    // `serialize_with = aws_api_gateway_v2::serialize_query_string_parameters`
+    // hint on ApiGatewayV2httpRequest only applies when serializing the WHOLE
+    // struct — not when re-serializing the field standalone.
+    //
+    // Flatten manually to single-value form so the response body matches what
+    // the Bun and Python adapters emit. Every Rust Lambda handler that needs
+    // to re-emit queryStringParameters faces this exact gotcha.
+    let qs_flat: std::collections::HashMap<String, String> = event
+        .query_string_parameters
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+
     let body = serde_json::json!({
         "echo": event.raw_path,
         "method": event.request_context.http.method.as_str(),
@@ -14,6 +31,8 @@ async fn handler(
         "awsRequestId": ctx.aws_request_id,
         "remainingMs": ctx.get_remaining_time_in_millis(),
         "body": event.body,
+        "pathParameters": event.path_parameters,
+        "queryStringParameters": qs_flat,
     });
     Ok(ApiGatewayV2httpResponse {
         status_code: 200,
