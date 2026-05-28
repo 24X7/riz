@@ -24,6 +24,7 @@ export const handler = async (event: any, context: any) => {
       stageVariables: event.stageVariables ?? null,
       cookies: event.cookies ?? null,
       requestHeaders: event.headers ?? null,
+      authorizer: event?.requestContext?.authorizer ?? null,
     }),
   };
 };

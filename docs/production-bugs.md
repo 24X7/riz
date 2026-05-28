@@ -114,3 +114,12 @@ Findings from the production-readiness audit (2026-05-22). Ordered by severity.
 **File:** `src/deploy.rs` — zip extraction loop
 **Problem:** A zip entry that is a symlink (e.g. `./index.ts -> /etc/passwd`) gets extracted and Bun follows it. Path escape.
 **Fix:** Reject any zip entry where `file.is_symlink()`.
+
+### BUG-20: Bun adapter discards non-HTTP authorizer payloads
+**File:** `assets/bun-adapter.mjs:84-99`
+**Problem:** The Bun adapter normalizes *every* handler return value into the AWS HTTP response shape (`{statusCode, headers, multiValueHeaders, body, isBase64Encoded, cookies}`). Any other top-level fields the handler returns — including REQUEST authorizer responses like `{isAuthorized, context}` — are silently discarded. Confirmed via end-to-end test (`tests/middleware_request_authorizer.rs::request_authorizer_allow_populates_handler_context`): a Bun authorizer returning `{isAuthorized: true}` reaches the Rust authorizer middleware as an empty HTTP envelope, the Rust side falls through to the IAM-policy branch, sees no `policyDocument`, and returns `Err(AuthError::Forbidden)` → 403.
+**Discovered:** 2026-05-28 while writing parity slice J.
+**Wave-3 origin:** the shipped tests for REQUEST authorizers were type-checks only (`tests/wave_3_acceptance.rs::authorizer_failure_returns_401` and `::request_authorizer_deny_returns_403`); no end-to-end Bun-authorizer test ever exercised the wire path.
+**Same root cause for WebSocket?** Plausibly — wave-1 WS handlers also return non-HTTP shapes through the same adapter. Worth a parity test in slice M.
+**Fix sketch:** the adapter must detect when the handler returned a non-HTTP-shaped value (no `statusCode` field) and pass it through verbatim, OR add a dedicated `__riz_raw_response: true` envelope flag the adapter recognizes. Cross-language: Python adapter needs the same fix.
+**Gate:** `tests/middleware_request_authorizer.rs` — both tests `#[ignore]`-gated on this bug until adapters pass non-HTTP payloads through.
