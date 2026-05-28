@@ -6,11 +6,12 @@ Findings from the production-readiness audit (2026-05-22). Ordered by severity.
 
 ## P0 — Silent data corruption (fix before any prod traffic)
 
-### BUG-01: Pipe desync on non-JSON lambda output
+### BUG-01: Pipe desync on non-JSON lambda output ✅ RESOLVED 2026-05-28
 **File:** `src/process/mod.rs` — `invoke()` parse arm (~line 147)
 **Problem:** When `serde_json::from_str(line.trim())` fails (bad stdout line from lambda), the process is neither killed nor respawned. The pipe is left in an unknown read position. Every subsequent request on that PID gets the *previous* request's response. Silent cross-request data leak.
 **Root cause:** `Ok(Ok(line))` arm maps parse errors to `Err(anyhow::Error)` and returns — no process kill.
 **Fix:** On any parse failure: kill the process group, respawn, then return 502. Never trust the pipe after a failed exchange.
+**Resolved:** fix lives at `src/process/mod.rs:258-271` (`invoke`) and `src/process/mod.rs:386-399` (`invoke_generic`); both parse-failure arms call `handle_process_failure` (`src/process/liveness.rs:11-34`) which `kill_process_group`s the bad PID and respawns. Regression gate: `tests/bug_01_parse_failure_respawns.rs::parse_failure_kills_and_respawns_the_process` spawns a real subprocess that emits non-JSON, invokes, and asserts the pool's PID changed — would fail if the kill+respawn were removed.
 
 ### BUG-02: Dead lambdas only discovered on next request
 **File:** `src/process/mod.rs` — `spawn_process()`
