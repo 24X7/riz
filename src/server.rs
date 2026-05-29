@@ -568,12 +568,17 @@ async fn dispatch_lambda(
         }
         Err(e) => {
             let resp = e.to_response();
-            error!("dispatch error: {e}");
+            error!(req = %request_id, ip = %source_ip, "dispatch error: {e}");
             // No function attribution possible — log under "_unmatched".
+            // BUG-16: error-path access logs MUST also carry request_id +
+            // source_ip so operators can correlate failures to a specific
+            // request. The success + cache-hit paths already include both.
             state.push_log(
                 "ERROR",
                 None,
-                format!("dispatch error {method_str} {path}: {e}"),
+                format!(
+                    "dispatch error {method_str} {path} req={request_id} ip={source_ip}: {e}"
+                ),
             );
             // Apply global CORS config for error responses (unmatched routes).
             let cors_hdrs = {

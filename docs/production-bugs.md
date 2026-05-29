@@ -101,10 +101,16 @@ Findings from the production-readiness audit (2026-05-22). Ordered by severity.
 **Fix:** Per-route atomic counters + lock-free latency sampling (reservoir), or shard by route_key.
 **Resolved:** Wave-7.3 ("kill the dual stats system") removed the global `route_stats` write-lock path entirely. Current `src/state.rs:477-508::record_invocation` uses a `RwLock` READ on `functions` (concurrent ok), atomic `fetch_add` on the per-function counters (`invocations`, `cache_hits`, `cache_misses`, `errors`, `healthy`), and brief per-entry `std::sync::Mutex` on `latency` and `last_invoked` (each held for one assignment / reservoir push). No global write lock remains. Verified via `tests/perf_ws_load.rs::ws_handles_100_messages_within_10s` — 100 WS round-trips through the full record_invocation path complete in ~53 ms (≈ 1900 msg/sec on a single connection); pathological serialization would have blown the 10-second timeout.
 
-### BUG-16: Log lines missing request_id and source IP
+### BUG-16: Log lines missing request_id and source IP ✅ RESOLVED 2026-05-29
 **File:** `src/server.rs:136-141`
 **Problem:** Access log format `"{method} {path} {status} {latency}ms"` has no `request_id`, no `source_ip`. Impossible to correlate failures to specific requests.
 **Fix:** Include `request_id` (already generated at line 81) and `source_ip` in log format.
+**Resolved:** All three `push_log` access-log call sites in `src/server.rs` now emit `req={request_id} ip={source_ip}`:
+  - Cache-hit path (line 243): `"{method_str} {path} 200 {latency:.0}ms [cache] req={request_id} ip={source_ip}"` — was already correct
+  - Post-dispatch success path (line 551): same fields plus `fn={function_name}` — was already correct
+  - Dispatch error path (lines 573-580): now includes `req={request_id} ip={source_ip}` in both the `tracing::error!` macro and the `push_log` access-log line. Was the only gap.
+
+Regression gate: `tests/bug_16_access_logs_include_correlation.rs::server_access_logs_emit_request_id_and_source_ip` scans `src/server.rs` for every `state.push_log(` call site and asserts each one's format-string contains both `req=` and `ip=`. Cheap structural test that catches accidental future regressions.
 
 ### BUG-17: Cache max_size_mb accounting is wrong
 **File:** `src/cache.rs:36`

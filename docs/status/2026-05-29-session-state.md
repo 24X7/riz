@@ -103,7 +103,7 @@ Source of truth is `docs/production-bugs.md` — this is a sanity ledger.
 | BUG-13 | ✅ RESOLVED | `src/deploy.rs:170-191` — 300ms sleep, pool_stats healthy check, 422 on crash. Verified during 2026-05-29 batch close. |
 | BUG-14 | ✅ RESOLVED (pre-session) | (verify in tracker) |
 | BUG-15 | ✅ RESOLVED | wave-7.3 killed `route_stats` write-lock; current `record_invocation` uses atomics + per-entry mutexes (`src/state.rs:477-508`). Verified by `tests/perf_ws_load.rs` — 100 WS round-trips in ~53 ms (≈ 1900 msg/s); pathological serialization would have blown the 10s ceiling. |
-| BUG-16 | 🚧 OPEN | access logs missing `request_id` + `source_ip` — straightforward fix at `src/server.rs::push_log` call sites |
+| BUG-16 | ✅ RESOLVED | error-path log line gained `req=...` + `ip=...`; cache-hit and success paths already had them. Gate: `tests/bug_16_access_logs_include_correlation.rs` scans `src/server.rs` push_log sites. |
 | BUG-17 | 🚧 OPEN (verify) | check tracker |
 | BUG-18 | 🚧 OPEN (verify) | check tracker — concurrent deploys race on `/tmp/riz-deploy/<lambda>` |
 | BUG-19 | ✅ RESOLVED | `unpack_zip_into` skips symlinks (`src/deploy.rs`). Regression gate: `tests::bug_19_unpack_zip_skips_symlink_entries` builds a real zip with a symlink and proves extraction skips it. Verified during 2026-05-29 batch close. |
