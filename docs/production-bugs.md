@@ -93,10 +93,11 @@ Findings from the production-readiness audit (2026-05-22). Ordered by severity.
 **Problem:** `ProcessesToUpdate::All` walks every PID on the host every 100ms. Wasteful on loaded VPS.
 **Fix:** Pass `ProcessesToUpdate::Some(&pids)` using the PIDs already collected in the async phase.
 
-### BUG-15: `route_stats` write lock serializes all requests
+### BUG-15: `route_stats` write lock serializes all requests ✅ RESOLVED
 **File:** `src/state.rs` — `record_request()`
 **Problem:** Every request takes `route_stats.write().await` — a global write lock across all routes and all concurrency. Bottleneck at high throughput.
 **Fix:** Per-route atomic counters + lock-free latency sampling (reservoir), or shard by route_key.
+**Resolved:** Wave-7.3 ("kill the dual stats system") removed the global `route_stats` write-lock path entirely. Current `src/state.rs:477-508::record_invocation` uses a `RwLock` READ on `functions` (concurrent ok), atomic `fetch_add` on the per-function counters (`invocations`, `cache_hits`, `cache_misses`, `errors`, `healthy`), and brief per-entry `std::sync::Mutex` on `latency` and `last_invoked` (each held for one assignment / reservoir push). No global write lock remains. Verified via `tests/perf_ws_load.rs::ws_handles_100_messages_within_10s` — 100 WS round-trips through the full record_invocation path complete in ~53 ms (≈ 1900 msg/sec on a single connection); pathological serialization would have blown the 10-second timeout.
 
 ### BUG-16: Log lines missing request_id and source IP
 **File:** `src/server.rs:136-141`

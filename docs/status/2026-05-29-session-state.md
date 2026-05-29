@@ -41,8 +41,9 @@ Commits since `0542c1c4` (the wave-8 fix that kicked off the run):
 
 ## In flight RIGHT NOW
 
-1. **Python + Rust WebSocket adapters exercised by example/test** — Bun has WS examples + e2e; Python and Rust have HTTP-only. The dispatch path supports any runtime; need to prove it with a chat-python and chat-rust example + an end-to-end test for each.
-2. **BUG-15 verification + WS load test** — wave-7.3 already replaced the global `route_stats` write-lock with atomics + per-entry mutexes (see `src/state.rs:477-508::record_invocation`). Believed RESOLVED but unmarked. Plan: write a WS load test (N concurrent messages, assert all replies). If no contention, mark BUG-15 resolved.
+(none — the three slices listed in the previous revision all shipped:
+`775f0c9c` Python WS, `fb5f5008` Rust WS, BUG-15 verified resolved via
+`tests/perf_ws_load.rs`.)
 
 ## Deferred (decisions, not work)
 
@@ -101,7 +102,7 @@ Source of truth is `docs/production-bugs.md` — this is a sanity ledger.
 | BUG-12 | ✅ RESOLVED (pre-session) | auth-aware cache bypass at `src/server.rs:227` |
 | BUG-13 | 🚧 OPEN | deploy doesn't verify new process survives before declaring success |
 | BUG-14 | ✅ RESOLVED (pre-session) | (verify in tracker) |
-| BUG-15 | 🚧 BELIEVED RESOLVED, unverified | wave-7.3 killed `route_stats` write-lock; current `record_invocation` uses atomics + per-entry mutexes (`src/state.rs:477-508`). Plan: WS load test to confirm no remaining contention. |
+| BUG-15 | ✅ RESOLVED | wave-7.3 killed `route_stats` write-lock; current `record_invocation` uses atomics + per-entry mutexes (`src/state.rs:477-508`). Verified by `tests/perf_ws_load.rs` — 100 WS round-trips in ~53 ms (≈ 1900 msg/s); pathological serialization would have blown the 10s ceiling. |
 | BUG-16 | 🚧 OPEN | access logs missing `request_id` + `source_ip` — straightforward fix at `src/server.rs::push_log` call sites |
 | BUG-17 | 🚧 OPEN (verify) | check tracker |
 | BUG-18 | 🚧 OPEN (verify) | check tracker — concurrent deploys race on `/tmp/riz-deploy/<lambda>` |
