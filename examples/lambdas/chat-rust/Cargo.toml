@@ -1,0 +1,13 @@
+[package]
+name = "chat-rust"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+riz-rust-runtime = { path = "../../../crates/riz-rust-runtime" }
+aws_lambda_events = { version = "0.15", default-features = false, features = ["apigw"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# reqwest with no TLS — localhost-only @connections POST has no need for
+# the rustls/native-tls dep weight.
+reqwest = { version = "0.12", default-features = false }

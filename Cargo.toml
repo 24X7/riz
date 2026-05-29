@@ -1,5 +1,10 @@
 [workspace]
-members = [".", "crates/riz-rust-runtime", "examples/lambdas/echo-rust"]
+members = [
+    ".",
+    "crates/riz-rust-runtime",
+    "examples/lambdas/echo-rust",
+    "examples/lambdas/chat-rust",
+]
 
 [package]
 name = "riz"
