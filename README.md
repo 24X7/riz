@@ -75,7 +75,7 @@ Bearer-token protection: set `RIZ_AUTH_BEARER_TOKEN` or `[auth] bearer_token` in
 
 **Works today:**
 - AWS HTTP API Gateway v2 — full request/response shape, all 7 verbs (cross-runtime parity-tested: TS/JS via Bun, Python, Rust)
-- AWS WebSocket APIs — `$connect` / `$default` / `$disconnect` + `@connections` management API at `/_riz/connections/{id}` (GET/POST/DELETE) and `/_riz/connections` (LIST). Bun handlers; Python/Rust WS adapters not yet exercised.
+- AWS WebSocket APIs — `$connect` / `$default` / `$disconnect` + `@connections` management API at `/_riz/connections/{id}` (GET/POST/DELETE) and `/_riz/connections` (LIST). Handlers in **Bun, Python, and Rust** (all three end-to-end tested).
 - Bun, Python, and Rust runtime adapters
 - Lambda context — `getRemainingTimeInMillis`, `functionName`, `invokedFunctionArn`, `awsRequestId`
 - Lambda authorizers — REQUEST (verified end-to-end with Bun) + JWT (with JWKS URL, TTL cache)

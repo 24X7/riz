@@ -39,7 +39,7 @@ Function-centric config matches AWS exactly: one `[function.<name>]` block per f
 - **30-second graceful drain** on SIGTERM/SIGINT (hard cap enforced)
 - **Single Rust binary** with embedded Bun and Python adapters (no install dance)
 - **Datadog metrics emitter** alongside Prometheus
-- **WebSocket APIs** — `$connect` / `$disconnect` / `$default` lifecycle events shaped as `ApiGatewayWebsocketProxyRequest`. Built-in `@connections` management API at `/_riz/connections/{id}` (GET / POST / DELETE) for handlers to push messages back to connected clients.
+- **WebSocket APIs** — `$connect` / `$disconnect` / `$default` lifecycle events shaped as `ApiGatewayWebsocketProxyRequest`. Built-in `@connections` management API at `/_riz/connections/{id}` (GET / POST / DELETE) for handlers to push messages back to connected clients. **Bun, Python, and Rust** handlers all supported and end-to-end tested (see `tests/websocket_integration.rs`, `tests/middleware_ws_python.rs`, `tests/middleware_ws_rust.rs`).
 - **Lambda authorizers** — REQUEST type (calls a user-declared function) and JWT type (validates against a JWKS URL). Responses cached by source IP + Authorization header hash for configurable TTL (default 5 min). `requestContext.authorizer` populated on success.
 - **CORS auto-preflight** — `[cors]` config block (global + per-function override). OPTIONS requests return 204 with `Access-Control-Allow-*` headers; non-OPTIONS requests get origin echoed when in allowlist.
 - **Bearer-token auth on `/_riz/*`** — set `RIZ_AUTH_BEARER_TOKEN` or `[auth] bearer_token` in `riz.toml`. `/_riz/health` always open (liveness probes). Constant-time token comparison.

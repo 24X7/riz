@@ -200,7 +200,7 @@ const WORKS_NOW: &[Claim] = &[
         proof: "datadog_emitter_constructs_from_config",
     },
     Claim {
-        page_text: "WebSocket APIs ($connect / $disconnect / $default) + @connections management API at /_riz/connections/{id}",
+        page_text: "WebSocket APIs ($connect / $disconnect / $default) + @connections management API at /_riz/connections/{id} — handlers in Bun, Python, and Rust",
         proof: "websocket_echo_roundtrip",
     },
     Claim {

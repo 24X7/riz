@@ -717,7 +717,7 @@ $ claude mcp add riz-local \
           <li>MCP server (spec 2024-11-05, JSON-RPC, batches, lifecycle)</li>
           <li>Terminal dashboard: P50/P75/P90/P95/P99 over 5-min window</li>
           <li>Datadog metrics emitter</li>
-          <li>WebSocket APIs (<code>$connect</code> / <code>$disconnect</code> / <code>$default</code>) + <code>@connections</code> management API at <code>/_riz/connections/{id}</code></li>
+          <li>WebSocket APIs (<code>$connect</code> / <code>$disconnect</code> / <code>$default</code>) + <code>@connections</code> management API at <code>/_riz/connections/{id}</code> — handlers in Bun, Python, and Rust</li>
           <li>Lambda authorizers — REQUEST + JWT (JWKS, TTL cache)</li>
           <li>CORS auto-preflight — OPTIONS → 204, <code>Access-Control-Allow-*</code> headers</li>
           <li>Bearer-token auth on <code>/_riz/*</code> (<code>/_riz/health</code> stays open)</li>
