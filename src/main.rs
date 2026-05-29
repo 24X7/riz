@@ -299,6 +299,14 @@ async fn main() -> anyhow::Result<()> {
         hotreload::watch_config(watch_config_path, watch_state).await;
     });
 
+    // Also watch each function's handler directory and hot-swap its pool
+    // when source files change. Non-recursive (one level only); deep imports
+    // need a manual touch on the handler file to trigger.
+    let handler_watch_state = app_state.clone();
+    tokio::spawn(async move {
+        hotreload::watch_handler_sources(handler_watch_state).await;
+    });
+
     if cli.dev {
         info!("riz starting in [dev] mode on {addr}");
     } else {

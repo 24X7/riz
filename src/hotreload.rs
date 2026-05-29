@@ -2,7 +2,8 @@ use crate::config::{Config, FunctionConfig};
 use crate::router::Router;
 use crate::state::AppState;
 use notify::{Event, EventKind, RecursiveMode, Watcher};
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -164,6 +165,136 @@ pub async fn watch_config(config_path: String, state: Arc<AppState>) {
         }
     }
 
+    drop(watcher);
+}
+
+/// Watch each function's handler directory and hot-swap its pool when a
+/// source file changes. Closes the day-to-day DX gap: previously, editing
+/// `index.ts` required touching `riz.toml` to trigger a reload.
+///
+/// Non-recursive: only files at the immediate handler-directory level
+/// trigger. Deep imports (e.g. `lib/utils.ts` imported from
+/// `index.ts`) need a manual touch on the handler file. Future
+/// enhancement: opt-in recursive mode per function, with sensible
+/// ignore patterns for `node_modules/` / `target/` / `__pycache__/`.
+///
+/// Debounce window is 200 ms (matches `watch_config`). Coalesces
+/// bursts (save → linter rewrite → save again) into one hot-swap.
+pub async fn watch_handler_sources(state: Arc<AppState>) {
+    let (tx, mut rx) = mpsc::channel::<PathBuf>(64);
+
+    let mut watcher = match notify::recommended_watcher(move |res: notify::Result<Event>| {
+        if let Ok(event) = res {
+            if matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
+                if let Some(p) = event.paths.into_iter().next() {
+                    let _ = tx.try_send(p);
+                }
+            }
+        }
+    }) {
+        Ok(w) => w,
+        Err(e) => {
+            error!("failed to create handler watcher: {e}");
+            return;
+        }
+    };
+
+    // Snapshot the handler-dir → function-name map at startup.
+    // Hot-reload of riz.toml that ADDS new functions doesn't re-register
+    // them in this watcher (v1 limitation; revisit if needed).
+    //
+    // Canonicalize the dir paths so the prefix check below works on macOS,
+    // where `/var/folders/...` symlinks to `/private/var/folders/...` and
+    // notify events come back as the canonical resolved path. Without
+    // this, `event_path.starts_with(watched_dir)` silently misses.
+    let dirs_to_function: HashMap<PathBuf, String> = {
+        let cfg = state.config.read().await;
+        cfg.functions
+            .iter()
+            .filter_map(|(name, fcfg)| {
+                let dir = fcfg.handler.parent()?.to_path_buf();
+                if dir.as_os_str().is_empty() {
+                    return None;
+                }
+                let canonical = dir.canonicalize().unwrap_or(dir);
+                Some((canonical, name.clone()))
+            })
+            .collect()
+    };
+    for dir in dirs_to_function.keys() {
+        // Recursive on purpose: macOS FSEvents NonRecursive only fires
+        // events on the directory itself (rename/delete of the dir),
+        // not on files INSIDE. Recursive picks up nested files on both
+        // mac and Linux. Trade-off: stray writes deep inside a handler
+        // dir (cargo build artifacts, node_modules touches) can spam
+        // hot-swaps. Document this; future enhancement is ignore patterns.
+        if let Err(e) = watcher.watch(dir, RecursiveMode::Recursive) {
+            error!(
+                "failed to watch handler dir {}: {e}",
+                dir.display()
+            );
+        } else {
+            info!("watching handler dir {} for source changes", dir.display());
+        }
+    }
+
+    loop {
+        let first_path = match rx.recv().await {
+            Some(p) => p,
+            None => break,
+        };
+        // Debounce: coalesce bursts within 200 ms.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let mut paths_seen = vec![first_path];
+        while let Ok(p) = rx.try_recv() {
+            paths_seen.push(p);
+        }
+
+        // Re-read the dir map in case riz.toml hot-reload changed it.
+        // Canonicalize for the same reason as the initial snapshot above.
+        let dirs_now: HashMap<PathBuf, String> = {
+            let cfg = state.config.read().await;
+            cfg.functions
+                .iter()
+                .filter_map(|(name, fcfg)| {
+                    let dir = fcfg.handler.parent()?.to_path_buf();
+                    if dir.as_os_str().is_empty() {
+                        return None;
+                    }
+                    let canonical = dir.canonicalize().unwrap_or(dir);
+                    Some((canonical, name.clone()))
+                })
+                .collect()
+        };
+
+        let mut functions_to_swap: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        for changed in &paths_seen {
+            for (dir, fn_name) in &dirs_now {
+                if changed.starts_with(dir) {
+                    functions_to_swap.insert(fn_name.clone());
+                    break;
+                }
+            }
+        }
+
+        for fn_name in functions_to_swap {
+            let fcfg_opt = {
+                let cfg = state.config.read().await;
+                cfg.functions.get(&fn_name).cloned()
+            };
+            if let Some(fcfg) = fcfg_opt {
+                info!("handler source change → hot-swap {fn_name}");
+                if let Err(e) = state
+                    .process_manager
+                    .hot_swap(&fn_name, fcfg, &state.runtime_registry)
+                    .await
+                {
+                    error!("hot_swap on source change failed for {fn_name}: {e}");
+                }
+            }
+        }
+    }
     drop(watcher);
 }
 
