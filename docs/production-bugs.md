@@ -44,10 +44,11 @@ Findings from the production-readiness audit (2026-05-22). Ordered by severity.
 **Problem:** Config file changes rebuild the `Router` and update `AppState.config` — but `process_manager` pools are never touched. Changing `handler`, `concurrency`, or adding a new route has no effect on running lambdas.
 **Fix:** After rebuilding config, diff old vs new routes. For changed routes call `process_manager.hot_swap()`. For new routes call `spawn_all()`. For removed routes, drain and drop their pools.
 
-### BUG-07: `/deploy` endpoint is fully open by default
+### BUG-07: `/deploy` endpoint is fully open by default ✅ RESOLVED
 **File:** `src/deploy.rs:59-68`, `src/main.rs:116-118`
 **Problem:** With neither `deploy_key` nor `allowed_cidrs` set (the default), `POST /deploy` accepts unauthenticated arbitrary code execution from any IP. The startup warning is not sufficient.
 **Fix:** In non-dev mode, if `effective_deploy_key().is_none() && allowed_cidrs.is_empty()`, disable `/deploy` or bind it to 127.0.0.1 only. Hard-fail or hard-warn at startup.
+**Resolved:** `src/deploy.rs:47-56` — when neither `deploy_key` nor `allowed_cidrs` is set, the handler returns `503 Service Unavailable` with `{"error": "deploy endpoint requires auth configuration (deploy_key or allowed_cidrs)"}` for ALL requests. `src/main.rs:226-227` also logs `tracing::error!("SECURITY: /deploy has no auth configured ...")` at startup. Regression gate: `tests/http_boundary.rs:94::deploy_without_auth_returns_503`.
 
 ---
 
@@ -79,10 +80,11 @@ Findings from the production-readiness audit (2026-05-22). Ordered by severity.
 **Problem:** Cache key is `method:path?query`. Two users with different tokens hit the same route → user B gets user A's cached response. Data leak for any authenticated endpoint.
 **Fix:** Never cache when `Authorization` or `Cookie` is present, or include a hash of auth headers in the cache key.
 
-### BUG-13: Deploy doesn't verify new processes survive startup
+### BUG-13: Deploy doesn't verify new processes survive startup ✅ RESOLVED
 **File:** `src/deploy.rs` — after `hot_swap`
 **Problem:** Response is `{"status":"ok"}` even if the new handler immediately crashes. Operator walks away while every request 502s.
 **Fix:** After `hot_swap`, do a `try_wait()` + short delay health check. If the process is already dead, return 422 and revert.
+**Resolved:** `src/deploy.rs:170-191` — after `hot_swap` returns, the handler `tokio::time::sleep(Duration::from_millis(300))`s, queries `process_manager.pool_stats()`, finds the entry for `body.lambda`, and reads `pool.healthy`. If unhealthy (the new process crashed and the liveness watcher marked it down via `consecutive_crashes >= CRASH_THRESHOLD`), the handler returns `422 Unprocessable Entity` with `"handler crashed immediately after deploy — check handler code"`. The underlying crash-detection machinery is regression-tested in `src/process/liveness.rs::handle_process_failure_marks_unhealthy_at_crash_threshold`.
 
 ---
 
@@ -114,10 +116,11 @@ Findings from the production-readiness audit (2026-05-22). Ordered by severity.
 **Problem:** `remove_dir_all` then `create_dir_all` on the same `/tmp/riz-deploy/<lambda>` path races under concurrent deploys for the same lambda.
 **Fix:** Write to a per-deploy `tempfile::TempDir` and atomic-rename into place.
 
-### BUG-19: ZIP symlinks not rejected during deploy
+### BUG-19: ZIP symlinks not rejected during deploy ✅ RESOLVED
 **File:** `src/deploy.rs` — zip extraction loop
 **Problem:** A zip entry that is a symlink (e.g. `./index.ts -> /etc/passwd`) gets extracted and Bun follows it. Path escape.
 **Fix:** Reject any zip entry where `file.is_symlink()`.
+**Resolved:** `src/deploy.rs::unpack_zip_into` (factored out of `download_and_unpack_s3` so it's unit-testable without S3) — the extraction loop checks `file.is_symlink()` before `file.is_dir()` and skips with a `tracing::warn!`. Regression gate: `src/deploy.rs::tests::bug_19_unpack_zip_skips_symlink_entries` builds an in-memory zip containing a regular file plus a `evil.ts -> /etc/passwd` symlink, calls `unpack_zip_into` against a tempdir, and asserts the regular file extracted while the symlink did NOT.
 
 ### BUG-20: Bun adapter discards non-HTTP authorizer payloads ✅ RESOLVED 2026-05-28
 **File:** `assets/bun-adapter.mjs:84-99`

@@ -246,9 +246,22 @@ async fn download_and_unpack_s3(
 
     // No need to remove the dir first — the UUID-suffixed path is always fresh (BUG-18).
     std::fs::create_dir_all(dest)?;
-    let cursor = std::io::Cursor::new(bytes);
+    unpack_zip_into(std::io::Cursor::new(bytes), dest)
+}
+
+/// Unpack a zip archive into `dest`, skipping unsafe entries:
+///   - Entries whose `enclosed_name()` resolves outside `dest` (`../etc/...`).
+///   - Symlink entries (BUG-19: a `./index.ts -> /etc/passwd` symlink would let
+///     Bun follow the link out of the staging dir).
+///
+/// Extracted from `download_and_unpack_s3` so the symlink-rejection behavior
+/// is unit-testable without an S3 fixture.
+pub(crate) fn unpack_zip_into<R: std::io::Read + std::io::Seek>(
+    reader: R,
+    dest: &std::path::Path,
+) -> anyhow::Result<()> {
     let mut archive =
-        zip::ZipArchive::new(cursor).map_err(|e| anyhow::anyhow!("zip open failed: {e}"))?;
+        zip::ZipArchive::new(reader).map_err(|e| anyhow::anyhow!("zip open failed: {e}"))?;
 
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
@@ -290,6 +303,51 @@ mod tests {
         assert!(
             should_refuse,
             "must refuse deploy when no auth is configured"
+        );
+    }
+
+    /// BUG-19 regression: a zip containing a symlink entry MUST be skipped
+    /// during extraction, even if its `enclosed_name()` is innocuous. A
+    /// symlink could resolve outside the staging dir at access time (Bun
+    /// follows symlinks), which is a path-traversal RCE primitive.
+    #[test]
+    fn bug_19_unpack_zip_skips_symlink_entries() {
+        use std::io::Cursor;
+
+        // Build an in-memory zip with one regular file and one symlink.
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let cursor = Cursor::new(&mut buf);
+            let mut w = zip::ZipWriter::new(cursor);
+            let opts: zip::write::SimpleFileOptions = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            use std::io::Write;
+            w.start_file("index.ts", opts).unwrap();
+            w.write_all(b"export const handler = async () => 42;\n")
+                .unwrap();
+            // The dangerous entry: symlink "./index.ts" -> "/etc/passwd".
+            w.add_symlink("evil.ts", "/etc/passwd", opts).unwrap();
+            w.finish().unwrap();
+        }
+
+        let dest = tempfile::tempdir().expect("tempdir");
+        unpack_zip_into(Cursor::new(&buf), dest.path()).expect("unpack");
+
+        // The regular file extracted.
+        let extracted = dest.path().join("index.ts");
+        assert!(
+            extracted.exists() && !extracted.is_symlink(),
+            "regular file must extract; got exists={}, is_symlink={}",
+            extracted.exists(),
+            extracted.is_symlink()
+        );
+
+        // The symlink did NOT — that's the bug fix.
+        let evil = dest.path().join("evil.ts");
+        assert!(
+            !evil.exists(),
+            "symlink entry must be skipped during extraction; found {}",
+            evil.display()
         );
     }
 

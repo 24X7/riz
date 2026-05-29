@@ -94,19 +94,19 @@ Source of truth is `docs/production-bugs.md` — this is a sanity ledger.
 | BUG-04 | ✅ RESOLVED `279813a2` | bounded `mpsc::channel(10_000)` + drain task `src/main.rs:140,284` |
 | BUG-05 | ✅ RESOLVED (pre-session) | `axum.serve(...).with_graceful_shutdown(...)` |
 | BUG-06 | ✅ RESOLVED (pre-session) | `src/hotreload.rs` diff-aware swap |
-| BUG-07 | 🚧 OPEN | `/deploy` warning-only when neither `RIZ_DEPLOY_KEY` nor `allowed_cidrs` set. Should default-deny in non-dev mode. |
+| BUG-07 | ✅ RESOLVED | `/deploy` returns 503 when neither auth method set (`src/deploy.rs:47-56`). Regression gate: `tests/http_boundary.rs:94`. Verified during 2026-05-29 batch close. |
 | BUG-08 | ✅ RESOLVED `279813a2` | `percent_decode()` at `src/router.rs:124` |
 | BUG-09 | ✅ RESOLVED (pre-session) | base64 path for non-UTF8 bodies in `src/server.rs:333` |
 | BUG-10 | ✅ RESOLVED (pre-session) | 413 on >10 MB body at `src/server.rs:325` |
 | BUG-11 | ✅ RESOLVED (pre-session) | (verify in tracker) |
 | BUG-12 | ✅ RESOLVED (pre-session) | auth-aware cache bypass at `src/server.rs:227` |
-| BUG-13 | 🚧 OPEN | deploy doesn't verify new process survives before declaring success |
+| BUG-13 | ✅ RESOLVED | `src/deploy.rs:170-191` — 300ms sleep, pool_stats healthy check, 422 on crash. Verified during 2026-05-29 batch close. |
 | BUG-14 | ✅ RESOLVED (pre-session) | (verify in tracker) |
 | BUG-15 | ✅ RESOLVED | wave-7.3 killed `route_stats` write-lock; current `record_invocation` uses atomics + per-entry mutexes (`src/state.rs:477-508`). Verified by `tests/perf_ws_load.rs` — 100 WS round-trips in ~53 ms (≈ 1900 msg/s); pathological serialization would have blown the 10s ceiling. |
 | BUG-16 | 🚧 OPEN | access logs missing `request_id` + `source_ip` — straightforward fix at `src/server.rs::push_log` call sites |
 | BUG-17 | 🚧 OPEN (verify) | check tracker |
 | BUG-18 | 🚧 OPEN (verify) | check tracker — concurrent deploys race on `/tmp/riz-deploy/<lambda>` |
-| BUG-19 | 🚧 OPEN | reject zip entries where `file.is_symlink()` — `src/deploy.rs` extraction loop |
+| BUG-19 | ✅ RESOLVED | `unpack_zip_into` skips symlinks (`src/deploy.rs`). Regression gate: `tests::bug_19_unpack_zip_skips_symlink_entries` builds a real zip with a symlink and proves extraction skips it. Verified during 2026-05-29 batch close. |
 | BUG-20 | ✅ RESOLVED `fe0e0176` | adapters now passthrough non-HTTP shapes; regression gates in `tests/middleware_request_authorizer.rs` |
 
 **Top remaining tracker work:** BUG-07 (deploy default-deny) + BUG-13 (deploy health-verify) + BUG-19 (zip symlink) — all `/deploy`-path bugs. Could fit in one focused commit if we want to close them as a batch.
