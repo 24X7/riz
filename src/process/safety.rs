@@ -26,6 +26,25 @@ pub(super) fn apply_always_on_limits() -> std::io::Result<()> {
     // crash storms.
     setrlimit(Resource::RLIMIT_CORE, 0, 0).map_err(to_io)?;
 
+    // File descriptors: cap at 4096 per child. Bun/Python/Rust handlers
+    // typically use < 100. A leaky `fs.open` loop hits this ceiling
+    // before exhausting host FDs.
+    setrlimit(Resource::RLIMIT_NOFILE, 4096, 4096).map_err(to_io)?;
+
+    // Single-file write size: cap at 100 MiB per child. A runaway
+    // `fs.write` loop is bounded before filling host disk.
+    setrlimit(Resource::RLIMIT_FSIZE, 100 * 1024 * 1024, 100 * 1024 * 1024)
+        .map_err(to_io)?;
+
+    // RLIMIT_NPROC is per-PROCESS on Linux but per-USER on macOS/BSD.
+    // Setting it on macOS would compare against the host user's total
+    // process count and likely EINVAL on any moderately busy box.
+    // Apply only on Linux, where it caps fork-bombs inside a single
+    // child's process tree (combined with process_group(0) + killpg
+    // this gives us tight blast-radius control).
+    #[cfg(target_os = "linux")]
+    setrlimit(Resource::RLIMIT_NPROC, 256, 256).map_err(to_io)?;
+
     // Linux-only prctl pair:
     //   PR_SET_PDEATHSIG(SIGKILL): kernel SIGKILLs this child when the
     //     parent (riz daemon) exits. Prevents orphan Bun/Python
@@ -89,28 +108,43 @@ mod tests {
     }
 
     /// Spawning a child via Command with the safety pre_exec must
-    /// produce a process whose RLIMIT_CORE is 0. We verify by
-    /// running `sh -c 'ulimit -c'` under the pre_exec — that shell
-    /// builtin inherits the hard limit set during pre_exec.
+    /// produce a process whose RLIMIT_CORE is 0 AND RLIMIT_NOFILE is
+    /// 4096 AND RLIMIT_FSIZE is 100 MiB (102400 KB blocks). We verify
+    /// via `ulimit -H -c -n -f` (hard limits, portable on /bin/sh on
+    /// both macOS and Linux).
     #[test]
-    fn child_inherits_zero_core_limit() {
+    fn child_inherits_always_on_caps() {
         use std::os::unix::process::CommandExt;
         use std::process::{Command, Stdio};
 
         let mut cmd = Command::new("/bin/sh");
-        cmd.arg("-c").arg("ulimit -c");
+        cmd.arg("-c")
+            .arg("ulimit -H -c; ulimit -H -n; ulimit -H -f");
         cmd.stdout(Stdio::piped());
         // SAFETY: apply_always_on_limits is async-signal-safe — only
-        // calls setrlimit, which is on the POSIX async-signal-safe list.
+        // calls setrlimit + prctl, both on the POSIX safe list.
         unsafe {
             cmd.pre_exec(apply_always_on_limits);
         }
         let out = cmd.output().expect("spawn /bin/sh");
         let stdout = String::from_utf8_lossy(&out.stdout);
-        let trimmed = stdout.trim();
+        let lines: Vec<&str> = stdout.lines().map(|s| s.trim()).collect();
+        assert!(
+            lines.len() >= 3,
+            "expected 3 ulimit lines (CORE, NOFILE, FSIZE); got {lines:?}"
+        );
+        // RLIMIT_CORE: hard cap 0 → ulimit prints "0".
+        assert_eq!(lines[0], "0", "RLIMIT_CORE must be 0; got {lines:?}");
+        // RLIMIT_NOFILE: hard cap 4096.
         assert_eq!(
-            trimmed, "0",
-            "child's RLIMIT_CORE must be 0 (got {trimmed:?})"
+            lines[1], "4096",
+            "RLIMIT_NOFILE must be 4096; got {lines:?}"
+        );
+        // RLIMIT_FSIZE: 100 MiB = 102400 KiB. POSIX `ulimit -f` reports
+        // in 1024-byte blocks on both bash and macOS sh.
+        assert_eq!(
+            lines[2], "102400",
+            "RLIMIT_FSIZE must be 102400 (100 MiB / 1KiB blocks); got {lines:?}"
         );
     }
 }
