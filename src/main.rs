@@ -63,6 +63,83 @@ enum Commands {
         s3_bucket: String,
         s3_key: String,
     },
+    /// Scaffold a new riz project from a built-in template.
+    ///
+    /// Templates: `typescript-http`, `python-http`. The template's files
+    /// are written into <dir> (defaults to the current directory). Use
+    /// after install: `riz init typescript-http my-app && cd my-app && riz run`.
+    Init {
+        /// Template name: `typescript-http` or `python-http`.
+        template: String,
+        /// Target directory (defaults to current dir).
+        dir: Option<String>,
+    },
+}
+
+/// Built-in templates. Each entry is (filename, file contents). Embedded at
+/// build time via include_str! so the binary is self-contained.
+fn template_files(name: &str) -> Option<&'static [(&'static str, &'static str)]> {
+    match name {
+        "typescript-http" => Some(&[
+            (
+                "index.ts",
+                include_str!("../assets/templates/typescript-http/index.ts"),
+            ),
+            (
+                "riz.toml",
+                include_str!("../assets/templates/typescript-http/riz.toml"),
+            ),
+        ]),
+        "python-http" => Some(&[
+            (
+                "main.py",
+                include_str!("../assets/templates/python-http/main.py"),
+            ),
+            (
+                "riz.toml",
+                include_str!("../assets/templates/python-http/riz.toml"),
+            ),
+        ]),
+        _ => None,
+    }
+}
+
+fn run_init(template: &str, dir: Option<&str>) -> anyhow::Result<()> {
+    let files = template_files(template).ok_or_else(|| {
+        anyhow::anyhow!(
+            "unknown template '{template}'. Available: typescript-http, python-http"
+        )
+    })?;
+    let target = match dir {
+        Some(d) => std::path::PathBuf::from(d),
+        None => std::env::current_dir()?,
+    };
+    if !target.exists() {
+        std::fs::create_dir_all(&target)?;
+    }
+    // Refuse to overwrite existing files; opting in to clobber needs
+    // an explicit user decision (rm + re-run).
+    for (name, _) in files {
+        let dst = target.join(name);
+        if dst.exists() {
+            return Err(anyhow::anyhow!(
+                "refusing to overwrite existing file: {}. \
+                 Move it aside or pass a different <dir>.",
+                dst.display()
+            ));
+        }
+    }
+    for (name, contents) in files {
+        let dst = target.join(name);
+        std::fs::write(&dst, contents)?;
+        println!("  created {}", dst.display());
+    }
+    println!(
+        "\n✓ {template} template installed in {}\n  next: cd {} && riz run",
+        target.display(),
+        target.display()
+    );
+    Ok(())
 }
 
 fn effective_config_path(dev: bool, explicit: Option<&str>) -> String {
@@ -82,6 +159,12 @@ fn effective_log_level(dev: bool, explicit: Option<&str>) -> &str {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+
+    // `riz init` doesn't need (and shouldn't require) an existing config.
+    // Handle it before the config-load path.
+    if let Some(Commands::Init { template, dir }) = &cli.command {
+        return run_init(template, dir.as_deref());
+    }
 
     let config_path = effective_config_path(cli.dev, cli.config.as_deref());
     let log_level = effective_log_level(cli.dev, cli.log_level.as_deref());
