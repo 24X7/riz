@@ -159,11 +159,29 @@ def main() -> None:
 
         try:
             result = handler(event, context)
-            # Default empty response if the handler returned nothing.
+            # Discriminate HTTP-response shape from raw payloads. HTTP-shape
+            # returns (have numeric statusCode) are normalized so the Rust side
+            # deserializes cleanly into ApiGatewayV2httpResponse. Raw payloads
+            # (REQUEST authorizer responses like {isAuthorized, context}, future
+            # non-HTTP event-source responses) pass through verbatim so the
+            # caller (e.g. RequestAuthorizer via ProcessManager::invoke_generic)
+            # sees the handler's actual return. BUG-20 was: every return value
+            # was forced through HTTP normalization, silently dropping
+            # {isAuthorized, context} authorizer payloads.
             if result is None:
-                result = {"statusCode": 204}
-            safe_result = normalize_response(result)
-            sys.stdout.write(json.dumps(safe_result) + "\n")
+                sys.stdout.write(json.dumps({
+                    "statusCode": 204,
+                    "headers": {},
+                    "multiValueHeaders": {},
+                    "body": "",
+                    "isBase64Encoded": False,
+                    "cookies": [],
+                }) + "\n")
+            elif isinstance(result, dict) and isinstance(result.get("statusCode"), int):
+                safe_result = normalize_response(result)
+                sys.stdout.write(json.dumps(safe_result) + "\n")
+            else:
+                sys.stdout.write(json.dumps(result) + "\n")
             sys.stdout.flush()
         except Exception as e:
             err = {

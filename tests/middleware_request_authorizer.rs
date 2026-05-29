@@ -123,7 +123,6 @@ const AUTH_DENY_BUN: &str = concat!(
 );
 
 #[tokio::test]
-#[ignore = "BUG-20: Bun adapter discards non-HTTP authorizer payload — see docs/production-bugs.md"]
 async fn request_authorizer_allow_populates_handler_context() {
     if !bun_available() {
         eprintln!("SKIP: bun not on PATH");
@@ -204,7 +203,6 @@ method = "POST"
 }
 
 #[tokio::test]
-#[ignore = "BUG-20: Bun adapter discards non-HTTP authorizer payload — see docs/production-bugs.md"]
 async fn request_authorizer_deny_returns_401_without_invoking_handler() {
     if !bun_available() {
         eprintln!("SKIP: bun not on PATH");

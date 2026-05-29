@@ -83,20 +83,41 @@ rl.on("line", async (line) => {
 
   try {
     const result = await handler(event, context);
-    // Default empty response if the handler returned nothing.
-    const r = result ?? { statusCode: 204 };
-    // Normalize to the canonical AWS response shape so the Rust side can
-    // deserialize it into ApiGatewayV2httpResponse cleanly.
-    const safeResult = {
-      statusCode: typeof r.statusCode === "number" ? r.statusCode : 200,
-      headers: r.headers && typeof r.headers === "object" ? r.headers : {},
-      multiValueHeaders: r.multiValueHeaders && typeof r.multiValueHeaders === "object"
-        ? r.multiValueHeaders : {},
-      body: typeof r.body === "string" ? r.body : (r.body == null ? "" : String(r.body)),
-      isBase64Encoded: r.isBase64Encoded === true,
-      cookies: Array.isArray(r.cookies) ? r.cookies : [],
-    };
-    process.stdout.write(JSON.stringify(safeResult) + "\n");
+    // Null/undefined → emit canonical empty HTTP response.
+    if (result == null) {
+      process.stdout.write(JSON.stringify({
+        statusCode: 204,
+        headers: {},
+        multiValueHeaders: {},
+        body: "",
+        isBase64Encoded: false,
+        cookies: [],
+      }) + "\n");
+      return;
+    }
+    // Discriminate HTTP-response shape from raw payloads (REQUEST authorizers,
+    // future non-HTTP event-source responses) by the presence of a numeric
+    // `statusCode` field. HTTP-shape returns are normalized to the canonical
+    // ApiGatewayV2httpResponse fields so the Rust side deserializes cleanly.
+    // Raw payloads are stringified verbatim so the caller (e.g. RequestAuthorizer
+    // via ProcessManager::invoke_generic) sees the handler's actual return.
+    // BUG-20 was: every return value was forced through HTTP normalization,
+    // silently dropping {isAuthorized, context} authorizer payloads.
+    if (typeof result === "object" && typeof result.statusCode === "number") {
+      const r = result;
+      const safeResult = {
+        statusCode: r.statusCode,
+        headers: r.headers && typeof r.headers === "object" ? r.headers : {},
+        multiValueHeaders: r.multiValueHeaders && typeof r.multiValueHeaders === "object"
+          ? r.multiValueHeaders : {},
+        body: typeof r.body === "string" ? r.body : (r.body == null ? "" : String(r.body)),
+        isBase64Encoded: r.isBase64Encoded === true,
+        cookies: Array.isArray(r.cookies) ? r.cookies : [],
+      };
+      process.stdout.write(JSON.stringify(safeResult) + "\n");
+    } else {
+      process.stdout.write(JSON.stringify(result) + "\n");
+    }
   } catch (err) {
     process.stdout.write(JSON.stringify({
       statusCode: 500,
