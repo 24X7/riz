@@ -722,6 +722,9 @@ $ claude mcp add riz-local \
           <li>CORS auto-preflight — OPTIONS → 204, <code>Access-Control-Allow-*</code> headers</li>
           <li>Bearer-token auth on <code>/_riz/*</code> (<code>/_riz/health</code> stays open)</li>
           <li>Real Lambda context — <code>getRemainingTimeInMillis</code>, <code>functionName</code>, <code>invokedFunctionArn</code>, <code>awsRequestId</code></li>
+          <li>On-box safety profile — always-on <code>RLIMIT_CORE=0</code> + <code>RLIMIT_NOFILE=4096</code> + <code>RLIMIT_FSIZE=100MiB</code></li>
+          <li>Opt-in per-function caps — <code>memory_mb</code> (RLIMIT_AS), <code>cpu_time_secs</code> (RLIMIT_CPU), <code>allowed_paths</code> (Linux Landlock filesystem allowlist)</li>
+          <li>WebSocket connection list endpoint — <code>GET /_riz/connections</code></li>
         </ul>
       </div>
       <div class="status-col">

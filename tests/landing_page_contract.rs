@@ -219,6 +219,18 @@ const WORKS_NOW: &[Claim] = &[
         page_text: "Real Lambda context — getRemainingTimeInMillis, functionName, invokedFunctionArn, awsRequestId",
         proof: "context_remaining_time_uses_deadline",
     },
+    Claim {
+        page_text: "On-box safety profile — always-on RLIMIT_CORE=0 + RLIMIT_NOFILE=4096 + RLIMIT_FSIZE=100MiB",
+        proof: "child_inherits_always_on_caps",
+    },
+    Claim {
+        page_text: "Opt-in per-function caps — memory_mb (RLIMIT_AS), cpu_time_secs (RLIMIT_CPU), allowed_paths (Linux Landlock filesystem allowlist)",
+        proof: "apply_per_function_limits_with_none_is_no_op",
+    },
+    Claim {
+        page_text: "WebSocket connection list endpoint — GET /_riz/connections",
+        proof: "ws_list_endpoint_includes_live_connection",
+    },
 ];
 
 const COMING: &[Claim] = &[Claim {

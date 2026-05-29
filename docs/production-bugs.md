@@ -18,19 +18,21 @@ Findings from the production-readiness audit (2026-05-22). Ordered by severity.
 **Problem:** No background liveness monitoring. If a Bun worker dies idle (OOM-kill, event-loop crash, etc.), the `ProcessHandle` stays in the pool as "warm." The first inbound request hits broken stdin → BrokenPipe → crash arm → respawn → that one caller gets a 502. Unnecessary failure.
 **Fix:** Each `spawn_process` call spawns a `tokio::task` that `child.wait().await`s. On exit, triggers respawn and replaces the handle in the pool (must coordinate with the semaphore).
 
-### BUG-03: Client disconnect desyncs the pipe
+### BUG-03: Client disconnect desyncs the pipe ✅ RESOLVED
 **File:** `src/process/mod.rs` — `invoke()` timeout wrapper (~line 128)
 **Problem:** If axum drops the `invoke` future mid-flight (client disconnected during a long response), the write or read is abandoned. The lambda may finish writing its response to stdout, but the Rust side is gone. Next request reads stale bytes. Pipe desynced indefinitely.
 **Fix:** Drop-guard or `tokio::select!` that kills+respawns the process if the future is cancelled before a clean read completes.
+**Resolved:** `PipeDropGuard` at `src/process/mod.rs:232-241` — captures the child PID before the timeout-wrapped read; on Drop (set when the future is cancelled before the read completes), it calls `kill_process_group(pid)`. The pid is zeroed on successful read so a clean exit doesn't fire the guard. Combined with the always-on `process_group(0)` (`src/process/pool.rs:69-70`), the entire process tree is reaped on client-disconnect.
 
 ---
 
 ## P1 — Will OOM or break operations within days
 
-### BUG-04: Unbounded log channel OOMs headless/prod deployments
+### BUG-04: Unbounded log channel OOMs headless/prod deployments ✅ RESOLVED
 **File:** `src/main.rs:114`, `src/server.rs` (push_log on every request)
 **Problem:** `mpsc::unbounded_channel` is only drained by the TUI. With `--no-tui` (production mode), the receiver is never consumed. Every request pushes at least one `LogEntry`. At moderate load this accumulates gigabytes over hours.
 **Fix:** Always spawn a drain task regardless of TUI mode. In headless mode: drain to `tracing::debug!` or just drop. Bound the channel (`mpsc::channel(10_000)`) so backpressure kicks in if the drain stalls.
+**Resolved:** `src/main.rs:140` — `let (log_tx, log_rx) = tokio::sync::mpsc::channel::<state::LogEntry>(10_000);` bounded channel. Drain task spawned at `src/main.rs:284` in both TUI and headless modes (reads `state_for_drain.log_rx.lock()` and forwards to tracing). Backpressure now kicks in if the drain stalls.
 
 ### BUG-05: No graceful shutdown — children orphaned on SIGTERM
 **File:** `src/main.rs:164`
@@ -51,10 +53,11 @@ Findings from the production-readiness audit (2026-05-22). Ordered by severity.
 
 ## P2 — Interop and correctness gaps
 
-### BUG-08: URL path params not decoded
+### BUG-08: URL path params not decoded ✅ RESOLVED
 **File:** `src/router.rs` — path param extraction
 **Problem:** `/accounts/foo%2Fbar` gives `id = "foo%2Fbar"` (raw percent-encoded). AWS API Gateway decodes path params before passing to lambdas. Handlers written for AWS get wrong values.
 **Fix:** URL-decode each path param segment before inserting into `path_parameters`.
+**Resolved:** `src/router.rs:124` — `percent_decode()` helper applied at every path-param extraction site in `src/runtime/mod.rs:91,101`. Regression test `src/router.rs:398-402::percent_decode_helper_still_works` covers `%2F` → `/` and `%20` → space. Cross-runtime parity also exercises this via `tests/runtime_parity_request_shape.rs::*_passes_path_and_query` which routes through real handlers.
 
 ### BUG-09: Binary request/response bodies silently mangled
 **File:** `src/server.rs:78` (request), `src/server.rs:162-176` (response)

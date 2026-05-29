@@ -85,19 +85,21 @@ Bearer-token protection: set `RIZ_AUTH_BEARER_TOKEN` or `[auth] bearer_token` in
 ## Honest status (v0.1)
 
 **Works today:**
-- AWS HTTP API Gateway v2 — full request/response shape, all 7 verbs
-- AWS WebSocket APIs — `$connect` / `$default` / `$disconnect` + `@connections` management API at `/_riz/connections/{id}` (GET/POST/DELETE)
+- AWS HTTP API Gateway v2 — full request/response shape, all 7 verbs (cross-runtime parity-tested: TS/JS via Bun, Python, Rust)
+- AWS WebSocket APIs — `$connect` / `$default` / `$disconnect` + `@connections` management API at `/_riz/connections/{id}` (GET/POST/DELETE) and `/_riz/connections` (LIST). Bun handlers; Python/Rust WS adapters not yet exercised.
 - Bun, Python, and Rust runtime adapters
 - Lambda context — `getRemainingTimeInMillis`, `functionName`, `invokedFunctionArn`, `awsRequestId`
-- Lambda authorizers — REQUEST + JWT (with JWKS URL, TTL cache)
-- CORS auto-preflight — `[cors]` config block, OPTIONS → 204, echoed `Access-Control-Allow-Origin` on non-preflight
+- Lambda authorizers — REQUEST (verified end-to-end with Bun) + JWT (with JWKS URL, TTL cache)
+- CORS auto-preflight — `[cors]` config block, OPTIONS → 204, echoed `Access-Control-Allow-Origin` on non-preflight, attacker-origin rejection
 - Bearer-token auth on `/_riz/*` system endpoints
 - Hot-swap deploys from S3 with in-flight request drain
 - `riz.toml` hot-reload on save
-- `/_riz/health` · `/_riz/metrics` · `/_riz/registry` · `/_riz/mcp` · `/_riz/connections/{id}`
+- `/_riz/health` · `/_riz/metrics` · `/_riz/registry` · `/_riz/mcp` · `/_riz/connections` · `/_riz/connections/{id}`
 - Terminal dashboard with P50–P99 latency, process stats, log stream
 - Datadog metrics emitter
 - Single Rust binary, ~10 MB
+- **On-box safety profile** (every spawned child, no opt-in needed): `RLIMIT_CORE=0` (no core-dump disk fill), `RLIMIT_NOFILE=4096` (FD-leak cap), `RLIMIT_FSIZE=100MiB` (write cap). Linux only: `PR_SET_PDEATHSIG(SIGKILL)` (orphan prevention), `PR_SET_NO_NEW_PRIVS` (privilege downgrade), `RLIMIT_NPROC=256` (fork-bomb cap).
+- **Opt-in per-function caps**: `memory_mb` → `RLIMIT_AS` (AWS Lambda's `MemorySize`), `cpu_time_secs` → `RLIMIT_CPU` (kills runaway loops), `allowed_paths` → Linux Landlock filesystem allowlist (kernel 5.13+)
 
 **Not yet:**
 - Non-HTTP event sources (SQS, SNS, S3, EventBridge, scheduled) — defer to v0.2
