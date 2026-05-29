@@ -16,40 +16,29 @@ cargo install --git https://github.com/crizzuto/riz
 # curl -fsSL https://riz.dev/install | sh
 ```
 
-Bun must be on PATH for TypeScript/JavaScript handlers:
+Bun must be on PATH for TypeScript/JavaScript handlers (Python uses
+`python3`; Rust uses your prebuilt binary directly):
 
 ```bash
 curl -fsSL https://bun.sh/install | bash
 ```
 
-Write a handler:
-
-```typescript
-// index.ts
-export const handler = async (event: any) => ({
-  statusCode: 200,
-  body: JSON.stringify({ hello: event.requestContext.http.path }),
-});
-```
-
-Tell riz about it:
-
-```toml
-# riz.toml
-[server]
-port = 3000
-
-[function.api]
-runtime = "bun"
-handler = "index.handler"
-```
-
-Run:
+Scaffold a working project in one command:
 
 ```bash
+riz init typescript-http my-app
+cd my-app
 riz run
-# → curl localhost:3000/anything  → {"hello":"/anything"}
+# → curl localhost:3000/hello?name=alice
+#   {"message":"hello, alice","method":"GET", ...}
 ```
+
+(Other templates: `python-http`. More coming.)
+
+Edit `index.ts`, save, the next request hits the new code — no
+restart, no `riz.toml` touch. The watcher debounces and hot-swaps
+the function's pool automatically.
+
 
 ## Mental model
 
