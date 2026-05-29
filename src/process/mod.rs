@@ -4,6 +4,7 @@ pub mod pool;
 pub mod python;
 pub mod runtime;
 pub mod rust;
+pub mod safety;
 
 use crate::config::FunctionConfig;
 use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};

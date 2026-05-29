@@ -67,7 +67,16 @@ pub(super) async fn spawn_process(
         .stderr(std::process::Stdio::piped());
 
     #[cfg(unix)]
-    cmd.process_group(0);
+    {
+        cmd.process_group(0);
+        // SAFETY: apply_always_on_limits is async-signal-safe (setrlimit
+        // is on the POSIX safe list). Runs after fork, before execve.
+        // tokio::process::Command provides pre_exec inherently — no
+        // CommandExt import needed.
+        unsafe {
+            cmd.pre_exec(crate::process::safety::apply_always_on_limits);
+        }
+    }
 
     let mut child = cmd
         .spawn()
