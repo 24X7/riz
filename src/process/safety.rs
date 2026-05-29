@@ -19,11 +19,28 @@
 #[cfg(unix)]
 pub(super) fn apply_always_on_limits() -> std::io::Result<()> {
     use nix::sys::resource::{setrlimit, Resource};
+    let to_io = |e: nix::Error| std::io::Error::from_raw_os_error(e as i32);
+
     // Hard-cap core dump size to 0 bytes. A lambda that segfaults or
     // panics will not write a core file — protects host disk under
     // crash storms.
-    setrlimit(Resource::RLIMIT_CORE, 0, 0)
-        .map_err(|e| std::io::Error::from_raw_os_error(e as i32))?;
+    setrlimit(Resource::RLIMIT_CORE, 0, 0).map_err(to_io)?;
+
+    // Linux-only prctl pair:
+    //   PR_SET_PDEATHSIG(SIGKILL): kernel SIGKILLs this child when the
+    //     parent (riz daemon) exits. Prevents orphan Bun/Python
+    //     processes from surviving a daemon crash.
+    //   PR_SET_NO_NEW_PRIVS:      child cannot gain new privileges via
+    //     setuid/file-caps on subsequent execve. Cheap defense in depth
+    //     — even a malicious handler payload can't escalate via exec.
+    #[cfg(target_os = "linux")]
+    {
+        use nix::sys::prctl;
+        use nix::sys::signal::Signal;
+        prctl::set_pdeathsig(Some(Signal::SIGKILL)).map_err(to_io)?;
+        prctl::set_no_new_privs().map_err(to_io)?;
+    }
+
     Ok(())
 }
 
@@ -43,6 +60,32 @@ mod tests {
     #[test]
     fn apply_always_on_limits_does_not_error() {
         apply_always_on_limits().expect("must succeed on this process");
+    }
+
+    /// On Linux, the always-on safety profile sets PR_SET_NO_NEW_PRIVS.
+    /// Verify by spawning a child under the pre_exec and reading
+    /// `/proc/self/status` for `NoNewPrivs:	1`. On macOS this test is
+    /// compiled out — the prctl block in apply_always_on_limits is
+    /// already cfg-gated to Linux.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn child_inherits_no_new_privs_on_linux() {
+        use std::os::unix::process::CommandExt;
+        use std::process::{Command, Stdio};
+
+        let mut cmd = Command::new("/bin/sh");
+        cmd.arg("-c")
+            .arg("grep -E '^NoNewPrivs:' /proc/self/status");
+        cmd.stdout(Stdio::piped());
+        unsafe {
+            cmd.pre_exec(apply_always_on_limits);
+        }
+        let out = cmd.output().expect("spawn /bin/sh");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("NoNewPrivs:\t1"),
+            "child must have NoNewPrivs=1 in /proc/self/status; got {stdout:?}"
+        );
     }
 
     /// Spawning a child via Command with the safety pre_exec must
