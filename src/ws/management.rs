@@ -2,6 +2,7 @@
 //! Management API for WebSocket. Handlers call these endpoints (typically
 //! via internal HTTP) to push messages to connected clients.
 //!
+//! - GET    /_riz/connections                  → list all live connections
 //! - GET    /_riz/connections/{connectionId}  → connection info
 //! - POST   /_riz/connections/{connectionId}  → send message (body = payload)
 //! - DELETE /_riz/connections/{connectionId}  → disconnect
@@ -27,9 +28,13 @@ pub struct ConnectionsHandler {
 impl ConnectionsHandler {
     pub fn new(connections: ConnectionStore, bearer_token: Option<String>) -> Self {
         Self {
-            // Mount three routes — same path, three methods. The router
-            // first-matches by method so all three live in this handler.
+            // Mount the list endpoint plus three per-connection methods.
+            // The router first-matches by method so all live in this handler.
             routes: vec![
+                RouteEntry {
+                    method: RouteMethod::Get,
+                    path: "/_riz/connections".into(),
+                },
                 RouteEntry {
                     method: RouteMethod::Get,
                     path: "/_riz/connections/{id}".into(),
@@ -82,13 +87,22 @@ impl LambdaHandler for ConnectionsHandler {
                 ));
             }
         }
+        let method = event.request_context.http.method.as_str().to_uppercase();
+
+        // List endpoint: GET /_riz/connections (no path param).
+        if event.path_parameters.get("id").is_none() {
+            if method == "GET" {
+                return self.list();
+            }
+            return Ok(error_response(405, &format!("method {method} not allowed")));
+        }
+
         let id = event
             .path_parameters
             .get("id")
             .cloned()
             .ok_or_else(|| HandlerError::Internal("missing connectionId path param".into()))?;
         let conn_id = ConnectionId(id);
-        let method = event.request_context.http.method.as_str().to_uppercase();
 
         match method.as_str() {
             "GET" => self.info(&conn_id),
@@ -100,6 +114,22 @@ impl LambdaHandler for ConnectionsHandler {
 }
 
 impl ConnectionsHandler {
+    fn list(&self) -> Result<ApiGatewayV2httpResponse, HandlerError> {
+        let summaries: Vec<serde_json::Value> = self
+            .connections
+            .all()
+            .iter()
+            .map(|conn| {
+                serde_json::json!({
+                    "connectionId": conn.id.as_str(),
+                    "function": conn.function_name,
+                    "connectedAgeSecs": conn.connected_at.elapsed().as_secs(),
+                })
+            })
+            .collect();
+        Ok(json_response(200, &serde_json::json!(summaries)))
+    }
+
     fn info(&self, id: &ConnectionId) -> Result<ApiGatewayV2httpResponse, HandlerError> {
         let Some(conn) = self.connections.get(id) else {
             return Ok(error_response(404, "connection not found"));

@@ -122,13 +122,9 @@ path = "/chat"
     addr
 }
 
-/// Connect a WS client to /chat, send one message to drive the $connect
-/// + $default lifecycle, wait for the echo so we know the connection is
-/// fully registered, then extract the connection ID from the management
-/// API by listing connections (no API for list, so we use the echo as
-/// a side-channel to know SOMETHING is connected and then GET the
-/// management endpoint with the only ID we can know — by extracting it
-/// from the response.body).
+/// Connect a WS client to /chat, drive the $connect + $default lifecycle
+/// with a sentinel echo to confirm the connection is fully registered,
+/// then call GET /_riz/connections to discover the live connection ID.
 async fn connect_and_get_connection_id(
     addr: SocketAddr,
 ) -> (
@@ -142,14 +138,13 @@ async fn connect_and_get_connection_id(
         .await
         .expect("ws connect");
 
-    // Send a sentinel message. The chat handler echoes "echo: <payload>"
-    // via the @connections POST path. We capture the echo to confirm the
-    // connection is live before exercising the management API.
+    // Drive an echo round-trip to prove the connection is live + registered
+    // in the ConnectionStore (echo handler POSTs via /_riz/connections/{id},
+    // which fails if the id isn't in the store yet).
     socket
         .send(Message::Text("ping".into()))
         .await
         .expect("ws send");
-
     let reply = tokio::time::timeout(Duration::from_secs(3), socket.next())
         .await
         .expect("no echo within 3s")
@@ -160,62 +155,100 @@ async fn connect_and_get_connection_id(
         other => panic!("expected text frame, got {other:?}"),
     }
 
-    // The chat fixture doesn't expose the connection id back to the WS
-    // client. The ConnectionStore is the source of truth — but its iter
-    // API isn't pub. Best path: hit GET /_riz/connections/{id} with a
-    // wildcard? No — there's no wildcard. Use the side-channel: the
-    // ConnectionStore is queryable via the HTTP server's state. For the
-    // test, we hit a probe path to enumerate.
-    //
-    // The simplest available signal: chat handler emits one POST per
-    // message via /_riz/connections/{id}. We don't see {id} from the
-    // client side without server cooperation. Modify the chat fixture
-    // to also echo the connection ID in the payload? Out of scope —
-    // do not touch fixtures.
-    //
-    // Workaround: the only connection alive at this point is ours
-    // (concurrency = 4 but we connected first; tests in isolation).
-    // Hit the registry endpoint to find it. But ConnectionStore doesn't
-    // expose iter via a public HTTP endpoint.
-    //
-    // Final path: hit the /_riz/registry endpoint — it lists functions,
-    // not connections. There is NO public list-connections endpoint.
-    //
-    // Conclusion: this test must verify GET works for a KNOWN id. We
-    // synthesize the test by sending a second message via WS, in the
-    // chat handler intercepting that and POSTing the id back via a
-    // special prefix. Modifying the fixture is undesirable.
-    //
-    // Tightened scope: use the DELETE path to assert the connection
-    // CAN be closed via management API. We use the connections store
-    // directly via the test's own access — but the test is integration,
-    // not unit. So we hit GET with a known-good id passed by another
-    // route. Out of scope for slice M.
-    //
-    // For now: return the socket and a sentinel id; the caller asserts
-    // GET on a wildcard 404 path (proves the endpoint exists and responds).
-    (socket, "test-no-id-available".to_string())
+    // The connection is registered. Discover its ID via the list endpoint.
+    let list_url = format!("http://{addr}/_riz/connections");
+    let resp = reqwest::get(&list_url).await.expect("GET /_riz/connections");
+    assert_eq!(
+        resp.status(),
+        200,
+        "list endpoint must return 200; got {}",
+        resp.status()
+    );
+    let summaries: Vec<serde_json::Value> = resp.json().await.expect("list returns JSON array");
+    assert!(
+        !summaries.is_empty(),
+        "list must contain at least the test's own connection"
+    );
+    let id = summaries[0]["connectionId"]
+        .as_str()
+        .expect("connectionId must be a string")
+        .to_string();
+    (socket, id)
 }
 
-/// Skip the test — there's no public HTTP endpoint to enumerate live
-/// connection IDs from outside the daemon, and the chat-handler fixture
-/// doesn't echo its `event.requestContext.connectionId` back to the WS
-/// client either. Closing this gap requires either a new public endpoint
-/// (e.g. `GET /_riz/connections` returning a JSON array) or a test-only
-/// fixture handler that sends the ID as the first frame. The negative-path
-/// tests below cover the management API's error handling end-to-end;
-/// the POST happy-path is exercised by tests/websocket_integration.rs.
 #[tokio::test]
-#[ignore = "no public list-connections endpoint; needs test-only fixture or new HTTP endpoint to enumerate IDs"]
+async fn ws_list_endpoint_includes_live_connection() {
+    if !bun_available() {
+        eprintln!("SKIP: bun not on PATH");
+        return;
+    }
+    let addr = boot_ws_server().await;
+    let (_socket, id) = connect_and_get_connection_id(addr).await;
+    assert!(!id.is_empty(), "list must yield a non-empty connection id");
+}
+
+#[tokio::test]
 async fn ws_get_connection_metadata_e2e() {
     if !bun_available() {
         eprintln!("SKIP: bun not on PATH");
         return;
     }
     let addr = boot_ws_server().await;
-    let (_socket, _id) = connect_and_get_connection_id(addr).await;
-    // Test body would: hit GET /_riz/connections/{id}, assert 200 + JSON
-    // with connectionId, function, connectedAgeSecs.
+    let (_socket, id) = connect_and_get_connection_id(addr).await;
+
+    let url = format!("http://{addr}/_riz/connections/{id}");
+    let resp = reqwest::get(&url).await.expect("GET single connection");
+    assert_eq!(resp.status(), 200, "GET on live id must return 200");
+    let body: serde_json::Value = resp.json().await.expect("info returns JSON");
+
+    assert_eq!(
+        body["connectionId"].as_str(),
+        Some(id.as_str()),
+        "info.connectionId must match the queried id; body = {body}"
+    );
+    assert_eq!(
+        body["function"].as_str(),
+        Some("chat"),
+        "info.function must be the riz.toml function name; body = {body}"
+    );
+    assert!(
+        body["connectedAgeSecs"].is_number(),
+        "info.connectedAgeSecs must be a number; body = {body}"
+    );
+}
+
+#[tokio::test]
+async fn ws_delete_closes_live_client_connection() {
+    if !bun_available() {
+        eprintln!("SKIP: bun not on PATH");
+        return;
+    }
+    let addr = boot_ws_server().await;
+    let (mut socket, id) = connect_and_get_connection_id(addr).await;
+
+    // Hit DELETE — server-side close.
+    let client = reqwest::Client::new();
+    let url = format!("http://{addr}/_riz/connections/{id}");
+    let resp = client.delete(&url).send().await.expect("DELETE");
+    assert_eq!(
+        resp.status().as_u16(),
+        204,
+        "DELETE on live id must return 204; got {}",
+        resp.status()
+    );
+
+    // The client should observe a Close frame (or the stream end) shortly.
+    let next = tokio::time::timeout(Duration::from_secs(3), socket.next())
+        .await
+        .expect("server didn't close connection within 3s");
+    match next {
+        Some(Ok(Message::Close(_))) | None => { /* both signal a clean server close */ }
+        Some(Ok(other)) => panic!("expected Close frame, got {other:?}"),
+        Some(Err(e)) => {
+            // Connection-reset is also a valid signal that server closed.
+            eprintln!("post-DELETE stream returned err: {e} — treating as close");
+        }
+    }
 }
 
 #[tokio::test]
