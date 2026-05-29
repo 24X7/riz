@@ -183,6 +183,7 @@ async fn request_authorizer_allows_valid_token() {
             authorizer: None,
             memory_mb: None,
             cpu_time_secs: None,
+            allowed_paths: None,
         },
     );
     functions.insert(
@@ -204,6 +205,7 @@ async fn request_authorizer_allows_valid_token() {
             authorizer: Some(AuthorizerConfig::FunctionRef("auth-fn".into())),
             memory_mb: None,
             cpu_time_secs: None,
+            allowed_paths: None,
         },
     );
 
@@ -278,6 +280,7 @@ async fn request_authorizer_rejects_invalid_token() {
             authorizer: None,
             memory_mb: None,
             cpu_time_secs: None,
+            allowed_paths: None,
         },
     );
     functions.insert(
@@ -299,6 +302,7 @@ async fn request_authorizer_rejects_invalid_token() {
             authorizer: Some(AuthorizerConfig::FunctionRef("auth-fn".into())),
             memory_mb: None,
             cpu_time_secs: None,
+            allowed_paths: None,
         },
     );
 
@@ -371,6 +375,7 @@ async fn authorizer_none_opt_out_allows_any_request() {
             authorizer: Some(AuthorizerConfig::FunctionRef("none".into())),
             memory_mb: None,
             cpu_time_secs: None,
+            allowed_paths: None,
         },
     );
 

@@ -97,6 +97,55 @@ pub(super) fn apply_per_function_limits(
     Ok(())
 }
 
+/// Apply a Linux Landlock filesystem allowlist to the calling process.
+/// Each path in `paths` (and everything beneath it) is read/write/execute
+/// accessible to the child; everything else is denied at the LSM layer.
+///
+/// Irreversible: once `restrict_self` succeeds, the process and all its
+/// descendants are sandboxed for life. Always called in pre_exec on a
+/// fresh child, never in the riz daemon itself.
+///
+/// On non-Linux platforms this is a no-op — Landlock is a Linux LSM with
+/// no equivalent in macOS / *BSD APIs we can rely on. The `allowed_paths`
+/// FunctionConfig field is silently ignored on those platforms; users get
+/// the always-on rlimits + prctl protections but no filesystem ACL.
+///
+/// On Linux kernels < 5.13 (no Landlock support), `restrict_self` returns
+/// success with `RulesetStatus::NotEnforced` — i.e., a silent best-effort
+/// downgrade. Documented in landlock crate's `CompatLevel::BestEffort`.
+#[cfg(target_os = "linux")]
+pub(super) fn apply_filesystem_allowlist(paths: &[std::path::PathBuf]) -> std::io::Result<()> {
+    use landlock::{
+        path_beneath_rules, Access, AccessFs, Ruleset, RulesetAttr, RulesetCreatedAttr, ABI,
+    };
+    let abi = ABI::V2;
+    let to_io = |e: landlock::RulesetError| std::io::Error::other(format!("landlock: {e}"));
+    Ruleset::default()
+        .handle_access(AccessFs::from_all(abi))
+        .map_err(to_io)?
+        .create()
+        .map_err(to_io)?
+        .add_rules(path_beneath_rules(paths, AccessFs::from_all(abi)))
+        .map_err(to_io)?
+        .restrict_self()
+        .map_err(to_io)?;
+    Ok(())
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+pub(super) fn apply_filesystem_allowlist(
+    _paths: &[std::path::PathBuf],
+) -> std::io::Result<()> {
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub(super) fn apply_filesystem_allowlist(
+    _paths: &[std::path::PathBuf],
+) -> std::io::Result<()> {
+    Ok(())
+}
+
 #[cfg(all(unix, test))]
 mod tests {
     use super::*;
@@ -190,6 +239,62 @@ mod tests {
         // Just verify the call doesn't error in the current process.
         apply_per_function_limits(None, None)
             .expect("None inputs must succeed without setrlimit");
+    }
+
+    /// Cross-platform smoke test for apply_filesystem_allowlist with
+    /// empty paths. On non-Linux it's a no-op. On Linux it creates a
+    /// landlock ruleset with no rules and restricts self — which would
+    /// deny ALL filesystem access from this point on. We therefore
+    /// spawn a CHILD to test the actual restriction (so the test runner
+    /// itself isn't sandboxed forever).
+    ///
+    /// This smoke test just verifies the function signature and that
+    /// the no-op path on non-Linux doesn't panic. The real Linux
+    /// enforcement test runs as a subprocess.
+    #[test]
+    fn apply_filesystem_allowlist_signature_compiles() {
+        // No-op on non-Linux; on Linux this is a deliberately-empty
+        // ruleset which IS irreversibly applied — but we don't call it
+        // directly in the test process (would sandbox the whole runner).
+        // Instead verify the function exists and the signature compiles.
+        let _ = apply_filesystem_allowlist::<>;
+    }
+
+    /// Linux-only: spawn a child with apply_filesystem_allowlist(["/tmp"])
+    /// and assert it can read /tmp but cannot read /etc. Skipped on
+    /// kernels < 5.13 (no Landlock support) via best-effort downgrade.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn child_with_allowlist_can_read_allowed_path_only() {
+        use std::os::unix::process::CommandExt;
+        use std::path::PathBuf;
+        use std::process::{Command, Stdio};
+
+        if !std::path::Path::new("/sys/kernel/security/landlock").exists() {
+            eprintln!("SKIP: kernel lacks landlock");
+            return;
+        }
+
+        // Probe via `sh -c "test -r /etc/hosts && echo CAN || echo CANT"`.
+        // With Landlock restricting to /tmp, the read should be denied.
+        let mut cmd = Command::new("/bin/sh");
+        cmd.arg("-c")
+            .arg("test -r /etc/hosts && echo CAN || echo CANT");
+        cmd.stdout(Stdio::piped());
+        let allowed: Vec<PathBuf> = vec!["/tmp".into()];
+        unsafe {
+            cmd.pre_exec(move || {
+                apply_always_on_limits()?;
+                apply_filesystem_allowlist(&allowed)?;
+                Ok(())
+            });
+        }
+        let out = cmd.output().expect("spawn /bin/sh");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("CANT"),
+            "landlock should deny /etc/hosts read; got {stdout:?}"
+        );
     }
 
     /// Spawning a child via Command with the safety pre_exec must

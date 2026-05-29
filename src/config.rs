@@ -272,6 +272,14 @@ pub struct FunctionConfig {
     /// untrusted handler code.
     #[serde(default)]
     pub cpu_time_secs: Option<u32>,
+    /// On-box safety: filesystem allowlist enforced via Linux Landlock
+    /// LSM (kernel 5.13+). Each path (and everything beneath it) is
+    /// readable/writable by the child; everything else is denied.
+    /// Off by default and silently no-op on non-Linux platforms.
+    /// Typical pattern: `allowed_paths = ["./handler", "/tmp"]` to
+    /// confine the lambda to its own directory + scratch space.
+    #[serde(default)]
+    pub allowed_paths: Option<Vec<PathBuf>>,
 }
 
 impl FunctionConfig {
@@ -828,6 +836,7 @@ handler = "./h.ts"
             authorizer: None,
             memory_mb: None,
             cpu_time_secs: None,
+            allowed_paths: None,
         }
     }
 

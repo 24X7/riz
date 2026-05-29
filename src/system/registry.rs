@@ -160,6 +160,7 @@ mod tests {
             authorizer: None,
             memory_mb: None,
             cpu_time_secs: None,
+            allowed_paths: None,
         };
         FunctionState::user("api", c, "$default", 0)
     }

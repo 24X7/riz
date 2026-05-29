@@ -117,6 +117,7 @@ fn echo_fn(concurrency: usize) -> FunctionConfig {
         authorizer: None,
         memory_mb: None,
         cpu_time_secs: None,
+        allowed_paths: None,
     }
 }
 

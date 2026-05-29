@@ -32,6 +32,7 @@ fn bun_fn(handler: &str, concurrency: usize, ttl: Option<u64>) -> FunctionConfig
         authorizer: None,
         memory_mb: None,
         cpu_time_secs: None,
+        allowed_paths: None,
     }
 }
 

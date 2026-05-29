@@ -58,6 +58,7 @@ fn make_function_config(handler: PathBuf) -> FunctionConfig {
         authorizer: None,
         memory_mb: None,
         cpu_time_secs: None,
+        allowed_paths: None,
     }
 }
 

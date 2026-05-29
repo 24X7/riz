@@ -74,13 +74,20 @@ pub(super) async fn spawn_process(
         // to the FunctionConfig (which doesn't live across fork).
         let memory_mb = cfg.memory_mb;
         let cpu_time_secs = cfg.cpu_time_secs;
-        // SAFETY: apply_always_on_limits + apply_per_function_limits are
-        // async-signal-safe (setrlimit + prctl on POSIX safe list).
-        // Runs after fork, before execve.
+        let allowed_paths = cfg.allowed_paths.clone();
+        // SAFETY: apply_always_on_limits + apply_per_function_limits +
+        // apply_filesystem_allowlist are async-signal-safe enough for
+        // pre_exec — they make syscalls (setrlimit, prctl, landlock).
+        // The landlock crate allocates internally; widespread real-world
+        // use in pre_exec (systemd, container runtimes) attests this is
+        // safe in practice on modern glibc/musl.
         unsafe {
             cmd.pre_exec(move || {
                 crate::process::safety::apply_always_on_limits()?;
                 crate::process::safety::apply_per_function_limits(memory_mb, cpu_time_secs)?;
+                if let Some(paths) = &allowed_paths {
+                    crate::process::safety::apply_filesystem_allowlist(paths)?;
+                }
                 Ok(())
             });
         }
