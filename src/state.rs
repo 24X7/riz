@@ -547,6 +547,8 @@ mod riz_state_tests {
             routes: vec![],
             cors: None,
             authorizer: None,
+            memory_mb: None,
+            cpu_time_secs: None,
         }
     }
 

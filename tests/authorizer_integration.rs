@@ -181,6 +181,8 @@ async fn request_authorizer_allows_valid_token() {
             }],
             cors: None,
             authorizer: None,
+            memory_mb: None,
+            cpu_time_secs: None,
         },
     );
     functions.insert(
@@ -200,6 +202,8 @@ async fn request_authorizer_allows_valid_token() {
             }],
             cors: None,
             authorizer: Some(AuthorizerConfig::FunctionRef("auth-fn".into())),
+            memory_mb: None,
+            cpu_time_secs: None,
         },
     );
 
@@ -272,6 +276,8 @@ async fn request_authorizer_rejects_invalid_token() {
             }],
             cors: None,
             authorizer: None,
+            memory_mb: None,
+            cpu_time_secs: None,
         },
     );
     functions.insert(
@@ -291,6 +297,8 @@ async fn request_authorizer_rejects_invalid_token() {
             }],
             cors: None,
             authorizer: Some(AuthorizerConfig::FunctionRef("auth-fn".into())),
+            memory_mb: None,
+            cpu_time_secs: None,
         },
     );
 
@@ -361,6 +369,8 @@ async fn authorizer_none_opt_out_allows_any_request() {
             cors: None,
             // Explicit opt-out.
             authorizer: Some(AuthorizerConfig::FunctionRef("none".into())),
+            memory_mb: None,
+            cpu_time_secs: None,
         },
     );
 

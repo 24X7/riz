@@ -30,6 +30,8 @@ fn bun_fn(handler: &str, concurrency: usize, ttl: Option<u64>) -> FunctionConfig
         }],
         cors: None,
         authorizer: None,
+        memory_mb: None,
+        cpu_time_secs: None,
     }
 }
 

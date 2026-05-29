@@ -158,6 +158,8 @@ mod tests {
             routes: vec![],
             cors: None,
             authorizer: None,
+            memory_mb: None,
+            cpu_time_secs: None,
         };
         FunctionState::user("api", c, "$default", 0)
     }

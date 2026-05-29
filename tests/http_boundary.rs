@@ -147,6 +147,8 @@ async fn oversized_body_returns_413_for_routed_request() {
             }],
             cors: None,
             authorizer: None,
+            memory_mb: None,
+            cpu_time_secs: None,
         },
     );
     let state = make_state_with_functions(functions);
@@ -196,6 +198,8 @@ async fn auth_bypass_skips_cache() {
             }],
             cors: None,
             authorizer: None,
+            memory_mb: None,
+            cpu_time_secs: None,
         },
     );
     let state = make_state_with_functions(functions);
@@ -312,6 +316,8 @@ async fn gateway_timeout_returns_504_for_routed_request() {
             }],
             cors: None,
             authorizer: None,
+            memory_mb: None,
+            cpu_time_secs: None,
         },
     );
     let state = make_state_with_functions(functions.clone());

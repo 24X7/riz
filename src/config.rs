@@ -259,6 +259,19 @@ pub struct FunctionConfig {
     /// - `[function.X.authorizer]` block with `type = "jwt"` — JWT authorizer.
     #[serde(default)]
     pub authorizer: Option<AuthorizerConfig>,
+    /// On-box safety: hard cap on the spawned child's virtual address space,
+    /// in megabytes. Maps to RLIMIT_AS. Mirrors AWS Lambda's `MemorySize`
+    /// setting. Off by default — Bun and Python JITs can spike well above
+    /// heap usage, so opt-in only. Linux: strict; macOS: best-effort
+    /// (RLIMIT_AS enforcement varies by allocator and JIT mode).
+    #[serde(default)]
+    pub memory_mb: Option<u32>,
+    /// On-box safety: hard cap on CPU seconds the spawned child may
+    /// accumulate. Maps to RLIMIT_CPU. Exceeding triggers SIGXCPU then
+    /// SIGKILL. Off by default — useful for runaway-loop protection on
+    /// untrusted handler code.
+    #[serde(default)]
+    pub cpu_time_secs: Option<u32>,
 }
 
 impl FunctionConfig {
@@ -813,6 +826,8 @@ handler = "./h.ts"
             routes: vec![],
             cors: None,
             authorizer: None,
+            memory_mb: None,
+            cpu_time_secs: None,
         }
     }
 

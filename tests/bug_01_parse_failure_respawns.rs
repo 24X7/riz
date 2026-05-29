@@ -56,6 +56,8 @@ fn make_function_config(handler: PathBuf) -> FunctionConfig {
         }],
         cors: None,
         authorizer: None,
+        memory_mb: None,
+        cpu_time_secs: None,
     }
 }
 

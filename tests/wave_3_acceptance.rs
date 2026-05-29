@@ -362,6 +362,8 @@ fn validate_rejects_jwt_authorizer_with_wrong_type() {
                         audience: "app".into(),
                         jwks_uri: "https://example.com/.well-known/jwks.json".into(),
                     })),
+                    memory_mb: None,
+                    cpu_time_secs: None,
                 },
             );
             m

@@ -69,12 +69,20 @@ pub(super) async fn spawn_process(
     #[cfg(unix)]
     {
         cmd.process_group(0);
-        // SAFETY: apply_always_on_limits is async-signal-safe (setrlimit
-        // is on the POSIX safe list). Runs after fork, before execve.
-        // tokio::process::Command provides pre_exec inherently — no
-        // CommandExt import needed.
+        // Capture per-function opt-in caps as locals so the pre_exec
+        // closure can move them across fork without holding a reference
+        // to the FunctionConfig (which doesn't live across fork).
+        let memory_mb = cfg.memory_mb;
+        let cpu_time_secs = cfg.cpu_time_secs;
+        // SAFETY: apply_always_on_limits + apply_per_function_limits are
+        // async-signal-safe (setrlimit + prctl on POSIX safe list).
+        // Runs after fork, before execve.
         unsafe {
-            cmd.pre_exec(crate::process::safety::apply_always_on_limits);
+            cmd.pre_exec(move || {
+                crate::process::safety::apply_always_on_limits()?;
+                crate::process::safety::apply_per_function_limits(memory_mb, cpu_time_secs)?;
+                Ok(())
+            });
         }
     }
 
