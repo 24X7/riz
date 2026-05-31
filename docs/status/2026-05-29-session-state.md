@@ -89,23 +89,23 @@ Source of truth is `docs/production-bugs.md` — this is a sanity ledger.
 | Bug | Status | Evidence |
 |---|---|---|
 | BUG-01 | ✅ RESOLVED `3b4fe3c2` | regression gate `tests/bug_01_parse_failure_respawns.rs` |
-| BUG-02 | ✅ RESOLVED (pre-session) | liveness watcher in `src/process/liveness.rs` |
+| BUG-02 | ✅ RESOLVED | liveness watcher at `src/process/liveness.rs:36`; respawn machinery + crash threshold gate. Verified 2026-05-31. |
 | BUG-03 | ✅ RESOLVED `279813a2` (annotation only — fix is older) | `PipeDropGuard` at `src/process/mod.rs:232-241` |
 | BUG-04 | ✅ RESOLVED `279813a2` | bounded `mpsc::channel(10_000)` + drain task `src/main.rs:140,284` |
-| BUG-05 | ✅ RESOLVED (pre-session) | `axum.serve(...).with_graceful_shutdown(...)` |
-| BUG-06 | ✅ RESOLVED (pre-session) | `src/hotreload.rs` diff-aware swap |
+| BUG-05 | ✅ RESOLVED | `axum::serve(...).with_graceful_shutdown(...)` at `src/server.rs:94`; SIGTERM/SIGINT via `tokio::signal`. Verified 2026-05-31. |
+| BUG-06 | ✅ RESOLVED | `src/hotreload.rs::watch_config` diff-aware swap; full hotreload_integration suite + e2e gate. Verified 2026-05-31. |
 | BUG-07 | ✅ RESOLVED | `/deploy` returns 503 when neither auth method set (`src/deploy.rs:47-56`). Regression gate: `tests/http_boundary.rs:94`. Verified during 2026-05-29 batch close. |
 | BUG-08 | ✅ RESOLVED `279813a2` | `percent_decode()` at `src/router.rs:124` |
-| BUG-09 | ✅ RESOLVED (pre-session) | base64 path for non-UTF8 bodies in `src/server.rs:333` |
-| BUG-10 | ✅ RESOLVED (pre-session) | 413 on >10 MB body at `src/server.rs:325` |
-| BUG-11 | ✅ RESOLVED (pre-session) | (verify in tracker) |
-| BUG-12 | ✅ RESOLVED (pre-session) | auth-aware cache bypass at `src/server.rs:227` |
+| BUG-09 | ✅ RESOLVED | base64 path for non-UTF8 bodies at `src/server.rs:330-340` (req) + `:628` (resp). Parity test gate: `tests/runtime_parity_binary.rs`. Verified 2026-05-31. |
+| BUG-10 | ✅ RESOLVED | 413 on >10 MiB body at `src/server.rs:324-328`. Regression gate: `tests/http_boundary.rs::oversized_body_returns_413_for_routed_request`. Verified 2026-05-31. |
+| BUG-11 | ✅ RESOLVED | `/health` + `/ready` routes at `src/server.rs:40-41`. Regression gates in `tests/http_boundary.rs`. Verified 2026-05-31. |
+| BUG-12 | ✅ RESOLVED | auth-aware cache bypass at `src/server.rs:227-235,554`. Regression gate: `tests/http_boundary.rs::auth_bypass_skips_cache`. Verified 2026-05-31. |
 | BUG-13 | ✅ RESOLVED | `src/deploy.rs:170-191` — 300ms sleep, pool_stats healthy check, 422 on crash. Verified during 2026-05-29 batch close. |
-| BUG-14 | ✅ RESOLVED (pre-session) | (verify in tracker) |
+| BUG-14 | ✅ RESOLVED | `ProcessesToUpdate::Some(&pids)` at `src/process/mod.rs:585` (pool) + `:532` (host). Verified 2026-05-31. |
 | BUG-15 | ✅ RESOLVED | wave-7.3 killed `route_stats` write-lock; current `record_invocation` uses atomics + per-entry mutexes (`src/state.rs:477-508`). Verified by `tests/perf_ws_load.rs` — 100 WS round-trips in ~53 ms (≈ 1900 msg/s); pathological serialization would have blown the 10s ceiling. |
 | BUG-16 | ✅ RESOLVED | error-path log line gained `req=...` + `ip=...`; cache-hit and success paths already had them. Gate: `tests/bug_16_access_logs_include_correlation.rs` scans `src/server.rs` push_log sites. |
-| BUG-17 | 🚧 OPEN (verify) | check tracker |
-| BUG-18 | 🚧 OPEN (verify) | check tracker — concurrent deploys race on `/tmp/riz-deploy/<lambda>` |
+| BUG-17 | ✅ RESOLVED | moka `weigher()` at `src/cache.rs:36-43` returns actual byte size per entry. Gate: `cache_weigher_uses_body_size`. Verified 2026-05-31. |
+| BUG-18 | ✅ RESOLVED | UUID-suffixed staging path at `src/deploy.rs:128-133`. Gate: `deploy_staging_dir_is_unique`. Verified 2026-05-31. |
 | BUG-19 | ✅ RESOLVED | `unpack_zip_into` skips symlinks (`src/deploy.rs`). Regression gate: `tests::bug_19_unpack_zip_skips_symlink_entries` builds a real zip with a symlink and proves extraction skips it. Verified during 2026-05-29 batch close. |
 | BUG-20 | ✅ RESOLVED `fe0e0176` | adapters now passthrough non-HTTP shapes; regression gates in `tests/middleware_request_authorizer.rs` |
 
