@@ -43,26 +43,49 @@
     html{scroll-behavior:smooth}
 
     :root{
-      --bg:       #060E1C;
-      --bg2:      #091420;
-      --border:   #112030;
-      --border2:  #1A3040;
-      --ink:      #E0F4F8;
-      --ink2:     #90B8C8;
-      --ink3:     #405870;
-      --ink4:     #1E3448;
-      --accent:   #00C8E0;
-      --acc-bg:   #001A20;
-      --acc-bd:   #005060;
-      --acc-t:    #060E1C;
-      --t-bg:     #040A12;
-      --t-bd:     #0C2030;
-      --t-acc:    #00C8E0;
-      --t-acc2:   #0098AA;
-      --ok:       #30D080;
-      --err:      #FF5A5A;
-      --code:     #091420;
-      --nav:      rgba(6,14,28,0.92);
+      /* dark base — keeps the TUI mockup feeling authentic */
+      --bg:       #0A0E1F;
+      --bg2:      #0F1530;
+      --border:   #1C2548;
+      --border2:  #2A3868;
+      --ink:      #F0F6FF;
+      --ink2:     #A8B8DC;
+      --ink3:     #5A6896;
+      --ink4:     #2E3858;
+
+      /* vibrant accent palette — four pops, each with intent.
+         cyan = system/CLI/MCP, amber = onboarding/eyebrows,
+         magenta = primary CTAs & emphasis, lime = success/safety,
+         violet = configuration/pills variant.
+         Used sparingly so the page stays calm where it should be
+         (code, terminal) and lights up where it should (CTAs,
+         status, hero accent). */
+      --cyan:     #2DD4F0;
+      --amber:    #FFC857;
+      --magenta:  #FF5BA1;
+      --lime:     #65F0A3;
+      --violet:   #A78BFA;
+
+      /* backward-compat alias — keeps the existing rules that
+         already reference --accent working. Treat as "the
+         workhorse accent" (CLI, code highlights). */
+      --accent:   var(--cyan);
+
+      --acc-bg:   #002433;
+      --acc-bd:   #006B82;
+      --acc-t:    #0A0E1F;
+
+      /* hero bar gradient — used by .hero-l::before */
+      --grad-1:   linear-gradient(90deg,var(--cyan) 0%,var(--violet) 50%,var(--magenta) 100%);
+
+      --t-bg:     #040816;
+      --t-bd:     #0F1A38;
+      --t-acc:    var(--cyan);
+      --t-acc2:   #00B0CC;
+      --ok:       var(--lime);
+      --err:      #FF6B8C;
+      --code:     #0F1530;
+      --nav:      rgba(10,14,31,0.92);
       --serif:    'Fraunces',Georgia,serif;
       --mono:     'Space Mono',monospace;
       --sans:     'DM Sans',sans-serif;
@@ -127,14 +150,16 @@
       border-right:1px solid var(--border);position:relative;
     }
 
-    /* cyan top bar */
+    /* vibrant tri-color hero bar (cyan → violet → magenta) — pulses
+       gently so it feels alive but never distracting */
     .hero-l::before{
       content:'';position:absolute;top:0;left:10vw;right:0;height:3px;
-      background:var(--accent);
+      background:var(--grad-1);background-size:200% 100%;
+      animation:flow 8s ease-in-out infinite;
     }
 
     .eyebrow{
-      font-family:var(--mono);font-size:0.63rem;color:var(--accent);
+      font-family:var(--mono);font-size:0.63rem;color:var(--amber);
       letter-spacing:0.18em;text-transform:uppercase;margin-bottom:1.75rem;
       opacity:0;animation:up 0.5s ease forwards 0.1s;
     }
@@ -145,7 +170,13 @@
       color:var(--ink);margin-bottom:1.5rem;
       opacity:0;animation:up 0.5s ease forwards 0.2s;
     }
-    h1 em{font-style:italic;font-weight:300;color:var(--ink2)}
+    h1 em{
+      font-style:italic;font-weight:300;
+      background:var(--grad-1);background-size:200% 100%;
+      -webkit-background-clip:text;background-clip:text;
+      -webkit-text-fill-color:transparent;color:transparent;
+      animation:flow 8s ease-in-out infinite;
+    }
 
     .sub{
       font-size:0.975rem;color:var(--ink3);line-height:1.78;
@@ -199,12 +230,15 @@
         linear-gradient(90deg,var(--border) 1px,transparent 1px);
       background-size:28px 28px;opacity:0.6;
     }
-    /* cyan glow behind TUI */
+    /* multi-color glow behind TUI — cyan core, violet halo, magenta blush */
     .hero-r::after{
       content:'';position:absolute;
       top:50%;left:50%;transform:translate(-50%,-50%);
-      width:380px;height:260px;
-      background:radial-gradient(ellipse,rgba(0,200,224,0.07) 0%,transparent 70%);
+      width:520px;height:380px;
+      background:
+        radial-gradient(ellipse 60% 50% at 30% 40%,rgba(45,212,240,0.10) 0%,transparent 70%),
+        radial-gradient(ellipse 60% 50% at 70% 50%,rgba(167,139,250,0.08) 0%,transparent 70%),
+        radial-gradient(ellipse 50% 40% at 50% 70%,rgba(255,91,161,0.06) 0%,transparent 70%);
       pointer-events:none;
     }
 
@@ -287,11 +321,28 @@
     .si{
       padding:1.85rem 1.85rem;border-right:1px solid var(--border);
       display:flex;gap:0.85rem;align-items:flex-start;
-      transition:background 0.2s;
+      transition:background 0.2s, transform 0.2s;
+      position:relative;
     }
     .si:last-child{border-right:none}
-    .si:hover{background:var(--bg2)}
-    .sn{font-family:var(--mono);font-size:0.6rem;color:var(--accent);margin-top:0.12rem;flex-shrink:0}
+    .si:hover{background:var(--bg2);transform:translateY(-2px)}
+    /* each strip item gets its own accent on the number — cycles through
+       the palette in order so the strip feels alive */
+    .sn{font-family:var(--mono);font-size:0.6rem;margin-top:0.12rem;flex-shrink:0;font-weight:700}
+    .si:nth-child(1) .sn{color:var(--cyan)}
+    .si:nth-child(2) .sn{color:var(--violet)}
+    .si:nth-child(3) .sn{color:var(--amber)}
+    .si:nth-child(4) .sn{color:var(--magenta)}
+    /* top edge highlight on hover, matching the number color */
+    .si::before{
+      content:'';position:absolute;top:0;left:0;right:0;height:2px;
+      opacity:0;transition:opacity 0.2s;
+    }
+    .si:hover::before{opacity:1}
+    .si:nth-child(1):hover::before{background:var(--cyan)}
+    .si:nth-child(2):hover::before{background:var(--violet)}
+    .si:nth-child(3):hover::before{background:var(--amber)}
+    .si:nth-child(4):hover::before{background:var(--magenta)}
     .si h3{font-family:var(--sans);font-size:0.875rem;font-weight:600;color:var(--ink);margin-bottom:0.28rem}
     .si p{font-size:0.78rem;color:var(--ink3);line-height:1.65}
 
@@ -306,24 +357,46 @@
       display:flex;flex-direction:column;justify-content:center;
     }
     .lbl{
-      font-family:var(--mono);font-size:0.6rem;color:var(--accent);
+      font-family:var(--mono);font-size:0.6rem;color:var(--cyan);
       letter-spacing:0.18em;text-transform:uppercase;margin-bottom:1.5rem;
       display:block;
     }
+    /* per-section eyebrow tinting — MCP cyan, Config violet, Status amber,
+       Author magenta, CTA lime — gives each section its own identity. */
+    #mcp .lbl{color:var(--cyan)}
+    #config .lbl{color:var(--violet)}
+    #status .lbl{color:var(--amber)}
+    #author .lbl{color:var(--magenta)}
+    .cta .lbl{color:var(--lime)}
     h2{
       font-family:var(--serif);font-size:clamp(1.9rem,2.8vw,2.85rem);
       font-weight:900;line-height:1.05;letter-spacing:-0.03em;
       margin-bottom:1.2rem;color:var(--ink);
     }
-    h2 em{font-style:italic;font-weight:300;color:var(--ink2)}
+    h2 em{
+      font-style:italic;font-weight:300;
+      background:var(--grad-1);background-size:200% 100%;
+      -webkit-background-clip:text;background-clip:text;
+      -webkit-text-fill-color:transparent;color:transparent;
+      animation:flow 12s ease-in-out infinite;
+    }
     .sp-t p{font-size:0.88rem;color:var(--ink3);line-height:1.75;margin-bottom:0.8rem;max-width:370px}
     .pills{display:flex;gap:0.38rem;flex-wrap:wrap;margin-top:0.7rem;align-items:center}
     .pills+.pills{margin-top:0.38rem}
     .pill{
       font-family:var(--mono);font-size:0.6rem;
-      color:var(--accent);background:var(--acc-bg);border:1px solid var(--acc-bd);
+      color:var(--cyan);background:var(--acc-bg);border:1px solid var(--acc-bd);
       padding:0.18rem 0.52rem;border-radius:2px;
+      transition:transform 0.15s;
     }
+    .pill:hover{transform:translateY(-1px)}
+    /* runtime row gets a different color per pill so Bun / Python / Rust
+       each have a visual identity */
+    .pills.runtimes .pill:nth-child(2){color:var(--amber);border-color:rgba(255,200,87,0.4);background:rgba(255,200,87,0.06)}
+    .pills.runtimes .pill:nth-child(3){color:var(--lime);border-color:rgba(101,240,163,0.4);background:rgba(101,240,163,0.06)}
+    .pills.runtimes .pill:nth-child(4){color:var(--magenta);border-color:rgba(255,91,161,0.4);background:rgba(255,91,161,0.06)}
+    /* protocol row likewise */
+    .pills.protocols .pill:nth-child(3){color:var(--violet);border-color:rgba(167,139,250,0.4);background:rgba(167,139,250,0.06)}
     .pill-group-label{
       font-family:var(--mono);font-size:0.55rem;color:var(--ink4);
       text-transform:uppercase;letter-spacing:0.1em;margin-right:0.18rem;
@@ -370,6 +443,9 @@
       font-family:var(--sans);font-size:0.95rem;font-weight:600;color:var(--ink);
       margin-bottom:0.95rem;letter-spacing:-0.01em;
     }
+    /* lime for the "Works now" header, amber for "Coming" */
+    .status-col:nth-child(1) h3{color:var(--lime)}
+    .status-col:nth-child(2) h3{color:var(--amber)}
     .status-col ul{list-style:none;padding:0}
     .status-col li{
       font-size:0.83rem;color:var(--ink3);line-height:1.55;padding:0.32rem 0;
@@ -377,7 +453,7 @@
     }
     .status-col li:last-child{border-bottom:none}
     .status-col code{
-      font-family:var(--mono);font-size:0.78em;color:var(--accent);
+      font-family:var(--mono);font-size:0.78em;color:var(--cyan);
     }
     @media(max-width:960px){
       .status{padding:4rem 2rem}
@@ -398,14 +474,18 @@
       font-family:var(--serif);font-size:clamp(1.15rem,1.9vw,1.55rem);
       font-weight:300;font-style:italic;line-height:1.6;
       color:var(--ink);letter-spacing:-0.02em;margin-bottom:2.25rem;
-      padding-left:1.4rem;border-left:3px solid var(--accent);
+      padding-left:1.4rem;
+      border-left:3px solid transparent;
+      border-image:var(--grad-1) 1;
     }
     .acard{display:flex;align-items:flex-start;gap:1.2rem}
     .badge{
       width:46px;height:46px;border-radius:2px;
-      background:var(--accent);display:flex;align-items:center;
+      background:var(--grad-1);background-size:200% 100%;
+      display:flex;align-items:center;
       justify-content:center;font-family:var(--mono);font-size:0.8rem;
       font-weight:700;color:var(--acc-t);flex-shrink:0;
+      animation:flow 10s ease-in-out infinite;
     }
     .an{font-size:0.98rem;font-weight:600;color:var(--ink);margin-bottom:0.28rem}
     .ab{font-size:0.78rem;color:var(--ink3);line-height:1.65}
@@ -433,25 +513,36 @@
       border-bottom:1px solid var(--border);
       position:relative;overflow:hidden;
     }
+    /* CTA backdrop blooms with a layered multi-color glow */
     .cta::before{
       content:'';position:absolute;
-      bottom:-100px;right:10vw;
-      width:500px;height:400px;
-      background:radial-gradient(ellipse,rgba(0,200,224,0.05) 0%,transparent 65%);
+      bottom:-150px;right:10vw;
+      width:700px;height:520px;
+      background:
+        radial-gradient(ellipse 50% 40% at 30% 40%,rgba(255,91,161,0.10) 0%,transparent 65%),
+        radial-gradient(ellipse 50% 40% at 70% 60%,rgba(167,139,250,0.08) 0%,transparent 65%),
+        radial-gradient(ellipse 50% 40% at 50% 30%,rgba(101,240,163,0.06) 0%,transparent 65%);
       pointer-events:none;
     }
     .cta h2{font-size:clamp(2.25rem,4vw,4rem);position:relative}
     .cta-btns{display:flex;flex-direction:column;gap:0.7rem;flex-shrink:0;position:relative}
 
+    /* primary CTA: magenta gradient — grabs attention vs the cyan
+       used elsewhere for CLI/system context */
     .bp{
       font-family:var(--mono);font-size:0.76rem;font-weight:700;
-      color:var(--acc-t);background:var(--accent);
+      color:#fff;
+      background:linear-gradient(135deg,var(--magenta) 0%,var(--violet) 100%);
       padding:0.85rem 1.85rem;border-radius:2px;
       text-decoration:none;text-align:center;display:block;
       white-space:nowrap;
-      transition:opacity 0.15s,transform 0.15s;
+      box-shadow:0 4px 18px rgba(255,91,161,0.25);
+      transition:opacity 0.15s,transform 0.15s,box-shadow 0.15s;
     }
-    .bp:hover{opacity:0.85;transform:translateY(-1px)}
+    .bp:hover{
+      opacity:0.94;transform:translateY(-2px);
+      box-shadow:0 8px 28px rgba(255,91,161,0.4);
+    }
 
     .bs{
       font-family:var(--mono);font-size:0.76rem;color:var(--ink3);
@@ -477,6 +568,20 @@
     /* ── ANIMATIONS ── */
     @keyframes up{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
     @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+    /* slow gradient slide for the hero bar, h1 em, h2 em, badge, etc. */
+    @keyframes flow{
+      0%,100%{background-position:0% 50%}
+      50%{background-position:100% 50%}
+    }
+    /* respect reduced-motion preference — disables the gradient slides
+       and the up-fade. Cursor blink is small enough to keep. */
+    @media (prefers-reduced-motion: reduce){
+      *,*::before,*::after{
+        animation-duration:0.01ms !important;
+        animation-iteration-count:1 !important;
+        transition-duration:0.01ms !important;
+      }
+    }
 
     /* ── RESPONSIVE ── */
     @media(max-width:960px){
@@ -655,13 +760,13 @@ $ claude mcp add riz-local \
     <h2>One file.<br/><em>All your functions.</em></h2>
     <p>Define your entire function fleet in a single <code style="font-family:var(--mono);font-size:.82em;color:var(--accent)">riz.toml</code>. Routing, process management, and resource limits — automatic.</p>
     <p>Point any HTTP client at Riz exactly as you would at API Gateway. Same format, different bill.</p>
-    <div class="pills">
+    <div class="pills runtimes">
       <span class="pill-group-label">runtimes</span>
       <span class="pill">bun</span>
       <span class="pill">python</span>
       <span class="pill">rust</span>
     </div>
-    <div class="pills">
+    <div class="pills protocols">
       <span class="pill-group-label">protocols</span>
       <span class="pill">http api v2</span>
       <span class="pill">websocket</span>
