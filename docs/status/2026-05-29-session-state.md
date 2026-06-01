@@ -67,7 +67,7 @@ Commits since `0542c1c4` (the wave-8 fix that kicked off the run):
 - **Telemetry implementation** (after architectural decision above)
 
 ### Tier 5 — DX polish (smaller wins)
-- **More `riz init` templates** — currently typescript-http + python-http. Add: rust-http, typescript-websocket
+- ~~More `riz init` templates — currently typescript-http + python-http. Add: rust-http, typescript-websocket~~ ✅ DONE 2026-06-01 (`c773da9c`): full 3×2 matrix (typescript/python/rust × http/websocket)
 - **Per-route MCP tool schemas** — currently every function is a generic envelope; should derive per-route input types from path/query params
 - **MCP-native tools** — `riz.tail_logs`, `riz.replay_request`, `riz.list_routes`, `riz.scaffold`
 - **TUI logs tab** — currently logs are filtered per-route only; dedicated tab would help
