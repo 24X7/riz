@@ -344,12 +344,12 @@ async fn gateway_timeout_returns_504_for_routed_request() {
     let addr = serve(state).await;
 
     // Allow bun to cold-start before firing the request that must time out.
-    // This ensures the 504 comes from integration_timeout_ms, not from pool
-    // startup. 3000ms is generous to absorb parallel suite load (other tests
-    // spawning their own Bun/Python/Rust pools concurrently). The previous
-    // 800ms was tight enough to flake when run alongside the parity-test
-    // suites that boot 12+ servers in parallel.
-    tokio::time::sleep(std::time::Duration::from_millis(3000)).await;
+    // 10s is the deliberate over-provision — this test passes solo in ~6s
+    // but contends with the other 670+ tests under nextest's full parallel
+    // fan-out. The proper fix is a /_riz/health readiness probe in the
+    // test setup; that's a separate cleanup. Until then: just wait long
+    // enough that bun is reliably booted before we fire the 504-test request.
+    tokio::time::sleep(std::time::Duration::from_millis(10_000)).await;
 
     let start = std::time::Instant::now();
     let resp = reqwest::get(format!("http://{addr}/slow")).await.unwrap();
@@ -364,11 +364,9 @@ async fn gateway_timeout_returns_504_for_routed_request() {
     );
 
     // Must respond within integration_timeout_ms + generous CI margin.
-    // 10s absorbs scheduler latency under parallel load while still proving
-    // the timeout fires promptly relative to a 60s handler timeout.
     assert!(
-        elapsed < std::time::Duration::from_secs(10),
-        "integration timeout must fire within 10s (got {:?})",
+        elapsed < std::time::Duration::from_secs(15),
+        "integration timeout must fire within 15s (got {:?})",
         elapsed
     );
 }

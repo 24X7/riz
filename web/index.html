@@ -43,49 +43,45 @@
     html{scroll-behavior:smooth}
 
     :root{
-      /* dark base — keeps the TUI mockup feeling authentic */
-      --bg:       #0A0E1F;
-      --bg2:      #0F1530;
-      --border:   #1C2548;
-      --border2:  #2A3868;
-      --ink:      #F0F6FF;
-      --ink2:     #A8B8DC;
-      --ink3:     #5A6896;
-      --ink4:     #2E3858;
+      /* Editorial-cream base. Pairs with Fraunces to feel like a
+         thoughtful publication about an infra tool rather than the
+         standard dark-mode Vercel/Linear clone everyone ships. */
+      --bg:       #F9F4E8;   /* warm cream, uncoated stock */
+      --bg2:      #F2EBD8;   /* one shade deeper, alternating sections */
+      --border:   #E5D9BC;
+      --border2:  #D2C29B;
+      --ink:      #1E1A11;   /* deep warm near-black */
+      --ink2:     #4A4334;
+      --ink3:     #7F7660;
+      --ink4:     #B8AC8E;
 
-      /* vibrant accent palette — four pops, each with intent.
-         cyan = system/CLI/MCP, amber = onboarding/eyebrows,
-         magenta = primary CTAs & emphasis, lime = success/safety,
-         violet = configuration/pills variant.
-         Used sparingly so the page stays calm where it should be
-         (code, terminal) and lights up where it should (CTAs,
-         status, hero accent). */
-      --cyan:     #2DD4F0;
-      --amber:    #FFC857;
-      --magenta:  #FF5BA1;
-      --lime:     #65F0A3;
-      --violet:   #A78BFA;
+      /* Accents picked for legibility on cream. Same five-color intent
+         as before — cyan=CLI, amber=warmth, magenta=CTA, lime=success,
+         violet=secondary — but darker variants so they read at body size. */
+      --cyan:     #0B8F9F;
+      --amber:    #C97400;
+      --magenta:  #C73670;
+      --lime:     #4F9758;
+      --violet:   #6748D8;
 
-      /* backward-compat alias — keeps the existing rules that
-         already reference --accent working. Treat as "the
-         workhorse accent" (CLI, code highlights). */
       --accent:   var(--cyan);
 
-      --acc-bg:   #002433;
-      --acc-bd:   #006B82;
-      --acc-t:    #0A0E1F;
+      --acc-bg:   #E3F1F3;
+      --acc-bd:   #B8E0E5;
+      --acc-t:    #FFFFFF;
 
-      /* hero bar gradient — used by .hero-l::before */
       --grad-1:   linear-gradient(90deg,var(--cyan) 0%,var(--violet) 50%,var(--magenta) 100%);
 
-      --t-bg:     #040816;
-      --t-bd:     #0F1A38;
-      --t-acc:    var(--cyan);
+      /* TUI window + code blocks stay DARK — they're terminal screenshots
+         inlaid on the cream page. Correct visual semantic. */
+      --t-bg:     #0E1828;
+      --t-bd:     #1F2D45;
+      --t-acc:    #2DD4F0;
       --t-acc2:   #00B0CC;
       --ok:       var(--lime);
-      --err:      #FF6B8C;
-      --code:     #0F1530;
-      --nav:      rgba(10,14,31,0.92);
+      --err:      #C73670;
+      --code:     #1A1B26;
+      --nav:      rgba(249,244,232,0.94);
       --serif:    'Fraunces',Georgia,serif;
       --mono:     'Space Mono',monospace;
       --sans:     'DM Sans',sans-serif;
@@ -100,11 +96,13 @@
       overflow-x:hidden;
     }
 
-    /* subtle grain */
+    /* Paper-grain texture, darker on cream than the original was on
+       dark, multiplied so it shows. Subtle but present, like uncoated stock. */
     body::before{
       content:'';
       position:fixed;inset:0;
-      background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+      background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.06'/%3E%3C/svg%3E");
+      mix-blend-mode:multiply;
       pointer-events:none;z-index:9999;
     }
 
@@ -132,7 +130,7 @@
     .nav-r a:hover{color:var(--ink)}
     .nav-gh{
       font-family:var(--mono) !important;font-size:0.7rem !important;
-      background:var(--accent) !important;color:var(--acc-t) !important;
+      background:var(--ink) !important;color:var(--bg) !important;
       padding:0.4rem 0.95rem;border-radius:2px;font-weight:700 !important;
       transition:opacity 0.15s !important;
     }
@@ -150,12 +148,10 @@
       border-right:1px solid var(--border);position:relative;
     }
 
-    /* vibrant tri-color hero bar (cyan → violet → magenta) — pulses
-       gently so it feels alive but never distracting */
+    /* Solid amber accent bar — single color, no gradient. */
     .hero-l::before{
       content:'';position:absolute;top:0;left:10vw;right:0;height:3px;
-      background:var(--grad-1);background-size:200% 100%;
-      animation:flow 8s ease-in-out infinite;
+      background:var(--amber);
     }
 
     .eyebrow{
@@ -170,17 +166,13 @@
       color:var(--ink);margin-bottom:1.5rem;
       opacity:0;animation:up 0.5s ease forwards 0.2s;
     }
-    h1 em{
-      font-style:italic;font-weight:300;
-      background:var(--grad-1);background-size:200% 100%;
-      -webkit-background-clip:text;background-clip:text;
-      -webkit-text-fill-color:transparent;color:transparent;
-      animation:flow 8s ease-in-out infinite;
-    }
+    /* Solid color italic — no gradient. Amber adds warmth without
+       competing with the rest of the dark serif. */
+    h1 em{font-style:italic;font-weight:300;color:var(--amber)}
 
     .sub{
-      font-size:0.975rem;color:var(--ink3);line-height:1.78;
-      max-width:420px;margin-bottom:2.5rem;
+      font-size:1.1rem;color:var(--ink2);line-height:1.72;
+      max-width:460px;margin-bottom:2.5rem;
       opacity:0;animation:up 0.5s ease forwards 0.3s;
     }
     .sub strong{color:var(--ink);font-weight:600}
@@ -191,23 +183,23 @@
     }
     .install .pr{
       font-family:var(--mono);font-size:0.73rem;
-      color:var(--acc-t);background:var(--accent);
+      color:#fff;background:var(--ink);
       padding:0.72rem 0.9rem;border-radius:2px 0 0 2px;user-select:none;
     }
     .install .cm{
-      font-family:var(--mono);font-size:0.7rem;color:var(--ink2);
-      background:var(--bg2);border:1px solid var(--border2);
+      font-family:var(--mono);font-size:0.7rem;color:var(--ink);
+      background:#fff;border:1px solid var(--border);
       border-left:none;padding:0.72rem 1rem;flex:1;
       white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
     }
     .install .cp{
       font-family:var(--mono);font-size:0.63rem;color:var(--ink3);
-      background:var(--bg2);border:1px solid var(--border2);
+      background:#fff;border:1px solid var(--border);
       border-left:none;padding:0.72rem 0.85rem;
       border-radius:0 2px 2px 0;cursor:pointer;
       transition:background 0.15s,color 0.15s,border-color 0.15s;
     }
-    .install .cp:hover{background:var(--accent);color:var(--acc-t);border-color:var(--accent)}
+    .install .cp:hover{background:var(--ink);color:#fff;border-color:var(--ink)}
 
     .hmeta{
       font-family:var(--mono);font-size:0.65rem;color:var(--ink4);
@@ -230,26 +222,30 @@
         linear-gradient(90deg,var(--border) 1px,transparent 1px);
       background-size:28px 28px;opacity:0.6;
     }
-    /* multi-color glow behind TUI — cyan core, violet halo, magenta blush */
+    /* Soft pastel washes behind the dark TUI window — gives the
+       impression of the terminal sitting on a sunlit desk. */
     .hero-r::after{
       content:'';position:absolute;
       top:50%;left:50%;transform:translate(-50%,-50%);
-      width:520px;height:380px;
+      width:560px;height:420px;
       background:
-        radial-gradient(ellipse 60% 50% at 30% 40%,rgba(45,212,240,0.10) 0%,transparent 70%),
-        radial-gradient(ellipse 60% 50% at 70% 50%,rgba(167,139,250,0.08) 0%,transparent 70%),
-        radial-gradient(ellipse 50% 40% at 50% 70%,rgba(255,91,161,0.06) 0%,transparent 70%);
+        radial-gradient(ellipse 55% 45% at 25% 30%,rgba(255,200,87,0.40) 0%,transparent 70%),
+        radial-gradient(ellipse 50% 45% at 75% 45%,rgba(167,139,250,0.32) 0%,transparent 70%),
+        radial-gradient(ellipse 50% 40% at 50% 75%,rgba(255,91,161,0.28) 0%,transparent 70%);
       pointer-events:none;
+      filter:blur(30px);
     }
 
-    /* ── TUI WINDOW ── */
+    /* ── TUI WINDOW ──
+       Stays dark — it's a terminal screenshot. Softer shadows so the
+       window appears to rest on cream paper, not fall into a void. */
     .tui{
       width:100%;max-width:510px;border-radius:6px;overflow:hidden;
       background:var(--t-bg);border:1px solid var(--t-bd);
       box-shadow:
-        0 0 0 1px rgba(0,200,224,0.08),
-        0 24px 80px rgba(0,0,0,0.6),
-        0 4px 16px rgba(0,0,0,0.4);
+        0 1px 0 rgba(255,255,255,0.6),
+        0 12px 40px rgba(46,40,28,0.22),
+        0 4px 16px rgba(46,40,28,0.18);
       position:relative;z-index:1;
       opacity:0;animation:up 0.6s ease forwards 0.35s;
     }
@@ -319,23 +315,25 @@
       border-top:1px solid var(--border);border-bottom:1px solid var(--border);
     }
     .si{
-      padding:1.85rem 1.85rem;border-right:1px solid var(--border);
-      display:flex;gap:0.85rem;align-items:flex-start;
+      padding:2.6rem 2.4rem;border-right:1px solid var(--border);
+      display:flex;gap:1.1rem;align-items:flex-start;
       transition:background 0.2s, transform 0.2s;
-      position:relative;
+      position:relative;background:var(--bg);
     }
     .si:last-child{border-right:none}
     .si:hover{background:var(--bg2);transform:translateY(-2px)}
-    /* each strip item gets its own accent on the number — cycles through
-       the palette in order so the strip feels alive */
-    .sn{font-family:var(--mono);font-size:0.6rem;margin-top:0.12rem;flex-shrink:0;font-weight:700}
+    /* Number — much bigger so it reads as a tile marker, not a footnote. */
+    .sn{
+      font-family:var(--mono);font-size:0.9rem;font-weight:700;
+      margin-top:0.15rem;flex-shrink:0;color:var(--ink4);
+    }
     .si:nth-child(1) .sn{color:var(--cyan)}
     .si:nth-child(2) .sn{color:var(--violet)}
     .si:nth-child(3) .sn{color:var(--amber)}
     .si:nth-child(4) .sn{color:var(--magenta)}
     /* top edge highlight on hover, matching the number color */
     .si::before{
-      content:'';position:absolute;top:0;left:0;right:0;height:2px;
+      content:'';position:absolute;top:0;left:0;right:0;height:3px;
       opacity:0;transition:opacity 0.2s;
     }
     .si:hover::before{opacity:1}
@@ -343,8 +341,11 @@
     .si:nth-child(2):hover::before{background:var(--violet)}
     .si:nth-child(3):hover::before{background:var(--amber)}
     .si:nth-child(4):hover::before{background:var(--magenta)}
-    .si h3{font-family:var(--sans);font-size:0.875rem;font-weight:600;color:var(--ink);margin-bottom:0.28rem}
-    .si p{font-size:0.78rem;color:var(--ink3);line-height:1.65}
+    .si h3{
+      font-family:var(--sans);font-size:1.4rem;font-weight:800;
+      color:var(--ink);margin-bottom:0.55rem;letter-spacing:-0.02em;line-height:1.15;
+    }
+    .si p{font-size:1.05rem;color:var(--ink2);line-height:1.55}
 
     /* ── SPLIT CONFIG ── */
     .split{
@@ -369,18 +370,13 @@
     #author .lbl{color:var(--magenta)}
     .cta .lbl{color:var(--lime)}
     h2{
-      font-family:var(--serif);font-size:clamp(1.9rem,2.8vw,2.85rem);
-      font-weight:900;line-height:1.05;letter-spacing:-0.03em;
+      font-family:var(--serif);font-size:clamp(2.4rem,3.6vw,3.6rem);
+      font-weight:900;line-height:1.02;letter-spacing:-0.03em;
       margin-bottom:1.2rem;color:var(--ink);
     }
-    h2 em{
-      font-style:italic;font-weight:300;
-      background:var(--grad-1);background-size:200% 100%;
-      -webkit-background-clip:text;background-clip:text;
-      -webkit-text-fill-color:transparent;color:transparent;
-      animation:flow 12s ease-in-out infinite;
-    }
-    .sp-t p{font-size:0.88rem;color:var(--ink3);line-height:1.75;margin-bottom:0.8rem;max-width:370px}
+    /* Solid italic em — matches h1 em treatment, no gradient. */
+    h2 em{font-style:italic;font-weight:300;color:var(--amber)}
+    .sp-t p{font-size:1.05rem;color:var(--ink2);line-height:1.72;margin-bottom:0.9rem;max-width:420px}
     .pills{display:flex;gap:0.38rem;flex-wrap:wrap;margin-top:0.7rem;align-items:center}
     .pills+.pills{margin-top:0.38rem}
     .pill{
@@ -390,13 +386,12 @@
       transition:transform 0.15s;
     }
     .pill:hover{transform:translateY(-1px)}
-    /* runtime row gets a different color per pill so Bun / Python / Rust
-       each have a visual identity */
-    .pills.runtimes .pill:nth-child(2){color:var(--amber);border-color:rgba(255,200,87,0.4);background:rgba(255,200,87,0.06)}
-    .pills.runtimes .pill:nth-child(3){color:var(--lime);border-color:rgba(101,240,163,0.4);background:rgba(101,240,163,0.06)}
-    .pills.runtimes .pill:nth-child(4){color:var(--magenta);border-color:rgba(255,91,161,0.4);background:rgba(255,91,161,0.06)}
-    /* protocol row likewise */
-    .pills.protocols .pill:nth-child(3){color:var(--violet);border-color:rgba(167,139,250,0.4);background:rgba(167,139,250,0.06)}
+    /* Light-tinted chip backgrounds keyed to text color — each pill
+       reads as a small colored postage stamp on the cream paper */
+    .pills.runtimes .pill:nth-child(2){color:var(--amber);background:#FFF1DC;border-color:#F2D9A8}
+    .pills.runtimes .pill:nth-child(3){color:var(--lime);background:#E4F2E2;border-color:#BFDFB8}
+    .pills.runtimes .pill:nth-child(4){color:var(--magenta);background:#FAE3EC;border-color:#EFC0D2}
+    .pills.protocols .pill:nth-child(3){color:var(--violet);background:#EAE5FB;border-color:#CCBFF1}
     .pill-group-label{
       font-family:var(--mono);font-size:0.55rem;color:var(--ink4);
       text-transform:uppercase;letter-spacing:0.1em;margin-right:0.18rem;
@@ -406,58 +401,166 @@
       padding:4.5rem 4rem;display:flex;align-items:center;
       background:var(--bg2);
     }
+    /* Code blocks stay dark — terminal aesthetic. Light shadow so the
+       block looks like an inlaid screen on the cream page. */
     .cc{
       width:100%;border-radius:4px;overflow:hidden;
-      border:1px solid var(--border2);
-      box-shadow:0 2px 0 rgba(0,0,0,0.2),0 12px 40px rgba(0,0,0,0.3);
+      border:1px solid var(--t-bd);
+      box-shadow:
+        0 1px 0 rgba(255,255,255,0.6),
+        0 8px 28px rgba(46,40,28,0.18),
+        0 2px 8px rgba(46,40,28,0.14);
       background:var(--code);
     }
     .cc-hd{
       display:flex;align-items:center;justify-content:space-between;
-      padding:0.55rem 1rem;border-bottom:1px solid var(--border2);
-      background:var(--bg);
+      padding:0.55rem 1rem;border-bottom:1px solid var(--t-bd);
+      background:#0F1530;
     }
-    .cc-n{font-family:var(--mono);font-size:0.61rem;color:var(--ink3)}
-    .cc-l{font-family:var(--mono);font-size:0.57rem;color:var(--ink4)}
+    .cc-n{font-family:var(--mono);font-size:0.61rem;color:#A8B8DC}
+    .cc-l{font-family:var(--mono);font-size:0.57rem;color:#5A6896}
     pre{
       padding:1.4rem;font-family:var(--mono);font-size:0.7rem;
-      line-height:1.9;background:var(--code);color:var(--ink);overflow-x:auto;
+      line-height:1.9;background:var(--code);color:#F0F6FF;overflow-x:auto;
     }
-    .tc{color:var(--ink4)}
-    .tk{color:var(--accent)}
-    .ts{color:var(--ok)}
-    .tn{color:var(--t-acc2)}
-    .tH{color:var(--ink);font-weight:700}
+    /* Code syntax — kept readable against the dark code block bg */
+    .tc{color:#5A6896}
+    .tk{color:#2DD4F0}
+    .ts{color:#65F0A3}
+    .tn{color:#FFC857}
+    .tH{color:#FFFFFF;font-weight:700}
 
-    /* ── HONEST STATUS ── */
+    /* ── FEATURE FACT SHEET (#status) ──
+       Reframed from "honest status" (apologetic) into a marketing-y
+       feature listing like an AWS/GCP product page. Same content,
+       bigger type, much more breathing room, scannable hierarchy.
+       Truth-slice text inside <li> tags is unchanged; only wrapping
+       structure and styling differ. */
     .status{
-      padding:5.5rem 10vw;
+      padding:6.5rem 10vw;
       border-bottom:1px solid var(--border);
       background:var(--bg2);
+      position:relative;
     }
-    .status-inner h2{margin-bottom:2rem}
+    /* Faint diagonal stripe wash — makes the alternating bg feel
+       intentional, editorial */
+    .status::before{
+      content:'';position:absolute;inset:0;
+      background:repeating-linear-gradient(
+        135deg,
+        transparent 0,transparent 80px,
+        rgba(199,116,0,0.025) 80px,rgba(199,116,0,0.025) 81px
+      );
+      pointer-events:none;
+    }
+    .status-inner{position:relative}
+    .status-inner h2{margin-bottom:1.25rem;font-size:clamp(2.4rem,3.4vw,3.4rem)}
+    /* Sub-headline above the sections — sets context like a cloud product page */
+    .status-sub{
+      font-family:var(--sans);font-size:clamp(1.15rem,1.4vw,1.35rem);
+      color:var(--ink2);line-height:1.65;max-width:740px;
+      margin-bottom:4rem;
+    }
+
+    /* Two sections stacked: Works Now (top) then Coming (bottom).
+       Each section's buckets flow in a responsive grid. */
     .status-grid{
-      display:grid;grid-template-columns:1fr 1fr;gap:2.5rem;margin-top:2.25rem;
+      display:flex;flex-direction:column;gap:5rem;margin-top:1rem;
     }
+
+    /* Section header (Works Now / Coming) — bigger, with a thick
+       color rail across the top. The .status-col IS the bucket grid
+       (no inner wrapper element — the contract extractor's regex is
+       fragile against nested <section> and <div>, so buckets are
+       direct children with h3+p.h3-sub spanning full width). */
+    .status-col{
+      padding-top:1.6rem;border-top:4px solid var(--ink4);
+      display:grid;
+      grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
+      gap:1.5rem;
+      row-gap:1.5rem;
+    }
+    .status-col > h3,
+    .status-col > .h3-sub{grid-column:1 / -1}
+    .status-col:nth-child(1){border-top-color:var(--lime)}
+    .status-col:nth-child(2){border-top-color:var(--amber)}
     .status-col h3{
-      font-family:var(--sans);font-size:0.95rem;font-weight:600;color:var(--ink);
-      margin-bottom:0.95rem;letter-spacing:-0.01em;
+      font-family:var(--serif);font-size:clamp(1.85rem,2.6vw,2.6rem);
+      font-weight:900;letter-spacing:-0.02em;line-height:1.05;
+      margin-bottom:0.4rem;color:var(--ink);
     }
-    /* lime for the "Works now" header, amber for "Coming" */
     .status-col:nth-child(1) h3{color:var(--lime)}
     .status-col:nth-child(2) h3{color:var(--amber)}
-    .status-col ul{list-style:none;padding:0}
-    .status-col li{
-      font-size:0.83rem;color:var(--ink3);line-height:1.55;padding:0.32rem 0;
+    .status-col .h3-sub{
+      font-family:var(--mono);font-size:0.78rem;
+      color:var(--ink3);letter-spacing:0.08em;text-transform:uppercase;
+      margin-bottom:1.5rem;
+    }
+    .bucket{
+      background:#FFF;
+      border:1px solid var(--border);
+      border-radius:6px;
+      padding:1.5rem 1.5rem 1.2rem;
+      transition:transform 0.15s,box-shadow 0.15s,border-color 0.15s;
+      position:relative;
+    }
+    .bucket:hover{
+      transform:translateY(-2px);
+      border-color:var(--border2);
+      box-shadow:0 8px 24px rgba(46,40,28,0.08);
+    }
+    .bucket h4{
+      font-family:var(--sans);font-size:1.1rem;font-weight:700;
+      letter-spacing:-0.01em;color:var(--ink);
+      margin-bottom:1rem;padding-bottom:0.85rem;
       border-bottom:1px solid var(--border);
     }
-    .status-col li:last-child{border-bottom:none}
-    .status-col code{
-      font-family:var(--mono);font-size:0.78em;color:var(--cyan);
+    .bucket ul{list-style:none;padding:0}
+    .bucket li{
+      font-family:var(--sans);font-size:0.98rem;color:var(--ink2);
+      line-height:1.55;padding:0.55rem 0 0.55rem 1.4rem;
+      position:relative;font-weight:400;
     }
+    .bucket li + li{border-top:1px dashed var(--border)}
+
+    /* Leading dots per section */
+    .status-col:nth-child(1) .bucket li::before{
+      content:'';position:absolute;left:0;top:1rem;
+      width:6px;height:6px;border-radius:50%;
+      background:var(--lime);
+      box-shadow:0 0 0 3px rgba(79,151,88,0.14);
+    }
+    .status-col:nth-child(2) .bucket li::before{
+      content:'';position:absolute;left:0;top:1rem;
+      width:6px;height:6px;border-radius:50%;
+      background:var(--amber);
+      box-shadow:0 0 0 3px rgba(201,116,0,0.14);
+    }
+
+    /* Bucket-card top accent — each bucket card in a section gets the
+       section's accent color as a 2px top edge on hover */
+    .status-col:nth-child(1) .bucket::before,
+    .status-col:nth-child(2) .bucket::before{
+      content:'';position:absolute;top:-1px;left:1rem;right:1rem;height:2px;
+      opacity:0;transition:opacity 0.15s;
+    }
+    .status-col:nth-child(1) .bucket:hover::before{
+      opacity:1;background:var(--lime);
+    }
+    .status-col:nth-child(2) .bucket:hover::before{
+      opacity:1;background:var(--amber);
+    }
+
+    .bucket code{
+      font-family:var(--mono);font-size:0.84em;color:var(--cyan);
+      background:rgba(11,143,159,0.08);
+      padding:0.1em 0.35em;border-radius:2px;
+    }
+
     @media(max-width:960px){
       .status{padding:4rem 2rem}
-      .status-grid{grid-template-columns:1fr;gap:2rem}
+      .status-grid{gap:3.5rem}
+      .bucket-grid{grid-template-columns:1fr;gap:1rem}
     }
 
     /* ── AUTHOR ── */
@@ -513,16 +616,17 @@
       border-bottom:1px solid var(--border);
       position:relative;overflow:hidden;
     }
-    /* CTA backdrop blooms with a layered multi-color glow */
+    /* CTA backdrop blooms — pastel washes visible on cream */
     .cta::before{
       content:'';position:absolute;
       bottom:-150px;right:10vw;
       width:700px;height:520px;
       background:
-        radial-gradient(ellipse 50% 40% at 30% 40%,rgba(255,91,161,0.10) 0%,transparent 65%),
-        radial-gradient(ellipse 50% 40% at 70% 60%,rgba(167,139,250,0.08) 0%,transparent 65%),
-        radial-gradient(ellipse 50% 40% at 50% 30%,rgba(101,240,163,0.06) 0%,transparent 65%);
+        radial-gradient(ellipse 50% 40% at 30% 40%,rgba(255,91,161,0.22) 0%,transparent 65%),
+        radial-gradient(ellipse 50% 40% at 70% 60%,rgba(167,139,250,0.20) 0%,transparent 65%),
+        radial-gradient(ellipse 50% 40% at 50% 30%,rgba(255,200,87,0.22) 0%,transparent 65%);
       pointer-events:none;
+      filter:blur(20px);
     }
     .cta h2{font-size:clamp(2.25rem,4vw,4rem);position:relative}
     .cta-btns{display:flex;flex-direction:column;gap:0.7rem;flex-shrink:0;position:relative}
@@ -545,14 +649,14 @@
     }
 
     .bs{
-      font-family:var(--mono);font-size:0.76rem;color:var(--ink3);
-      background:transparent;border:1px solid var(--border2);
+      font-family:var(--mono);font-size:0.76rem;color:var(--ink2);
+      background:transparent;border:1px solid var(--ink2);
       padding:0.85rem 1.85rem;border-radius:2px;
       text-decoration:none;text-align:center;display:block;
       white-space:nowrap;
-      transition:border-color 0.15s,color 0.15s,transform 0.15s;
+      transition:background 0.15s,color 0.15s,transform 0.15s;
     }
-    .bs:hover{border-color:var(--ink3);color:var(--ink);transform:translateY(-1px)}
+    .bs:hover{background:var(--ink);color:var(--bg);transform:translateY(-1px)}
 
     /* ── FOOTER ── */
     footer{
@@ -800,43 +904,144 @@ $ claude mcp add riz-local \
   </div>
 </section>
 
-<!-- HONEST STATUS -->
+<!-- FEATURES & ROADMAP -->
 <section class="status" id="status">
   <div class="status-inner">
-    <span class="lbl">// what works today, what's coming</span>
-    <h2>Honest status.<br/><em>v0.1, shipping in public.</em></h2>
+    <span class="lbl">// what's in the box</span>
+    <h2>Features.</h2>
+    <p class="status-sub">
+      Run AWS HTTP API v2 + WebSocket Lambda handlers in TypeScript, Python, or
+      Rust on a single Rust binary. Hot-reload, hot-deploy, real percentiles,
+      and a built-in MCP server that makes every function a Claude Code tool.
+    </p>
     <div class="status-grid">
+
+      <!-- ───────── FEATURES (was "Works now") ───────── -->
       <div class="status-col">
-        <h3>✓ Works now</h3>
-        <ul>
-          <li>AWS API Gateway v2 HTTP payload — exact <code>aws_lambda_events</code> types</li>
-          <li>Bun (TypeScript / JavaScript) handlers</li>
-          <li>Python runtime adapter</li>
-          <li>Rust runtime adapter</li>
-          <li>Function-centric config: <code>[function.&lt;name&gt;]</code> + N routes per function</li>
-          <li>AWS path syntax: <code>{id}</code>, <code>{proxy+}</code>, <code>$default</code></li>
-          <li>AWS handler syntax: <code>handler = "index.handler"</code></li>
-          <li>Hot-swap deploys from S3 with in-flight request drain</li>
-          <li><code>riz.toml</code> hot-reload on save</li>
-          <li><code>/_riz/health</code> · <code>/_riz/metrics</code> · <code>/_riz/registry</code></li>
-          <li>MCP server (spec 2024-11-05, JSON-RPC, batches, lifecycle)</li>
-          <li>Terminal dashboard: P50/P75/P90/P95/P99 over 5-min window</li>
-          <li>Datadog metrics emitter</li>
-          <li>WebSocket APIs (<code>$connect</code> / <code>$disconnect</code> / <code>$default</code>) + <code>@connections</code> management API at <code>/_riz/connections/{id}</code> — handlers in Bun, Python, and Rust</li>
-          <li>Lambda authorizers — REQUEST + JWT (JWKS, TTL cache)</li>
-          <li>CORS auto-preflight — OPTIONS → 204, <code>Access-Control-Allow-*</code> headers</li>
-          <li>Bearer-token auth on <code>/_riz/*</code> (<code>/_riz/health</code> stays open)</li>
-          <li>Real Lambda context — <code>getRemainingTimeInMillis</code>, <code>functionName</code>, <code>invokedFunctionArn</code>, <code>awsRequestId</code></li>
-          <li>On-box safety profile — always-on <code>RLIMIT_CORE=0</code> + <code>RLIMIT_NOFILE=4096</code> + <code>RLIMIT_FSIZE=100MiB</code></li>
-          <li>Opt-in per-function caps — <code>memory_mb</code> (RLIMIT_AS), <code>cpu_time_secs</code> (RLIMIT_CPU), <code>allowed_paths</code> (Linux Landlock filesystem allowlist)</li>
-          <li>WebSocket connection list endpoint — <code>GET /_riz/connections</code></li>
-        </ul>
+        <h3>Features</h3>
+        <p class="h3-sub">v0.1 · in production</p>
+
+          <article class="bucket">
+            <h4>Function Runtimes</h4>
+            <ul>
+              <li>Bun (TypeScript / JavaScript) handlers</li>
+              <li>Python runtime adapter</li>
+              <li>Rust runtime adapter</li>
+            </ul>
+          </article>
+
+          <article class="bucket">
+            <h4>Protocol Surface</h4>
+            <ul>
+              <li>AWS API Gateway v2 HTTP payload — exact <code>aws_lambda_events</code> types</li>
+              <li>WebSocket APIs (<code>$connect</code> / <code>$disconnect</code> / <code>$default</code>) + <code>@connections</code> management API at <code>/_riz/connections/{id}</code> — handlers in Bun, Python, and Rust</li>
+              <li>WebSocket connection list endpoint — <code>GET /_riz/connections</code></li>
+            </ul>
+          </article>
+
+          <article class="bucket">
+            <h4>Configuration &amp; Routing</h4>
+            <ul>
+              <li>Function-centric config: <code>[function.&lt;name&gt;]</code> + N routes per function</li>
+              <li>AWS path syntax: <code>{id}</code>, <code>{proxy+}</code>, <code>$default</code></li>
+              <li>AWS handler syntax: <code>handler = "index.handler"</code></li>
+            </ul>
+          </article>
+
+          <article class="bucket">
+            <h4>Deployment &amp; Lifecycle</h4>
+            <ul>
+              <li>Hot-swap deploys from S3 with in-flight request drain</li>
+              <li><code>riz.toml</code> hot-reload on save</li>
+              <li>Real Lambda context — <code>getRemainingTimeInMillis</code>, <code>functionName</code>, <code>invokedFunctionArn</code>, <code>awsRequestId</code></li>
+            </ul>
+          </article>
+
+          <article class="bucket">
+            <h4>Observability</h4>
+            <ul>
+              <li><code>/_riz/health</code> · <code>/_riz/metrics</code> · <code>/_riz/registry</code></li>
+              <li>Terminal dashboard: P50/P75/P90/P95/P99 over 5-min window</li>
+              <li>Datadog metrics emitter</li>
+              <li>MCP server (spec 2024-11-05, JSON-RPC, batches, lifecycle)</li>
+            </ul>
+          </article>
+
+          <article class="bucket">
+            <h4>Agent &amp; AI Integration</h4>
+            <ul>
+              <li>Claude Code &amp; Cursor: every function auto-registers as an MCP tool at <code>/_riz/mcp</code></li>
+              <li>Zero SDK code — point any MCP client at riz, your APIs become agent-callable</li>
+              <li>Bearer-token gating on <code>/_riz/mcp</code> for shared-secret access control</li>
+            </ul>
+          </article>
+
+          <article class="bucket">
+            <h4>Developer CLI</h4>
+            <ul>
+              <li><code>riz init &lt;template&gt;</code> — scaffold a working project (6 templates: TS/Python/Rust × HTTP/WebSocket)</li>
+              <li><code>riz run</code> — boot the runtime with riz.toml + handler-source hot reload</li>
+              <li><code>riz validate</code> / <code>riz routes</code> — config check + route table</li>
+              <li><code>riz deploy</code> — S3 hot-swap deploy with auto health-check rollback</li>
+            </ul>
+          </article>
+
+          <article class="bucket">
+            <h4>Security &amp; Auth</h4>
+            <ul>
+              <li>Lambda authorizers — REQUEST + JWT (JWKS, TTL cache)</li>
+              <li>CORS auto-preflight — OPTIONS → 204, <code>Access-Control-Allow-*</code> headers</li>
+              <li>Bearer-token auth on <code>/_riz/*</code> (<code>/_riz/health</code> stays open)</li>
+            </ul>
+          </article>
+
+          <article class="bucket">
+            <h4>On-Box Safety</h4>
+            <ul>
+              <li>On-box safety profile — always-on <code>RLIMIT_CORE=0</code> + <code>RLIMIT_NOFILE=4096</code> + <code>RLIMIT_FSIZE=100MiB</code></li>
+              <li>Opt-in per-function caps — <code>memory_mb</code> (RLIMIT_AS), <code>cpu_time_secs</code> (RLIMIT_CPU), <code>allowed_paths</code> (Linux Landlock filesystem allowlist)</li>
+            </ul>
+          </article>
+
       </div>
+
+      <!-- ───────── ROADMAP (was "Coming") ───────── -->
       <div class="status-col">
-        <h3>🚧 Coming</h3>
-        <ul>
-          <li>Non-HTTP event sources (SQS, SNS, S3, EventBridge) — v0.2</li>
-        </ul>
+        <h3>Roadmap</h3>
+        <p class="h3-sub">v0.2 and beyond</p>
+
+          <article class="bucket">
+            <h4>Additional Runtimes</h4>
+            <ul>
+              <li>Node.js native runtime</li>
+              <li>WebAssembly modules (WASI)</li>
+              <li>Java / JVM runtime adapter</li>
+              <li>Go runtime adapter</li>
+            </ul>
+          </article>
+
+          <article class="bucket">
+            <h4>Smarter MCP</h4>
+            <ul>
+              <li>Per-route MCP tool schemas — typed input shapes from path + query parameters</li>
+              <li>AI inspection tools — riz.tail_logs, riz.replay_request, riz.scaffold</li>
+            </ul>
+          </article>
+
+          <article class="bucket">
+            <h4>Event Sources</h4>
+            <ul>
+              <li>Non-HTTP event sources (SQS, SNS, S3, EventBridge) — v0.2</li>
+            </ul>
+          </article>
+
+          <article class="bucket">
+            <h4>Distributed Tracing</h4>
+            <ul>
+              <li>OpenTelemetry exporter with X-Ray header propagation</li>
+            </ul>
+          </article>
+
       </div>
     </div>
   </div>
