@@ -33,7 +33,9 @@ riz run
 #   {"message":"hello, alice","method":"GET", ...}
 ```
 
-(Other templates: `python-http`. More coming.)
+Other templates (3 languages × 2 scenarios):
+`typescript-http` · `python-http` · `rust-http` ·
+`typescript-websocket` · `python-websocket` · `rust-websocket`.
 
 Edit `index.ts`, save, the next request hits the new code — no
 restart, no `riz.toml` touch. The watcher debounces and hot-swaps
