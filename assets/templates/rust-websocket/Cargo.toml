@@ -1,0 +1,16 @@
+[package]
+name = "chat"
+version = "0.1.0"
+edition = "2021"
+
+# riz-rust-runtime is the helper crate that does the line-JSON envelope
+# loop for you. Pulled in via git so this template works standalone —
+# no need to scaffold inside the riz checkout. Once riz-rust-runtime is
+# published to crates.io, replace with: `riz-rust-runtime = "0.1"`.
+[dependencies]
+riz-rust-runtime = { git = "https://github.com/crizzuto/riz" }
+aws_lambda_events = { version = "0.15", default-features = false, features = ["apigw"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# No TLS — localhost @connections POST has no need for the rustls weight.
+reqwest = { version = "0.12", default-features = false }

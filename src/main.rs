@@ -65,11 +65,15 @@ enum Commands {
     },
     /// Scaffold a new riz project from a built-in template.
     ///
-    /// Templates: `typescript-http`, `python-http`. The template's files
-    /// are written into <dir> (defaults to the current directory). Use
-    /// after install: `riz init typescript-http my-app && cd my-app && riz run`.
+    /// Templates form a 3×2 matrix (3 languages × 2 scenarios):
+    ///   - `typescript-http`, `python-http`, `rust-http`
+    ///   - `typescript-websocket`, `python-websocket`, `rust-websocket`
+    ///
+    /// The template's files are written into <dir> (defaults to the
+    /// current directory). Use after install:
+    /// `riz init typescript-http my-app && cd my-app && riz run`.
     Init {
-        /// Template name: `typescript-http` or `python-http`.
+        /// Template name (see list above).
         template: String,
         /// Target directory (defaults to current dir).
         dir: Option<String>,
@@ -100,6 +104,70 @@ fn template_files(name: &str) -> Option<&'static [(&'static str, &'static str)]>
                 include_str!("../assets/templates/python-http/riz.toml"),
             ),
         ]),
+        "rust-http" => Some(&[
+            (
+                "Cargo.toml",
+                include_str!("../assets/templates/rust-http/Cargo.toml"),
+            ),
+            (
+                "src/main.rs",
+                include_str!("../assets/templates/rust-http/src/main.rs"),
+            ),
+            (
+                "riz.toml",
+                include_str!("../assets/templates/rust-http/riz.toml"),
+            ),
+            (
+                "README.md",
+                include_str!("../assets/templates/rust-http/README.md"),
+            ),
+        ]),
+        "typescript-websocket" => Some(&[
+            (
+                "index.ts",
+                include_str!("../assets/templates/typescript-websocket/index.ts"),
+            ),
+            (
+                "riz.toml",
+                include_str!("../assets/templates/typescript-websocket/riz.toml"),
+            ),
+            (
+                "README.md",
+                include_str!("../assets/templates/typescript-websocket/README.md"),
+            ),
+        ]),
+        "python-websocket" => Some(&[
+            (
+                "main.py",
+                include_str!("../assets/templates/python-websocket/main.py"),
+            ),
+            (
+                "riz.toml",
+                include_str!("../assets/templates/python-websocket/riz.toml"),
+            ),
+            (
+                "README.md",
+                include_str!("../assets/templates/python-websocket/README.md"),
+            ),
+        ]),
+        "rust-websocket" => Some(&[
+            (
+                "Cargo.toml",
+                include_str!("../assets/templates/rust-websocket/Cargo.toml"),
+            ),
+            (
+                "src/main.rs",
+                include_str!("../assets/templates/rust-websocket/src/main.rs"),
+            ),
+            (
+                "riz.toml",
+                include_str!("../assets/templates/rust-websocket/riz.toml"),
+            ),
+            (
+                "README.md",
+                include_str!("../assets/templates/rust-websocket/README.md"),
+            ),
+        ]),
         _ => None,
     }
 }
@@ -107,7 +175,8 @@ fn template_files(name: &str) -> Option<&'static [(&'static str, &'static str)]>
 fn run_init(template: &str, dir: Option<&str>) -> anyhow::Result<()> {
     let files = template_files(template).ok_or_else(|| {
         anyhow::anyhow!(
-            "unknown template '{template}'. Available: typescript-http, python-http"
+            "unknown template '{template}'. Available: typescript-http, python-http, \
+             rust-http, typescript-websocket, python-websocket, rust-websocket"
         )
     })?;
     let target = match dir {
@@ -131,11 +200,22 @@ fn run_init(template: &str, dir: Option<&str>) -> anyhow::Result<()> {
     }
     for (name, contents) in files {
         let dst = target.join(name);
+        // Some templates carry nested paths like `src/main.rs`; ensure
+        // the parent directory exists before writing.
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         std::fs::write(&dst, contents)?;
         println!("  created {}", dst.display());
     }
+    // Per-template next-step hint. Rust needs a build before riz run.
+    let next_step = if template.starts_with("rust-") {
+        "cargo build --release && riz run"
+    } else {
+        "riz run"
+    };
     println!(
-        "\n✓ {template} template installed in {}\n  next: cd {} && riz run",
+        "\n✓ {template} template installed in {}\n  next: cd {} && {next_step}",
         target.display(),
         target.display()
     );
