@@ -120,19 +120,32 @@ When to use what:
 ## Examples
 
 See `examples/lambdas/`:
-- `ping` — bare-minimum bun handler, returns `{ status: "ok", ts }`. No routes block means it mounts at `ANY /ping`.
-- `accounts` — REST GET with `{id}` path param, demonstrates `event.pathParameters` and `rawQueryString` parsing.
-- `events` — POST endpoint that validates and echoes a JSON body.
-- `chat` — WebSocket handler (`$connect`/`$default`/`$disconnect`). Echos messages back via the `@connections` API.
-- `echo-python` — Python handler demonstrating `lambda_handler(event, context)` with full context surface.
-- `echo-rust` — Rust handler compiled to a binary, using the `riz-rust-runtime` helper crate.
-- `crud-accounts` — full CRUD (GET/POST/PUT/PATCH/DELETE) on `/accounts/{id}` with in-memory storage. Demonstrates all HTTP verbs and `method = "ANY"`.
+
+**HTTP handlers**
+- `ping` (Bun) — bare-minimum, returns `{ status: "ok", ts }`. No routes block → mounts at `ANY /ping`.
+- `accounts` (Bun) — REST GET with `{id}` path param, demonstrates `event.pathParameters` + `rawQueryString` parsing.
+- `events` (Bun) — POST endpoint that validates and echoes a JSON body.
+- `crud-accounts` (Bun) — full CRUD (GET/POST/PUT/PATCH/DELETE) on `/accounts/{id}`, demonstrates all HTTP verbs + `method = "ANY"`.
+- `echo-bun` / `echo-python` / `echo-rust` — minimal echo handlers, one per shipped runtime. Used by the cross-runtime parity test suite.
+
+**WebSocket handlers** (all three runtimes)
+- `chat` (Bun) — `$connect` / `$default` / `$disconnect`. Echoes via the `@connections` API.
+- `chat-python` — same shape, Python stdlib `urllib.request` for the `@connections` POST.
+- `chat-rust` — same shape, `reqwest` (no-TLS) for the `@connections` POST.
 
 Run any example:
 
 ```bash
 riz run --config examples/riz.dev.toml
 ```
+
+Or scaffold a fresh project from any of the 6 built-in templates with `riz init <template> <dir>` (see [30-second start](#30-second-start)).
+
+## Reliability
+
+- **All 20 production-readiness bug-tracker entries closed.** See `docs/production-bugs.md` — every entry carries a `✅ RESOLVED` marker with the code lines that ship the fix and the regression-gate test name.
+- **680+ tests, drift-prevented landing page.** `cargo nextest run` runs the full suite. `tests/landing_page_contract.rs` enforces every claim on this README and the landing page against a real proof test — removing a feature without removing its claim fails CI.
+- **Cross-runtime parity-tested.** Each shipped runtime (Bun, Python, Rust) is exercised end-to-end through the same matrix of HTTP capability tests (status codes, verbs, path params, query string, body, headers, cookies, stage variables, binary body, error pass-through, response headers, response cookies). WebSocket lifecycle + `@connections` is also end-to-end tested per runtime.
 
 ## Production
 
