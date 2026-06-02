@@ -727,10 +727,10 @@
     <div class="eyebrow">// self-hosted lambda runtime · mcp-native · v0.1 · spec 2025-11-25</div>
     <h1>Your Lambdas.<br/><em>Your box.</em><br/>An LLM's hands.</h1>
     <p class="sub">
-      <strong>One file. One binary. Every function in <code style="font-family:var(--mono);font-size:.82em;color:var(--amber)">riz.toml</code> auto-registers as a current-spec MCP tool</strong> —
-      ready for Claude Code, Cursor, or any 2025-11-25 client the moment you <code style="font-family:var(--mono);font-size:.82em;color:var(--amber)">riz run</code>.
-      The same handler still serves real HTTP + WebSocket traffic on hardware you own.
-      No SDK, no Docker, no rewrite.
+      <strong>Point Riz at your existing AWS Lambda handlers and every function becomes an MCP tool the moment <code style="font-family:var(--mono);font-size:.82em;color:var(--amber)">riz run</code> boots</strong> —
+      auto-registered, current-spec, typed, ready for Claude Code or Cursor.
+      The same code serves real HTTP + WebSocket traffic on hardware you control.
+      No glue code, no Docker, no rewrite.
     </p>
     <div class="install">
       <span class="pr">$</span>
@@ -820,7 +820,7 @@
   </div>
   <div class="si">
     <span class="sn">04</span>
-    <div><h3>Edit. Save. Serve.</h3><p>Handler hot-reload watches your source, drains in-flight requests, and hot-swaps the process pool in under a second. The next request hits the new code — no <code style="font-family:var(--mono);font-size:.78em">riz run</code> restart, no Docker rebuild.</p></div>
+    <div><h3>The Lambda dev loop, on your box</h3><p>Hot-reload watches your source and hot-swaps the pool in under a second. A live ratatui dashboard shows P50–P99 latency, request logs, and cold-start counts as traffic flows. Familiar Lambda semantics — same context, same timeouts — with a dev loop AWS can't deliver.</p></div>
   </div>
 </div>
 
