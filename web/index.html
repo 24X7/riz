@@ -43,45 +43,53 @@
     html{scroll-behavior:smooth}
 
     :root{
-      /* Editorial-cream base. Pairs with Fraunces to feel like a
-         thoughtful publication about an infra tool rather than the
-         standard dark-mode Vercel/Linear clone everyone ships. */
-      --bg:       #F9F4E8;   /* warm cream, uncoated stock */
-      --bg2:      #F2EBD8;   /* one shade deeper, alternating sections */
-      --border:   #E5D9BC;
-      --border2:  #D2C29B;
-      --ink:      #1E1A11;   /* deep warm near-black */
-      --ink2:     #4A4334;
-      --ink3:     #7F7660;
-      --ink4:     #B8AC8E;
+      /* Dark navy + amber gold + ice blue. Single warm accent over layered
+         cool darks. Reads as serious enterprise infrastructure on the same
+         shelf as Linear/Vercel/Cursor, without the dark-mode-Vercel-clone
+         feel — the warm amber and serif h1/h2 keep it distinct. */
+      --bg:       #0E1220;   /* page — darkest navy */
+      --bg2:      #161C2E;   /* alternating section panel */
+      --bg3:      #1E2540;   /* raised card surface */
+      --border:   #1E2540;   /* card borders blend with raised surface */
+      --border2:  #2A3454;   /* hover/active border */
 
-      /* Accents picked for legibility on cream. Same five-color intent
-         as before — cyan=CLI, amber=warmth, magenta=CTA, lime=success,
-         violet=secondary — but darker variants so they read at body size. */
-      --cyan:     #0B8F9F;
-      --amber:    #C97400;
-      --magenta:  #C73670;
-      --lime:     #4F9758;
-      --violet:   #6748D8;
+      /* Text scale on dark. Ice blue for body keeps the cool family without
+         the harshness of pure white; slate for muted; mid-slate for hints. */
+      --ink:      #FFFFFF;   /* headings, primary type */
+      --ink2:     #C8D8F0;   /* body — Ice Blue from palette */
+      --ink3:     #6E7D99;   /* muted — Slate from palette */
+      --ink4:     #4A5775;   /* hint */
 
-      --accent:   var(--cyan);
+      /* Single warm accent. Amber Gold replaces the previous 5-color
+         rainbow (cyan/violet/magenta/lime) — one accent means it actually
+         carries meaning when it appears. */
+      --amber:    #F0A500;
+      --amber-hi: #FFB833;   /* hover */
+      --amber-lo: #C98800;   /* pressed */
 
-      --acc-bg:   #E3F1F3;
-      --acc-bd:   #B8E0E5;
-      --acc-t:    #FFFFFF;
+      --accent:   var(--amber);
 
-      --grad-1:   linear-gradient(90deg,var(--cyan) 0%,var(--violet) 50%,var(--magenta) 100%);
+      /* Chip backgrounds keyed off amber, on dark — translucent so they
+         pick up the panel underneath. */
+      --acc-bg:   rgba(240,165,0,0.10);
+      --acc-bd:   rgba(240,165,0,0.32);
+      --acc-t:    #0E1220;   /* dark text on solid amber pills */
 
-      /* TUI window + code blocks stay DARK — they're terminal screenshots
-         inlaid on the cream page. Correct visual semantic. */
-      --t-bg:     #0E1828;
-      --t-bd:     #1F2D45;
-      --t-acc:    #2DD4F0;
-      --t-acc2:   #00B0CC;
-      --ok:       var(--lime);
-      --err:      #C73670;
-      --code:     #1A1B26;
-      --nav:      rgba(249,244,232,0.94);
+      /* Subtle warmth gradient kept for the author badge — single hue
+         lighten so it reads as a metal finish, not a rainbow. */
+      --grad-1:   linear-gradient(135deg,var(--amber-hi) 0%,var(--amber) 60%,var(--amber-lo) 100%);
+
+      /* TUI window + code blocks stay dark — same family as the page now,
+         so they blend instead of contrasting. Darker than bg so they read
+         as inlaid screens. */
+      --t-bg:     #0A0F1C;
+      --t-bd:     #1E2540;
+      --t-acc:    var(--amber);
+      --t-acc2:   var(--amber-hi);
+      --ok:       #4F9758;     /* status-OK green — rarely used */
+      --err:      #E84A6F;     /* status-error red — rarely used */
+      --code:     #0A0F1C;
+      --nav:      rgba(14,18,32,0.88);
       --serif:    'Fraunces',Georgia,serif;
       --mono:     'Space Mono',monospace;
       --sans:     'DM Sans',sans-serif;
@@ -96,13 +104,14 @@
       overflow-x:hidden;
     }
 
-    /* Paper-grain texture, darker on cream than the original was on
-       dark, multiplied so it shows. Subtle but present, like uncoated stock. */
+    /* Subtle film-grain on dark — screened so it lifts (adds tiny
+       highlights) rather than darkens. Just enough to break the flat
+       expanse of #0E1220 without competing for attention. */
     body::before{
       content:'';
       position:fixed;inset:0;
-      background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.06'/%3E%3C/svg%3E");
-      mix-blend-mode:multiply;
+      background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+      mix-blend-mode:screen;opacity:0.5;
       pointer-events:none;z-index:9999;
     }
 
@@ -130,11 +139,11 @@
     .nav-r a:hover{color:var(--ink)}
     .nav-gh{
       font-family:var(--mono) !important;font-size:0.7rem !important;
-      background:var(--ink) !important;color:var(--bg) !important;
-      padding:0.4rem 0.95rem;border-radius:2px;font-weight:700 !important;
-      transition:opacity 0.15s !important;
+      background:var(--amber) !important;color:var(--acc-t) !important;
+      padding:0.45rem 1rem;border-radius:3px;font-weight:700 !important;
+      transition:background 0.15s !important;
     }
-    .nav-gh:hover{opacity:0.82 !important}
+    .nav-gh:hover{background:var(--amber-hi) !important}
 
     /* ── HERO ── */
     .hero{
@@ -181,25 +190,30 @@
       display:flex;align-items:center;margin-bottom:1.25rem;
       max-width:480px;opacity:0;animation:up 0.5s ease forwards 0.4s;
     }
+    /* Install bar: amber $ prompt + dark command body. Reads as a
+       terminal line on the dark page; the amber prompt is the only
+       warm pixel in the bar so the eye lands there first. */
     .install .pr{
-      font-family:var(--mono);font-size:0.73rem;
-      color:#fff;background:var(--ink);
-      padding:0.72rem 0.9rem;border-radius:2px 0 0 2px;user-select:none;
+      font-family:var(--mono);font-size:0.74rem;font-weight:700;
+      color:var(--acc-t);background:var(--amber);
+      padding:0.74rem 0.9rem;border-radius:3px 0 0 3px;user-select:none;
     }
     .install .cm{
-      font-family:var(--mono);font-size:0.7rem;color:var(--ink);
-      background:#fff;border:1px solid var(--border);
-      border-left:none;padding:0.72rem 1rem;flex:1;
+      font-family:var(--mono);font-size:0.72rem;color:var(--ink);
+      background:var(--bg3);border:1px solid var(--border2);
+      border-left:none;padding:0.74rem 1rem;flex:1;
       white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
     }
     .install .cp{
-      font-family:var(--mono);font-size:0.63rem;color:var(--ink3);
-      background:#fff;border:1px solid var(--border);
-      border-left:none;padding:0.72rem 0.85rem;
-      border-radius:0 2px 2px 0;cursor:pointer;
+      font-family:var(--mono);font-size:0.64rem;color:var(--ink3);
+      background:var(--bg3);border:1px solid var(--border2);
+      border-left:none;padding:0.74rem 0.9rem;
+      border-radius:0 3px 3px 0;cursor:pointer;
       transition:background 0.15s,color 0.15s,border-color 0.15s;
     }
-    .install .cp:hover{background:var(--ink);color:#fff;border-color:var(--ink)}
+    .install .cp:hover{
+      background:var(--amber);color:var(--acc-t);border-color:var(--amber);
+    }
 
     .hmeta{
       font-family:var(--mono);font-size:0.65rem;color:var(--ink4);
@@ -222,18 +236,17 @@
         linear-gradient(90deg,var(--border) 1px,transparent 1px);
       background-size:28px 28px;opacity:0.6;
     }
-    /* Soft pastel washes behind the dark TUI window — gives the
-       impression of the terminal sitting on a sunlit desk. */
+    /* Soft amber wash behind the TUI window — single warm glow on the
+       cool dark panel, like a heat signature behind the terminal. */
     .hero-r::after{
       content:'';position:absolute;
       top:50%;left:50%;transform:translate(-50%,-50%);
       width:560px;height:420px;
       background:
-        radial-gradient(ellipse 55% 45% at 25% 30%,rgba(255,200,87,0.40) 0%,transparent 70%),
-        radial-gradient(ellipse 50% 45% at 75% 45%,rgba(167,139,250,0.32) 0%,transparent 70%),
-        radial-gradient(ellipse 50% 40% at 50% 75%,rgba(255,91,161,0.28) 0%,transparent 70%);
+        radial-gradient(ellipse 60% 50% at 50% 45%,rgba(240,165,0,0.22) 0%,transparent 70%),
+        radial-gradient(ellipse 50% 45% at 30% 60%,rgba(200,216,240,0.06) 0%,transparent 70%);
       pointer-events:none;
-      filter:blur(30px);
+      filter:blur(40px);
     }
 
     /* ── TUI WINDOW ──
@@ -243,9 +256,9 @@
       width:100%;max-width:510px;border-radius:6px;overflow:hidden;
       background:var(--t-bg);border:1px solid var(--t-bd);
       box-shadow:
-        0 1px 0 rgba(255,255,255,0.6),
-        0 12px 40px rgba(46,40,28,0.22),
-        0 4px 16px rgba(46,40,28,0.18);
+        0 1px 0 rgba(255,255,255,0.04),
+        0 18px 50px rgba(0,0,0,0.55),
+        0 4px 16px rgba(0,0,0,0.35);
       position:relative;z-index:1;
       opacity:0;animation:up 0.6s ease forwards 0.35s;
     }
@@ -275,7 +288,7 @@
       padding:0.27rem 0.85rem;display:flex;
       justify-content:space-between;color:var(--ink4);cursor:default;
     }
-    .tf.on{background:rgba(0,200,224,0.06);color:var(--ink)}
+    .tf.on{background:rgba(240,165,0,0.08);color:var(--ink)}
     .fn-n{display:flex;align-items:center;gap:0.42rem}
     .fd{width:5px;height:5px;border-radius:50%;flex-shrink:0}
     .fd.w{background:var(--ok)}.fd.a{background:var(--t-acc)}
@@ -322,25 +335,20 @@
     }
     .si:last-child{border-right:none}
     .si:hover{background:var(--bg2);transform:translateY(-2px)}
-    /* Number — much bigger so it reads as a tile marker, not a footnote. */
+    /* Number — much bigger so it reads as a tile marker, not a footnote.
+       Single amber for all four cards: accent should mean "look here",
+       not "every card is a different color." */
     .sn{
       font-family:var(--mono);font-size:0.9rem;font-weight:700;
-      margin-top:0.15rem;flex-shrink:0;color:var(--ink4);
+      margin-top:0.15rem;flex-shrink:0;color:var(--amber);
     }
-    .si:nth-child(1) .sn{color:var(--cyan)}
-    .si:nth-child(2) .sn{color:var(--violet)}
-    .si:nth-child(3) .sn{color:var(--amber)}
-    .si:nth-child(4) .sn{color:var(--magenta)}
-    /* top edge highlight on hover, matching the number color */
+    /* Top edge highlight on hover — same amber across all cards */
     .si::before{
-      content:'';position:absolute;top:0;left:0;right:0;height:3px;
+      content:'';position:absolute;top:0;left:0;right:0;height:2px;
+      background:var(--amber);
       opacity:0;transition:opacity 0.2s;
     }
     .si:hover::before{opacity:1}
-    .si:nth-child(1):hover::before{background:var(--cyan)}
-    .si:nth-child(2):hover::before{background:var(--violet)}
-    .si:nth-child(3):hover::before{background:var(--amber)}
-    .si:nth-child(4):hover::before{background:var(--magenta)}
     .si h3{
       font-family:var(--sans);font-size:1.4rem;font-weight:800;
       color:var(--ink);margin-bottom:0.55rem;letter-spacing:-0.02em;line-height:1.15;
@@ -358,17 +366,12 @@
       display:flex;flex-direction:column;justify-content:center;
     }
     .lbl{
-      font-family:var(--mono);font-size:0.6rem;color:var(--cyan);
+      font-family:var(--mono);font-size:0.6rem;color:var(--amber);
       letter-spacing:0.18em;text-transform:uppercase;margin-bottom:1.5rem;
       display:block;
     }
-    /* per-section eyebrow tinting — MCP cyan, Config violet, Status amber,
-       Author magenta, CTA lime — gives each section its own identity. */
-    #mcp .lbl{color:var(--cyan)}
-    #config .lbl{color:var(--violet)}
-    #status .lbl{color:var(--amber)}
-    #author .lbl{color:var(--magenta)}
-    .cta .lbl{color:var(--lime)}
+    /* All section eyebrows share the single amber accent — the section
+       header h2 carries the visual weight on its own. */
     h2{
       font-family:var(--serif);font-size:clamp(2.4rem,3.6vw,3.6rem);
       font-weight:900;line-height:1.02;letter-spacing:-0.03em;
@@ -380,20 +383,14 @@
     .pills{display:flex;gap:0.38rem;flex-wrap:wrap;margin-top:0.7rem;align-items:center}
     .pills+.pills{margin-top:0.38rem}
     .pill{
-      font-family:var(--mono);font-size:0.6rem;
-      color:var(--cyan);background:var(--acc-bg);border:1px solid var(--acc-bd);
-      padding:0.18rem 0.52rem;border-radius:2px;
-      transition:transform 0.15s;
+      font-family:var(--mono);font-size:0.62rem;
+      color:var(--amber);background:var(--acc-bg);border:1px solid var(--acc-bd);
+      padding:0.22rem 0.6rem;border-radius:3px;
+      transition:transform 0.15s,background 0.15s;
     }
-    .pill:hover{transform:translateY(-1px)}
-    /* Light-tinted chip backgrounds keyed to text color — each pill
-       reads as a small colored postage stamp on the cream paper */
-    .pills.runtimes .pill:nth-child(2){color:var(--amber);background:#FFF1DC;border-color:#F2D9A8}
-    .pills.runtimes .pill:nth-child(3){color:var(--lime);background:#E4F2E2;border-color:#BFDFB8}
-    .pills.runtimes .pill:nth-child(4){color:var(--magenta);background:#FAE3EC;border-color:#EFC0D2}
-    .pills.protocols .pill:nth-child(3){color:var(--violet);background:#EAE5FB;border-color:#CCBFF1}
+    .pill:hover{transform:translateY(-1px);background:rgba(240,165,0,0.16)}
     .pill-group-label{
-      font-family:var(--mono);font-size:0.55rem;color:var(--ink4);
+      font-family:var(--mono);font-size:0.55rem;color:var(--ink3);
       text-transform:uppercase;letter-spacing:0.1em;margin-right:0.18rem;
     }
 
@@ -407,15 +404,15 @@
       width:100%;border-radius:4px;overflow:hidden;
       border:1px solid var(--t-bd);
       box-shadow:
-        0 1px 0 rgba(255,255,255,0.6),
-        0 8px 28px rgba(46,40,28,0.18),
-        0 2px 8px rgba(46,40,28,0.14);
+        0 1px 0 rgba(255,255,255,0.03),
+        0 12px 36px rgba(0,0,0,0.45),
+        0 2px 8px rgba(0,0,0,0.30);
       background:var(--code);
     }
     .cc-hd{
       display:flex;align-items:center;justify-content:space-between;
       padding:0.55rem 1rem;border-bottom:1px solid var(--t-bd);
-      background:#0F1530;
+      background:#0F1426;
     }
     .cc-n{font-family:var(--mono);font-size:0.61rem;color:#A8B8DC}
     .cc-l{font-family:var(--mono);font-size:0.57rem;color:#5A6896}
@@ -449,7 +446,7 @@
       background:repeating-linear-gradient(
         135deg,
         transparent 0,transparent 80px,
-        rgba(199,116,0,0.025) 80px,rgba(199,116,0,0.025) 81px
+        rgba(240,165,0,0.025) 80px,rgba(240,165,0,0.025) 81px
       );
       pointer-events:none;
     }
@@ -482,22 +479,26 @@
     }
     .status-col > h3,
     .status-col > .h3-sub{grid-column:1 / -1}
-    .status-col:nth-child(1){border-top-color:var(--lime)}
-    .status-col:nth-child(2){border-top-color:var(--amber)}
+    /* Features section gets the amber accent (this is what ships).
+       Roadmap section uses muted slate (this is what's coming) — the
+       visual hierarchy mirrors the content hierarchy without resorting
+       to a second accent color. */
+    .status-col:nth-child(1){border-top-color:var(--amber)}
+    .status-col:nth-child(2){border-top-color:var(--ink3)}
     .status-col h3{
       font-family:var(--serif);font-size:clamp(1.85rem,2.6vw,2.6rem);
       font-weight:900;letter-spacing:-0.02em;line-height:1.05;
       margin-bottom:0.4rem;color:var(--ink);
     }
-    .status-col:nth-child(1) h3{color:var(--lime)}
-    .status-col:nth-child(2) h3{color:var(--amber)}
+    .status-col:nth-child(1) h3{color:var(--amber)}
+    .status-col:nth-child(2) h3{color:var(--ink2)}
     .status-col .h3-sub{
       font-family:var(--mono);font-size:0.78rem;
       color:var(--ink3);letter-spacing:0.08em;text-transform:uppercase;
       margin-bottom:1.5rem;
     }
     .bucket{
-      background:#FFF;
+      background:var(--bg3);
       border:1px solid var(--border);
       border-radius:6px;
       padding:1.5rem 1.5rem 1.2rem;
@@ -507,7 +508,7 @@
     .bucket:hover{
       transform:translateY(-2px);
       border-color:var(--border2);
-      box-shadow:0 8px 24px rgba(46,40,28,0.08);
+      box-shadow:0 8px 24px rgba(0,0,0,0.45);
     }
     .bucket h4{
       font-family:var(--sans);font-size:1.1rem;font-weight:700;
@@ -523,37 +524,36 @@
     }
     .bucket li + li{border-top:1px dashed var(--border)}
 
-    /* Leading dots per section */
+    /* Leading dots per section. Features = solid amber. Roadmap = hollow
+       slate ring (visually says "not yet"). */
     .status-col:nth-child(1) .bucket li::before{
       content:'';position:absolute;left:0;top:1rem;
       width:6px;height:6px;border-radius:50%;
-      background:var(--lime);
-      box-shadow:0 0 0 3px rgba(79,151,88,0.14);
+      background:var(--amber);
+      box-shadow:0 0 0 3px rgba(240,165,0,0.18);
     }
     .status-col:nth-child(2) .bucket li::before{
       content:'';position:absolute;left:0;top:1rem;
       width:6px;height:6px;border-radius:50%;
-      background:var(--amber);
-      box-shadow:0 0 0 3px rgba(201,116,0,0.14);
+      background:transparent;
+      border:1px solid var(--ink3);
     }
 
-    /* Bucket-card top accent — each bucket card in a section gets the
-       section's accent color as a 2px top edge on hover */
+    /* Bucket-card top accent — single amber edge on hover for both sections */
     .status-col:nth-child(1) .bucket::before,
     .status-col:nth-child(2) .bucket::before{
       content:'';position:absolute;top:-1px;left:1rem;right:1rem;height:2px;
       opacity:0;transition:opacity 0.15s;
+      background:var(--amber);
     }
-    .status-col:nth-child(1) .bucket:hover::before{
-      opacity:1;background:var(--lime);
-    }
+    .status-col:nth-child(1) .bucket:hover::before,
     .status-col:nth-child(2) .bucket:hover::before{
-      opacity:1;background:var(--amber);
+      opacity:1;
     }
 
     .bucket code{
-      font-family:var(--mono);font-size:0.84em;color:var(--cyan);
-      background:rgba(11,143,159,0.08);
+      font-family:var(--mono);font-size:0.84em;color:var(--amber);
+      background:rgba(240,165,0,0.10);
       padding:0.1em 0.35em;border-radius:2px;
     }
 
@@ -616,47 +616,49 @@
       border-bottom:1px solid var(--border);
       position:relative;overflow:hidden;
     }
-    /* CTA backdrop blooms — pastel washes visible on cream */
+    /* CTA backdrop bloom — single amber glow on the dark panel */
     .cta::before{
       content:'';position:absolute;
-      bottom:-150px;right:10vw;
+      bottom:-180px;right:10vw;
       width:700px;height:520px;
       background:
-        radial-gradient(ellipse 50% 40% at 30% 40%,rgba(255,91,161,0.22) 0%,transparent 65%),
-        radial-gradient(ellipse 50% 40% at 70% 60%,rgba(167,139,250,0.20) 0%,transparent 65%),
-        radial-gradient(ellipse 50% 40% at 50% 30%,rgba(255,200,87,0.22) 0%,transparent 65%);
+        radial-gradient(ellipse 55% 45% at 50% 50%,rgba(240,165,0,0.18) 0%,transparent 65%);
       pointer-events:none;
-      filter:blur(20px);
+      filter:blur(28px);
     }
     .cta h2{font-size:clamp(2.25rem,4vw,4rem);position:relative}
     .cta-btns{display:flex;flex-direction:column;gap:0.7rem;flex-shrink:0;position:relative}
 
-    /* primary CTA: magenta gradient — grabs attention vs the cyan
-       used elsewhere for CLI/system context */
+    /* Primary CTA: solid amber. Dark text on the warm accent is the
+       highest-contrast pairing in the palette — pulls the eye. */
     .bp{
-      font-family:var(--mono);font-size:0.76rem;font-weight:700;
-      color:#fff;
-      background:linear-gradient(135deg,var(--magenta) 0%,var(--violet) 100%);
-      padding:0.85rem 1.85rem;border-radius:2px;
+      font-family:var(--mono);font-size:0.78rem;font-weight:700;
+      color:var(--acc-t);
+      background:var(--amber);
+      padding:0.9rem 1.9rem;border-radius:3px;
       text-decoration:none;text-align:center;display:block;
       white-space:nowrap;
-      box-shadow:0 4px 18px rgba(255,91,161,0.25);
-      transition:opacity 0.15s,transform 0.15s,box-shadow 0.15s;
+      box-shadow:0 4px 18px rgba(240,165,0,0.22);
+      transition:background 0.15s,transform 0.15s,box-shadow 0.15s;
     }
     .bp:hover{
-      opacity:0.94;transform:translateY(-2px);
-      box-shadow:0 8px 28px rgba(255,91,161,0.4);
+      background:var(--amber-hi);transform:translateY(-2px);
+      box-shadow:0 10px 32px rgba(240,165,0,0.38);
     }
 
+    /* Secondary CTA: ghost button with slate border that warms to amber on hover */
     .bs{
-      font-family:var(--mono);font-size:0.76rem;color:var(--ink2);
-      background:transparent;border:1px solid var(--ink2);
-      padding:0.85rem 1.85rem;border-radius:2px;
+      font-family:var(--mono);font-size:0.78rem;color:var(--ink2);
+      background:transparent;border:1px solid var(--ink3);
+      padding:0.9rem 1.9rem;border-radius:3px;
       text-decoration:none;text-align:center;display:block;
       white-space:nowrap;
-      transition:background 0.15s,color 0.15s,transform 0.15s;
+      transition:border-color 0.15s,color 0.15s,background 0.15s,transform 0.15s;
     }
-    .bs:hover{background:var(--ink);color:var(--bg);transform:translateY(-1px)}
+    .bs:hover{
+      color:var(--amber);border-color:var(--amber);
+      background:rgba(240,165,0,0.06);transform:translateY(-1px);
+    }
 
     /* ── FOOTER ── */
     footer{
@@ -1072,7 +1074,7 @@ $ claude mcp add riz-local \
   <div class="auth-r">
     <div class="tli">
       <div class="ty">now</div>
-      <div><div class="tc2">Riz / PHYND</div><div class="tr">Building Riz · SVP Engineering</div></div>
+      <div><div class="tc2">Riz</div><div class="tr">Building Riz · self-hosted Lambda runtime</div></div>
     </div>
     <div class="tli">
       <div class="ty">—</div>
