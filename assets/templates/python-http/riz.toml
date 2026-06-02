@@ -4,7 +4,11 @@ host = "127.0.0.1"
 
 [function.hello]
 runtime = "python"
-handler = "main.lambda_handler"
+# Leading "./" makes the adapter load main.py as a file from CWD instead of
+# trying to import the "main" module from sys.path. Both forms are valid AWS
+# Lambda handler syntax; the file-path form is what works in single-file
+# riz layouts where the handler isn't on the Python module path.
+handler = "./main.lambda_handler"
 timeout_ms = 5000
 concurrency = 2
 

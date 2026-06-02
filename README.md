@@ -83,13 +83,144 @@ riz mcp inspect
 
 Runs `initialize` + `tools/list` against your running Riz and prints a one-screen report — spec version, server capabilities, every registered tool with its input + output schemas. Add `--bearer <token>` (or set `RIZ_AUTH_BEARER_TOKEN`) for auth-gated endpoints; `--url` to point at a remote instance.
 
-**Troubleshoot "it won't start":**
+## Local development & testing
+
+Every command below has been verified end-to-end against this repo (commit history will show the regression tests). Copy/paste away.
+
+### 1 · Smoke-test the install
 
 ```bash
-riz doctor
+riz --version          # → riz 0.1.0
+riz --help             # → top-level command reference
+riz init --list        # → 6 templates (3 langs × HTTP+WebSocket)
 ```
 
-Pre-flight diagnostic. Validates `riz.toml`, checks runtime binaries (`bun` / `python3`) for every runtime your config uses, confirms each function's handler file exists, probes the configured port. Prints ✓ / ⚠ / ✗ per check + a summary. Designed to be the first command you run when something's off, before opening an issue.
+### 2 · Scaffold a project and run it (HTTP, ~30s)
+
+**TypeScript / Bun** — fastest path, no build step:
+
+```bash
+riz init typescript-http my-app
+cd my-app
+riz doctor             # confirms bun is on PATH + port 3000 is free
+riz run                # boots; opens the live TUI by default
+
+# In a second terminal:
+curl 'http://localhost:3000/hello?name=alice'
+# → {"message":"hello, alice","method":"GET","path":"/hello",
+#    "functionName":"hello","awsRequestId":"...","remainingMs":...}
+```
+
+**Python** — needs `python3` on PATH:
+
+```bash
+riz init python-http my-app
+cd my-app
+riz run
+
+curl 'http://localhost:3000/hello?name=alice'
+# → {"message": "hello, alice", "method": "GET", "path": "/hello",
+#    "functionName": "hello", "awsRequestId": "...", "remainingMs": 5000}
+```
+
+**Rust** — one extra step (compile the handler binary):
+
+```bash
+riz init rust-http my-app
+cd my-app
+cargo build --release      # produces target/release/hello (referenced by riz.toml)
+riz run
+
+curl 'http://localhost:3000/hello?name=alice'
+```
+
+**WebSocket** templates work the same way (`riz init typescript-websocket my-app`, etc.) but you'll need a WebSocket client (`websocat`, `wscat`, or browser console) instead of `curl`. The scaffold's `README.md` shows the exact `websocat` one-liner.
+
+Other init flags:
+
+```bash
+riz init typescript-http my-app --git    # also `git init` + initial "riz init" commit
+riz init --list                          # enumerate all 6 templates
+```
+
+### 3 · Run the bundled example fleet (cloned repo, no init needed)
+
+The repo ships `examples/riz.dev.toml` with 6 working functions across 3 runtimes:
+
+```bash
+# From the riz repo root:
+cargo build --release
+./target/release/riz --config examples/riz.dev.toml validate
+# → Config OK: 6 functions
+
+./target/release/riz --config examples/riz.dev.toml routes
+# → ping [bun]           routes: ANY /ping
+# → accounts [bun]       routes: GET /accounts/{id}
+# → events [bun]         routes: POST /events
+# → echo-python [python] routes: ANY /echo-python
+# → chat [bun]           routes: ANY /chat        (WebSocket)
+# → crud-accounts [bun]  routes: ANY /accounts/{id}, ANY /accounts
+
+./target/release/riz --no-tui --log-level warn --config examples/riz.dev.toml run &
+
+# All of these return real data:
+curl http://localhost:3000/ping
+curl 'http://localhost:3000/accounts/42?include=profile'
+curl -X POST -H 'content-type: application/json' \
+     -d '{"event":"login","user":"alice"}' \
+     http://localhost:3000/events
+curl -X POST -H 'content-type: application/json' \
+     -d '{"hello":"world"}' \
+     http://localhost:3000/echo-python
+```
+
+### 4 · Verify the MCP surface
+
+`riz mcp inspect` connects to a running Riz, runs `initialize` + `tools/list`, and prints a one-screen report. Useful as the first thing you run before pointing Claude Code or Cursor at the endpoint.
+
+```bash
+# Against the running instance from step 3:
+riz mcp inspect
+# → Connected to http://localhost:3000/_riz/mcp
+#     server:        riz 0.1.0
+#     protocol:      2025-11-25
+#     capabilities:  tools
+#   Registered tools (6): ping · accounts · events · echo-python · chat · crud-accounts
+#   ✓ MCP endpoint healthy.
+
+# Against a remote / bearer-protected instance:
+riz mcp inspect --url https://api.example.com/_riz/mcp --bearer $RIZ_AUTH_BEARER_TOKEN
+```
+
+### 5 · Run the test suite
+
+```bash
+# Hard rule for this repo: always cargo nextest, never cargo test.
+cargo nextest run                # full suite (~60s, 705+ tests)
+cargo nextest run --test cli_init        # init-only tests
+cargo nextest run --test cli_doctor      # doctor-only tests
+cargo nextest run --test cli_mcp_inspect # mcp-inspect tests
+cargo nextest run --test scaffold_e2e    # end-to-end: scaffold → boot → curl
+cargo nextest run mcp                    # any test matching "mcp"
+```
+
+### 6 · Benchmark
+
+```bash
+cargo build --release
+./benches/run-bench.sh
+# Requires wrk on PATH: brew install wrk
+```
+
+Last measured (M-series, localhost): 91k req/s, p50 152 µs, **p99 845 µs**. Methodology + reproducibility notes in `benches/README.md`.
+
+### Common gotchas
+
+- **`riz doctor` reports "bun on PATH: not found"** — `curl -fsSL https://bun.sh/install | bash`, then re-source your shell rc.
+- **Python scaffold returns "process error: Broken pipe"** — your `handler = ...` in `riz.toml` needs the `./` prefix (e.g. `./main.lambda_handler`) so the Python adapter resolves it as a file path rather than a module on `sys.path`. Scaffolded `riz.toml` files already do this.
+- **`/_riz/health` returns 200 but no function shows up** — confirm your function name matches the `[function.<name>]` block in `riz.toml`. Run `riz routes` to print the registered route table.
+- **`riz mcp inspect` returns 401** — the endpoint is bearer-protected. Pass `--bearer <token>` or set `RIZ_AUTH_BEARER_TOKEN`.
+- **Port 3000 already in use** — `riz doctor` will tell you. Either kill the other process or change `port` in the `[server]` block.
 
 ## Features (v0.1)
 

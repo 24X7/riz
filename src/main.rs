@@ -25,7 +25,11 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
-#[command(name = "riz", about = "Self-hosted AWS Lambda host")]
+#[command(
+    name = "riz",
+    version,
+    about = "Self-hosted AWS Lambda runtime — HTTP API v2 + WebSocket, MCP-native"
+)]
 struct Cli {
     /// Config file. Defaults to riz.dev.toml in --dev mode, riz.toml otherwise.
     #[arg(short, long)]
