@@ -336,6 +336,10 @@ Reproducible — see [`benches/README.md`](./benches/README.md) for the methodol
 
 `git tag v0.X.Y && git push --tags` → cargo-dist + GitHub Actions build and publish binaries for `aarch64-apple-darwin`, `x86_64-apple-darwin`, `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`. See [`docs/release.md`](./docs/release.md) for the full process.
 
+## Contributing
+
+Working on Riz itself? See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the inner-loop guide: `cargo run -- --dev`, `cargo nextest run` filters, where each kind of code lives, how to add a new runtime adapter / system endpoint / CLI subcommand, and the before-PR checklist.
+
 ## License
 
 MIT.
