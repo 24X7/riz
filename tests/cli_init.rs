@@ -206,6 +206,80 @@ fn init_python_websocket_creates_chat_handler() {
 }
 
 #[test]
+fn init_list_enumerates_six_templates() {
+    assert_riz_available();
+    let out = Command::new(riz_binary())
+        .args(["init", "--list"])
+        .output()
+        .expect("spawn riz init --list");
+    assert!(
+        out.status.success(),
+        "riz init --list must succeed: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for t in [
+        "typescript-http",
+        "python-http",
+        "rust-http",
+        "typescript-websocket",
+        "python-websocket",
+        "rust-websocket",
+    ] {
+        assert!(
+            stdout.contains(t),
+            "--list output must include {t}; got {stdout}"
+        );
+    }
+    // Must label the columns so the output is self-explanatory.
+    assert!(
+        stdout.contains("TEMPLATE") && stdout.contains("SCENARIO") && stdout.contains("LANGUAGE"),
+        "--list output must label columns; got {stdout}"
+    );
+}
+
+#[test]
+fn init_git_flag_creates_initial_commit() {
+    assert_riz_available();
+    // Skip silently if git isn't available — tests must not assume host config.
+    let git_present = Command::new("git").arg("--version").output().is_ok();
+    if !git_present {
+        eprintln!("SKIP: git not on PATH");
+        return;
+    }
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let target = tmp.path().join("with-git");
+
+    let out = Command::new(riz_binary())
+        .args(["init", "typescript-http"])
+        .arg(&target)
+        .arg("--git")
+        .output()
+        .expect("spawn riz init --git");
+    assert!(
+        out.status.success(),
+        "riz init --git failed: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // .git dir must exist
+    assert!(
+        target.join(".git").is_dir(),
+        ".git directory must exist after --git"
+    );
+    // First commit must exist with subject "riz init"
+    let log = Command::new("git")
+        .args(["log", "--oneline"])
+        .current_dir(&target)
+        .output()
+        .expect("git log");
+    let log_out = String::from_utf8_lossy(&log.stdout);
+    assert!(
+        log_out.contains("riz init"),
+        "initial commit must be present; got {log_out}"
+    );
+}
+
+#[test]
 fn init_rust_websocket_creates_chat_crate() {
     assert_riz_available();
     let tmp = tempfile::TempDir::new().expect("tempdir");

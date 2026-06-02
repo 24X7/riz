@@ -72,12 +72,43 @@ enum Commands {
     /// The template's files are written into <dir> (defaults to the
     /// current directory). Use after install:
     /// `riz init typescript-http my-app && cd my-app && riz run`.
+    ///
+    /// Use `riz init --list` to print the available templates without
+    /// scaffolding anything.
     Init {
-        /// Template name (see list above).
-        template: String,
+        /// Template name. Required unless --list is given.
+        template: Option<String>,
         /// Target directory (defaults to current dir).
         dir: Option<String>,
+        /// Print the available templates and exit. No scaffold is written.
+        #[arg(long)]
+        list: bool,
+        /// After scaffold, run `git init` + initial commit in the target
+        /// directory. Skipped silently if git is not on PATH or the dir
+        /// is already inside a git repo.
+        #[arg(long)]
+        git: bool,
     },
+}
+
+/// Available templates, keyed by name. Mirrors `template_files`'s match arms
+/// — keep in sync. Tuple is (template_name, scenario, language).
+const TEMPLATES: &[(&str, &str, &str)] = &[
+    ("typescript-http",      "HTTP",      "TypeScript / Bun"),
+    ("python-http",          "HTTP",      "Python"),
+    ("rust-http",            "HTTP",      "Rust"),
+    ("typescript-websocket", "WebSocket", "TypeScript / Bun"),
+    ("python-websocket",     "WebSocket", "Python"),
+    ("rust-websocket",       "WebSocket", "Rust"),
+];
+
+fn print_template_list() {
+    println!("Available templates (3 languages × 2 scenarios):\n");
+    println!("  {:<24} {:<12} {}", "TEMPLATE", "SCENARIO", "LANGUAGE");
+    for (name, scenario, lang) in TEMPLATES {
+        println!("  {name:<24} {scenario:<12} {lang}");
+    }
+    println!("\nUsage: riz init <template> [dir] [--git]");
 }
 
 /// Built-in templates. Each entry is (filename, file contents). Embedded at
@@ -172,11 +203,12 @@ fn template_files(name: &str) -> Option<&'static [(&'static str, &'static str)]>
     }
 }
 
-fn run_init(template: &str, dir: Option<&str>) -> anyhow::Result<()> {
+fn run_init(template: &str, dir: Option<&str>, git: bool) -> anyhow::Result<()> {
     let files = template_files(template).ok_or_else(|| {
         anyhow::anyhow!(
             "unknown template '{template}'. Available: typescript-http, python-http, \
-             rust-http, typescript-websocket, python-websocket, rust-websocket"
+             rust-http, typescript-websocket, python-websocket, rust-websocket. \
+             (Run `riz init --list` for a formatted table.)"
         )
     })?;
     let target = match dir {
@@ -208,18 +240,83 @@ fn run_init(template: &str, dir: Option<&str>) -> anyhow::Result<()> {
         std::fs::write(&dst, contents)?;
         println!("  created {}", dst.display());
     }
-    // Per-template next-step hint. Rust needs a build before riz run.
-    let next_step = if template.starts_with("rust-") {
-        "cargo build --release && riz run"
-    } else {
-        "riz run"
-    };
-    println!(
-        "\n✓ {template} template installed in {}\n  next: cd {} && {next_step}",
-        target.display(),
-        target.display()
-    );
+
+    if git {
+        try_git_init(&target);
+    }
+
+    print_next_steps(template, &target);
     Ok(())
+}
+
+/// `git init` + initial commit in `target`. Best-effort: silently skips if
+/// git isn't on PATH, the target is already inside a repo, or any step
+/// fails. We never want a missing git to make a successful scaffold look
+/// like it failed.
+fn try_git_init(target: &std::path::Path) {
+    use std::process::Command;
+
+    // Already inside a repo? Skip.
+    let already = Command::new("git")
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .current_dir(target)
+        .output();
+    if let Ok(o) = already {
+        if o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "true" {
+            return;
+        }
+    }
+
+    let init = Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(target)
+        .status();
+    if init.map(|s| !s.success()).unwrap_or(true) {
+        return; // git missing or failed; stay silent
+    }
+    let _ = Command::new("git")
+        .args(["add", "-A"])
+        .current_dir(target)
+        .status();
+    let _ = Command::new("git")
+        .args(["commit", "--quiet", "-m", "riz init"])
+        .current_dir(target)
+        .status();
+    println!("  git init + initial commit (use --git to disable)");
+}
+
+/// Print the copy-pasteable "what to do next" block — per-template so the
+/// hint matches the scaffold's actual routes.
+fn print_next_steps(template: &str, target: &std::path::Path) {
+    let dir = target.display();
+    let (build_step, exercise_cmd) = match template {
+        "rust-http" => (
+            Some("cargo build --release"),
+            Some("curl 'http://localhost:3000/hello?name=alice'"),
+        ),
+        "rust-websocket" => (Some("cargo build --release"), None),
+        "typescript-http" | "python-http" => (
+            None,
+            Some("curl 'http://localhost:3000/hello?name=alice'"),
+        ),
+        _ => (None, None),
+    };
+    println!("\n✓ {template} installed in {dir}");
+    println!("\n  Next steps:");
+    println!("    cd {dir}");
+    if let Some(b) = build_step {
+        println!("    {b}");
+    }
+    println!("    riz run");
+    if let Some(c) = exercise_cmd {
+        println!("\n  In a second terminal:");
+        println!("    {c}");
+    } else {
+        // WebSocket templates — clients vary, hint instead of prescribing.
+        println!("\n  Then point any MCP client at http://localhost:3000/_riz/mcp");
+        println!("  (Or, for WebSocket: connect to ws://localhost:3000/<route>)");
+    }
+    println!();
 }
 
 fn effective_config_path(dev: bool, explicit: Option<&str>) -> String {
@@ -242,8 +339,21 @@ async fn main() -> anyhow::Result<()> {
 
     // `riz init` doesn't need (and shouldn't require) an existing config.
     // Handle it before the config-load path.
-    if let Some(Commands::Init { template, dir }) = &cli.command {
-        return run_init(template, dir.as_deref());
+    if let Some(Commands::Init {
+        template,
+        dir,
+        list,
+        git,
+    }) = &cli.command
+    {
+        if *list {
+            print_template_list();
+            return Ok(());
+        }
+        let template = template.as_deref().ok_or_else(|| {
+            anyhow::anyhow!("template name required. Run `riz init --list` to see available templates.")
+        })?;
+        return run_init(template, dir.as_deref(), *git);
     }
 
     let config_path = effective_config_path(cli.dev, cli.config.as_deref());

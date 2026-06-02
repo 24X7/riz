@@ -343,13 +343,25 @@ async fn gateway_timeout_returns_504_for_routed_request() {
 
     let addr = serve(state).await;
 
-    // Allow bun to cold-start before firing the request that must time out.
-    // 10s is the deliberate over-provision — this test passes solo in ~6s
-    // but contends with the other 670+ tests under nextest's full parallel
-    // fan-out. The proper fix is a /_riz/health readiness probe in the
-    // test setup; that's a separate cleanup. Until then: just wait long
-    // enough that bun is reliably booted before we fire the 504-test request.
-    tokio::time::sleep(std::time::Duration::from_millis(10_000)).await;
+    // Poll /ready instead of sleeping a fixed duration. Earlier this test
+    // slept 10s — that wasted time on machines where bun cold-started in
+    // 800ms, and was flaky on overloaded CI where it took longer. /ready
+    // already returns 200 once every pool's health flag is set (which
+    // happens after the first process spawns successfully), so we can
+    // wait exactly as long as bun actually needs.
+    let ready_url = format!("http://{addr}/ready");
+    let ready_deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        if let Ok(r) = reqwest::get(&ready_url).await {
+            if r.status().is_success() {
+                break;
+            }
+        }
+        if std::time::Instant::now() >= ready_deadline {
+            panic!("/ready never returned 200 within 20s — bun likely failed to start");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
 
     let start = std::time::Instant::now();
     let resp = reqwest::get(format!("http://{addr}/slow")).await.unwrap();

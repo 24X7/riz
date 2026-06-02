@@ -168,15 +168,48 @@ pub async fn watch_config(config_path: String, state: Arc<AppState>) {
     drop(watcher);
 }
 
+/// Path segments that are silently ignored by the handler-source watcher.
+/// Any change whose path contains one of these as a directory component is
+/// dropped before it can trigger a hot-swap. Without this, a single
+/// `cargo build` or `npm install` floods the watcher with thousands of
+/// events and forces a pointless pool restart.
+///
+/// The match is exact-segment, not substring: a directory literally named
+/// `target` matches; a file like `targeting.ts` does not.
+pub(crate) const IGNORE_SEGMENTS: &[&str] = &[
+    "node_modules", // npm / bun / yarn
+    "target",       // cargo build artifacts
+    "__pycache__",  // python bytecode
+    ".git",         // VCS
+    ".venv",        // python venv
+    "venv",         // python venv (alt)
+    "dist",         // common bundler output
+    "build",        // common build output
+    ".next",        // next.js
+    ".cache",       // generic build cache
+];
+
+/// Returns true if any directory component of `p` literally matches one of
+/// the entries in `IGNORE_SEGMENTS`. Used to drop irrelevant filesystem
+/// events before they can spam hot-swaps.
+pub(crate) fn is_ignored_path(p: &std::path::Path) -> bool {
+    p.components().any(|c| {
+        if let std::path::Component::Normal(seg) = c {
+            if let Some(s) = seg.to_str() {
+                return IGNORE_SEGMENTS.contains(&s);
+            }
+        }
+        false
+    })
+}
+
 /// Watch each function's handler directory and hot-swap its pool when a
 /// source file changes. Closes the day-to-day DX gap: previously, editing
 /// `index.ts` required touching `riz.toml` to trigger a reload.
 ///
-/// Non-recursive: only files at the immediate handler-directory level
-/// trigger. Deep imports (e.g. `lib/utils.ts` imported from
-/// `index.ts`) need a manual touch on the handler file. Future
-/// enhancement: opt-in recursive mode per function, with sensible
-/// ignore patterns for `node_modules/` / `target/` / `__pycache__/`.
+/// Recursive watch on the handler dir, with `IGNORE_SEGMENTS` filtering
+/// out generated/vendored directories so a `cargo build` or `npm install`
+/// doesn't spam hot-swaps.
 ///
 /// Debounce window is 200 ms (matches `watch_config`). Coalesces
 /// bursts (save → linter rewrite → save again) into one hot-swap.
@@ -187,7 +220,12 @@ pub async fn watch_handler_sources(state: Arc<AppState>) {
         if let Ok(event) = res {
             if matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
                 if let Some(p) = event.paths.into_iter().next() {
-                    let _ = tx.try_send(p);
+                    // Filter at the channel boundary so ignored paths don't
+                    // even consume buffer slots — a single `cargo build`
+                    // can produce thousands of events.
+                    if !is_ignored_path(&p) {
+                        let _ = tx.try_send(p);
+                    }
                 }
             }
         }
@@ -248,6 +286,13 @@ pub async fn watch_handler_sources(state: Arc<AppState>) {
         let mut paths_seen = vec![first_path];
         while let Ok(p) = rx.try_recv() {
             paths_seen.push(p);
+        }
+        // Defense-in-depth: the channel callback already filters, but if
+        // a future caller pushes onto the channel directly, the same
+        // filtering applies here.
+        paths_seen.retain(|p| !is_ignored_path(p));
+        if paths_seen.is_empty() {
+            continue;
         }
 
         // Re-read the dir map in case riz.toml hot-reload changed it.
@@ -341,6 +386,59 @@ mod tests {
         let r1 = make_cfg("./old.ts", 1);
         let r2 = make_cfg("./new.ts", 1);
         assert!(function_changed(&r1, &r2));
+    }
+
+    #[test]
+    fn is_ignored_path_drops_known_generated_dirs() {
+        let cases = [
+            ("/proj/handler/node_modules/foo/bar.ts", true),
+            ("/proj/handler/target/debug/build.rs", true),
+            ("/proj/handler/__pycache__/main.cpython-311.pyc", true),
+            ("/proj/handler/.git/HEAD", true),
+            ("/proj/handler/.venv/lib/site.py", true),
+            ("/proj/handler/dist/bundle.js", true),
+            ("/proj/handler/build/out.wasm", true),
+            ("/proj/handler/.next/static.js", true),
+        ];
+        for (p, want) in cases {
+            assert_eq!(
+                is_ignored_path(std::path::Path::new(p)),
+                want,
+                "is_ignored_path({p}) should be {want}"
+            );
+        }
+    }
+
+    #[test]
+    fn is_ignored_path_allows_real_source_files() {
+        let cases = [
+            "/proj/handler/index.ts",
+            "/proj/handler/src/main.rs",
+            "/proj/handler/main.py",
+            "/proj/handler/lib/util.py",
+            "/proj/handler/Cargo.toml",
+        ];
+        for p in cases {
+            assert!(
+                !is_ignored_path(std::path::Path::new(p)),
+                "is_ignored_path({p}) should be false — real source"
+            );
+        }
+    }
+
+    #[test]
+    fn is_ignored_path_substring_match_does_not_trigger() {
+        // A file literally named `targeting.ts` is NOT in a `target/` dir.
+        // The match is exact-segment to avoid false positives like this.
+        assert!(!is_ignored_path(std::path::Path::new(
+            "/proj/handler/targeting.ts"
+        )));
+        assert!(!is_ignored_path(std::path::Path::new(
+            "/proj/handler/build_helpers/main.ts"
+        )));
+        assert!(!is_ignored_path(std::path::Path::new(
+            "/proj/handler/python_cache/main.py"
+        )));
     }
 
     #[test]
