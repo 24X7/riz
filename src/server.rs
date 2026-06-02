@@ -93,6 +93,13 @@ pub async fn run(state: Arc<AppState>, addr: SocketAddr) -> anyhow::Result<()> {
 
     let serve_future = axum::serve(listener, app).with_graceful_shutdown(async {
         shutdown_signal().await;
+        // Signal the TUI thread to exit cleanly BEFORE the drain begins.
+        // The TUI runs on a detached std::thread::spawn — if main returns
+        // first, the OS kills the TUI thread mid-render and the terminal is
+        // left in raw mode + mouse-capture mode, printing escape garbage on
+        // every keystroke. Signaling here gives the TUI ~drain-timeout
+        // seconds to break its loop and run its cleanup path.
+        crate::tui::request_shutdown();
         tracing::info!(
             "shutdown signal received — draining in-flight requests (max {}s)",
             SHUTDOWN_DRAIN_TIMEOUT.as_secs(),
