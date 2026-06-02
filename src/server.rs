@@ -91,7 +91,8 @@ pub async fn run(state: Arc<AppState>, addr: SocketAddr) -> anyhow::Result<()> {
     info!("riz listening on {addr}");
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
-    let serve_future = axum::serve(listener, app).with_graceful_shutdown(async {
+    let shutdown_state = state.clone();
+    let serve_future = axum::serve(listener, app).with_graceful_shutdown(async move {
         shutdown_signal().await;
         // Signal the TUI thread to exit cleanly BEFORE the drain begins.
         // The TUI runs on a detached std::thread::spawn — if main returns
@@ -100,6 +101,24 @@ pub async fn run(state: Arc<AppState>, addr: SocketAddr) -> anyhow::Result<()> {
         // every keystroke. Signaling here gives the TUI ~drain-timeout
         // seconds to break its loop and run its cleanup path.
         crate::tui::request_shutdown();
+
+        // Close every live WebSocket connection NOW, before axum begins
+        // draining. WS handlers don't complete on their own — without this,
+        // axum's graceful drain waits the full SHUTDOWN_DRAIN_TIMEOUT (30s)
+        // for connections that will never close, then force-shuts. Sending
+        // Close to each connection makes the writer task emit a WebSocket
+        // Close frame to the client and exit, which lets the corresponding
+        // axum handler task complete and the drain finish in milliseconds.
+        let conn_count = shutdown_state.ws_connections.all().len();
+        if conn_count > 0 {
+            tracing::info!(
+                "closing {conn_count} active WebSocket connection(s) before drain"
+            );
+            for conn in shutdown_state.ws_connections.all() {
+                let _ = conn.outbound.send(crate::ws::OutboundMessage::Close);
+            }
+        }
+
         tracing::info!(
             "shutdown signal received — draining in-flight requests (max {}s)",
             SHUTDOWN_DRAIN_TIMEOUT.as_secs(),
@@ -145,8 +164,10 @@ async fn shutdown_signal() {
 }
 
 async fn kill_all_processes(state: &AppState) {
-    // 1. Close every WebSocket connection cleanly so clients see a CLOSE
-    //    frame rather than a TCP reset on shutdown.
+    // 1. Belt-and-suspenders WS close. The shutdown_signal closure already
+    //    sent Close to every connection at signal time; this second pass
+    //    catches any connections that opened after the signal (between the
+    //    signal firing and axum stopping the listener — narrow but real).
     for conn in state.ws_connections.all() {
         let _ = conn.outbound.send(crate::ws::OutboundMessage::Close);
     }
