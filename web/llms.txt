@@ -53,8 +53,14 @@ Function-centric config matches AWS exactly: one `[function.<name>]` block per f
 
 ## Coming (v0.2 and beyond)
 
-- Non-HTTP event sources (SQS, SNS, S3, EventBridge, scheduled) — requires polling/push-source adapters; different product surface
-- Node.js runtime adapter
+- **Capability-sandboxed WebAssembly (WASI) handlers** — the differentiator no Lambda emulator currently ships. WASM modules wrapped in a host process that grants filesystem / network / clock capabilities explicitly via `riz.toml`. Same line-delimited JSON protocol as Bun/Python/Rust adapters; the WASM runtime (wasmtime/wasmer) enforces the capability boundary. Sub-millisecond cold start. Targets multi-tenant SaaS workloads and untrusted-MCP-tools use cases where running arbitrary code with OS-level access is unacceptable.
+- **Node.js native runtime** — for shops that won't ship Bun in production. Adapter shape mirrors the Python one.
+- **Go support** — Go binaries are static, so they speak the existing Rust-adapter line-delimited JSON protocol without a new runtime kernel. Scope: a `riz-go-runtime` Go module that wraps the stdin/stdout loop + `riz init go-http` / `go-websocket` templates + example handlers + docs.
+- **Java / JVM runtime adapter** — JNI-bridged process speaking the same JSON protocol.
+- **MCP per-route tool schemas** — typed input shapes synthesized from path + query parameters, replacing the generic-envelope schema.
+- **MCP OAuth 2.1 path** — RFC 8707 Resource Indicators, Protected Resource Metadata (RFC 9728). Bearer-token path remains the default.
+- **OpenTelemetry exporter** — W3C Trace Context propagation in `_meta` fields. X-Ray header propagation comes free.
+- **Non-HTTP event sources** (SQS, SNS, S3, EventBridge, scheduled) — requires polling/push-source adapters; different product surface from HTTP/WS.
 
 ## Requirements
 

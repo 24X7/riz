@@ -104,11 +104,21 @@ Runs `initialize` + `tools/list` against your running Riz and prints a one-scree
 
 ## Roadmap (v0.2 and beyond)
 
-- Non-HTTP event sources (SQS, SNS, S3, EventBridge, scheduled) — defer to v0.2
+**Capability-sandboxed WASM (WASI)** — the differentiator no Lambda emulator ships: WebAssembly handlers wrapped in a host process that grants filesystem, network, and clock capabilities explicitly via `riz.toml`. Same line-delimited JSON protocol as the Bun/Python/Rust adapters; the WASM runtime (wasmtime/wasmer) enforces the capability boundary. Sub-millisecond cold start, one `.wasm` binary across Linux/macOS/edge. Targets the multi-tenant SaaS + untrusted-MCP-tools use cases.
+
+**Additional runtimes**
+- Node.js native runtime — for shops that won't ship Bun in prod
+- Go support via the existing static-binary protocol (thin `riz-go-runtime` module + templates + examples; the runtime kernel is the same one Rust uses)
+- Java / JVM runtime adapter
+
+**Smarter MCP**
+- Per-route MCP tool schemas — typed input shapes from path + query parameters
+- AI inspection tools — `riz.tail_logs`, `riz.replay_request`, `riz.scaffold`
+- OAuth 2.1 + RFC 8707 Resource Indicators (bearer-token path stays the default)
+
+**Operability**
 - OpenTelemetry exporter with W3C Trace Context (X-Ray header propagation comes free)
-- Node.js + WebAssembly (WASI) runtime adapters
-- MCP per-route tool schemas — typed input shapes from path + query params
-- MCP OAuth 2.1 path with RFC 8707 Resource Indicators (bearer-token path stays the default)
+- Non-HTTP event sources (SQS, SNS, S3, EventBridge, scheduled)
 
 **Out of scope:**
 - Lambda Layers + Extensions — vendor deps belong in the handler dir

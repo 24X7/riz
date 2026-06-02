@@ -724,12 +724,13 @@
 <!-- HERO -->
 <section class="hero">
   <div class="hero-l">
-    <div class="eyebrow">// open source · rust · v0.1 · mcp 2025-11-25</div>
-    <h1>Your Lambda.<br/><em>Your box.</em><br/>Your rules.</h1>
+    <div class="eyebrow">// self-hosted lambda runtime · mcp-native · v0.1 · spec 2025-11-25</div>
+    <h1>Your Lambdas.<br/><em>Your box.</em><br/>An LLM's hands.</h1>
     <p class="sub">
-      <strong>Every AWS HTTP API v2 + WebSocket Lambda you run becomes a spec-current MCP tool.</strong>
-      Point Claude or Cursor at the endpoint; your APIs are agent-callable. Zero SDK,
-      zero wrappers — and the same handler still serves real traffic on a single Rust binary.
+      <strong>One file. One binary. Every function in <code style="font-family:var(--mono);font-size:.82em;color:var(--amber)">riz.toml</code> auto-registers as a current-spec MCP tool</strong> —
+      ready for Claude Code, Cursor, or any 2025-11-25 client the moment you <code style="font-family:var(--mono);font-size:.82em;color:var(--amber)">riz run</code>.
+      The same handler still serves real HTTP + WebSocket traffic on hardware you own.
+      No SDK, no Docker, no rewrite.
     </p>
     <div class="install">
       <span class="pr">$</span>
@@ -803,23 +804,23 @@
   </div>
 </section>
 
-<!-- STRIP -->
+<!-- STRIP — four outcomes, four buyer pulls -->
 <div class="strip">
   <div class="si">
     <span class="sn">01</span>
-    <div><h3>MCP-native at the runtime layer</h3><p>Every function auto-exposed as an MCP tool. Spec 2025-11-25 with Streamable HTTP + structured output. No SDK, no wrapper.</p></div>
+    <div><h3>Every function is an agent tool</h3><p>Spec 2025-11-25 MCP server at <code style="font-family:var(--mono);font-size:.78em">/_riz/mcp</code> the moment you <code style="font-family:var(--mono);font-size:.78em">riz run</code>. Streamable HTTP, structured output, typed input + output schemas — no SDK, no glue code.</p></div>
   </div>
   <div class="si">
     <span class="sn">02</span>
-    <div><h3>Lambda code drop-in</h3><p>Exact AWS HTTP API Gateway v2 payload. Your existing handlers move to Riz unchanged.</p></div>
+    <div><h3>Drop your Lambda code in</h3><p>Exact AWS HTTP API Gateway v2 + WebSocket payloads. Real Lambda context (<code style="font-family:var(--mono);font-size:.78em">getRemainingTimeInMillis</code>, ARNs, request IDs). Your existing handlers move to Riz with zero changes.</p></div>
   </div>
   <div class="si">
     <span class="sn">03</span>
-    <div><h3>Terminal dashboard</h3><p>P50–P99 latency, live logs, perf graphs. Built on ratatui. Actually useful, not a status page.</p></div>
+    <div><h3>Untrusted code, contained</h3><p>Every spawned handler gets the on-box safety profile for free — no core dumps, no fork-bombs, no privilege escalation. Opt-in per-function caps for memory, CPU, and a Linux Landlock filesystem allowlist.</p></div>
   </div>
   <div class="si">
     <span class="sn">04</span>
-    <div><h3>Single Rust binary</h3><p>No Docker, no container runtime, no daemon. <code style="font-family:var(--mono);font-size:.78em">riz run</code> and you're serving.</p></div>
+    <div><h3>Edit. Save. Serve.</h3><p>Handler hot-reload watches your source, drains in-flight requests, and hot-swaps the process pool in under a second. The next request hits the new code — no <code style="font-family:var(--mono);font-size:.78em">riz run</code> restart, no Docker rebuild.</p></div>
   </div>
 </div>
 
@@ -1014,12 +1015,21 @@ $ claude mcp add riz-local \
         <p class="h3-sub">v0.2 and beyond</p>
 
           <article class="bucket">
+            <h4>Capability-Sandboxed WASM</h4>
+            <ul>
+              <li>WebAssembly / WASI handlers wrapped in a host process — the same line-delimited JSON protocol as the other runtimes</li>
+              <li>Filesystem, network, and clock capabilities granted explicitly in <code>riz.toml</code> — no implicit host access</li>
+              <li>Sub-millisecond cold start, one <code>.wasm</code> binary across Linux / macOS / edge</li>
+              <li>The differentiator no Lambda emulator ships: safe execution of code you didn't write</li>
+            </ul>
+          </article>
+
+          <article class="bucket">
             <h4>Additional Runtimes</h4>
             <ul>
-              <li>Node.js native runtime</li>
-              <li>WebAssembly modules (WASI)</li>
+              <li>Node.js native runtime — for shops that won't ship Bun in prod</li>
+              <li>Go support via the existing static-binary protocol (thin <code>riz-go-runtime</code> module + templates; the runtime kernel is reused from Rust)</li>
               <li>Java / JVM runtime adapter</li>
-              <li>Go runtime adapter</li>
             </ul>
           </article>
 
@@ -1027,7 +1037,8 @@ $ claude mcp add riz-local \
             <h4>Smarter MCP</h4>
             <ul>
               <li>Per-route MCP tool schemas — typed input shapes from path + query parameters</li>
-              <li>AI inspection tools — riz.tail_logs, riz.replay_request, riz.scaffold</li>
+              <li>AI inspection tools — <code>riz.tail_logs</code>, <code>riz.replay_request</code>, <code>riz.scaffold</code></li>
+              <li>OAuth 2.1 + RFC 8707 Resource Indicators (bearer-token path remains default)</li>
             </ul>
           </article>
 
@@ -1041,7 +1052,7 @@ $ claude mcp add riz-local \
           <article class="bucket">
             <h4>Distributed Tracing</h4>
             <ul>
-              <li>OpenTelemetry exporter with X-Ray header propagation</li>
+              <li>OpenTelemetry exporter with W3C Trace Context propagation (X-Ray headers come free)</li>
             </ul>
           </article>
 
