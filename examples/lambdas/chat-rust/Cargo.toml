@@ -3,6 +3,10 @@ name = "chat-rust"
 version = "0.1.0"
 edition = "2021"
 
+# Example handler — not part of the published binary release.
+[package.metadata.dist]
+dist = false
+
 [dependencies]
 riz-rust-runtime = { path = "../../../crates/riz-rust-runtime" }
 aws_lambda_events = { version = "0.15", default-features = false, features = ["apigw"] }

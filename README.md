@@ -189,6 +189,22 @@ Or scaffold a fresh project from any of the 6 built-in templates with `riz init 
 - Hot-swap a function by POSTing to `/_riz/deploy` with `{"lambda": "name", "s3_bucket": "...", "s3_key": "..."}`. In-flight requests drain over 30 seconds; new requests hit the new pool atomically.
 - The Prometheus metrics at `/_riz/metrics` are compatible with Datadog Agent's OpenMetrics integration and direct scraping.
 
+## Performance
+
+A single `riz` host with a Bun ping handler at `concurrency = 20` sustains:
+
+| | |
+|---|---|
+| Throughput | **91,419 req/s** |
+| p50 latency | 152 µs |
+| p99 latency | **845 µs** (sub-millisecond) |
+
+Reproducible — see [`benches/README.md`](./benches/README.md) for the methodology, the `benches/bench-config.toml` file, and `benches/run-bench.sh`. Caveat: this is a localhost loopback synthetic, not a stand-in for real-world handler workloads.
+
+## Releasing
+
+`git tag v0.X.Y && git push --tags` → cargo-dist + GitHub Actions build and publish binaries for `aarch64-apple-darwin`, `x86_64-apple-darwin`, `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`. See [`docs/release.md`](./docs/release.md) for the full process.
+
 ## License
 
 MIT.

@@ -3,6 +3,10 @@ name = "echo-rust"
 version = "0.1.0"
 edition = "2021"
 
+# Example handler — not part of the published binary release.
+[package.metadata.dist]
+dist = false
+
 [dependencies]
 riz-rust-runtime = { path = "../../../crates/riz-rust-runtime" }
 serde = { version = "1", features = ["derive"] }

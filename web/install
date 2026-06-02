@@ -7,11 +7,10 @@
 # Source:   https://github.com/crizzuto/riz/blob/main/web/install
 # License:  MIT (same as riz)
 #
-# TODO(chris): Publish release binaries to https://github.com/crizzuto/riz/releases
-# before pointing users at this script. The script fetches riz-<target>.tar.xz from
-# GitHub Releases. Until a v0.1.0 tag exists with uploaded assets, this script will
-# exit with a 404 from GitHub. Interim install path:
-#   cargo install --git https://github.com/crizzuto/riz
+# Release process: docs/release.md. Trigger is `git tag v0.X.Y && git push --tags`;
+# cargo-dist + GitHub Actions builds + uploads tarballs for all 4 targets. Until
+# a release tag exists with uploaded assets, this script exits with a 404 from
+# GitHub — fall back to: `cargo install --git https://github.com/crizzuto/riz`.
 set -eu
 
 REPO="crizzuto/riz"
