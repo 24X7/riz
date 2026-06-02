@@ -49,7 +49,6 @@ impl ConnectionStore {
         self.inner.len()
     }
 
-    // FIXME(wave-7-D): used by tests and future connection-count metrics.
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
@@ -57,7 +56,6 @@ impl ConnectionStore {
 
     /// Returns a snapshot of all connections for the given function. Used by
     /// graceful shutdown to broadcast a close.
-    // FIXME(wave-7-D): called by graceful shutdown broadcaster once wave-D lands.
     #[allow(dead_code)]
     pub fn by_function(&self, function_name: &str) -> Vec<Arc<Connection>> {
         self.inner

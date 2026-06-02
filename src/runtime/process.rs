@@ -46,7 +46,6 @@ impl ProcessHandler {
         }
     }
 
-    // FIXME(wave-5): used by context fidelity layer to populate context.functionName.
     #[allow(dead_code)]
     pub fn function_name(&self) -> &str {
         &self.name

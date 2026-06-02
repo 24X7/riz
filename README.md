@@ -69,13 +69,15 @@ claude mcp add riz-local --transport http http://localhost:3000/_riz/mcp
 # → { "statusCode": 200, "body": "{\"id\":\"42\",\"name\":\"Account 42\"}" }
 ```
 
-The MCP server speaks JSON-RPC 2.0, supports batch requests, and follows the 2024-11-05 spec (`initialize` + `notifications/initialized` lifecycle, `tools/list`, `tools/call`, `resources/list`, `prompts/list`). No extra config — it's always running when riz runs.
+The MCP server speaks JSON-RPC 2.0 and defaults to spec **2025-11-25** (current stable). It still negotiates the older 2024-11-05, 2025-03-26, and 2025-06-18 baselines for clients that haven't moved yet — older clients get their requested version echoed back on `initialize`. Supported lifecycle methods: `initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`, `resources/list`, `resources/templates/list`, `prompts/list`. No extra config — it's always running when riz runs.
+
+Note on batching: JSON-RPC batch requests were removed in MCP 2025-06-18. Riz still accepts batches when a 2024-11-05 or 2025-03-26 client sends them; new clients targeting 2025-06-18+ should send single requests.
 
 Bearer-token protection: set `RIZ_AUTH_BEARER_TOKEN` or `[auth] bearer_token` in `riz.toml` to require `Authorization: Bearer <token>` on `/_riz/mcp` and other system endpoints. `/_riz/health` stays open for liveness probes.
 
-## Honest status (v0.1)
+## Features (v0.1)
 
-**Works today:**
+**Shipping today:**
 - AWS HTTP API Gateway v2 — full request/response shape, all 7 verbs (cross-runtime parity-tested: TS/JS via Bun, Python, Rust)
 - AWS WebSocket APIs — `$connect` / `$default` / `$disconnect` + `@connections` management API at `/_riz/connections/{id}` (GET/POST/DELETE) and `/_riz/connections` (LIST). Handlers in **Bun, Python, and Rust** (all three end-to-end tested).
 - Bun, Python, and Rust runtime adapters
@@ -92,11 +94,18 @@ Bearer-token protection: set `RIZ_AUTH_BEARER_TOKEN` or `[auth] bearer_token` in
 - **On-box safety profile** (every spawned child, no opt-in needed): `RLIMIT_CORE=0` (no core-dump disk fill), `RLIMIT_NOFILE=4096` (FD-leak cap), `RLIMIT_FSIZE=100MiB` (write cap). Linux only: `PR_SET_PDEATHSIG(SIGKILL)` (orphan prevention), `PR_SET_NO_NEW_PRIVS` (privilege downgrade), `RLIMIT_NPROC=256` (fork-bomb cap).
 - **Opt-in per-function caps**: `memory_mb` → `RLIMIT_AS` (AWS Lambda's `MemorySize`), `cpu_time_secs` → `RLIMIT_CPU` (kills runaway loops), `allowed_paths` → Linux Landlock filesystem allowlist (kernel 5.13+)
 
-**Not yet:**
+## Roadmap (v0.2 and beyond)
+
 - Non-HTTP event sources (SQS, SNS, S3, EventBridge, scheduled) — defer to v0.2
-- Lambda Layers + Extensions — out of scope (vendor deps in the handler dir)
-- Custom domain mappings — out of scope (reverse-proxy concern)
-- X-Ray distributed tracing — to be replaced with OpenTelemetry in v0.2
+- OpenTelemetry exporter with W3C Trace Context (X-Ray header propagation comes free)
+- Node.js + WebAssembly (WASI) runtime adapters
+- MCP per-route tool schemas — typed input shapes from path + query params
+- MCP OAuth 2.1 path with RFC 8707 Resource Indicators (bearer-token path stays the default)
+
+**Out of scope:**
+- Lambda Layers + Extensions — vendor deps belong in the handler dir
+- Custom domain mappings — reverse-proxy concern
+- TLS termination — terminate Let's Encrypt at the edge (Caddy/nginx)
 
 ## vs. LocalStack / SAM Local / Cloudflare Workers
 

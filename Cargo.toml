@@ -10,8 +10,8 @@ members = [
 name = "riz"
 version = "0.1.0"
 edition = "2021"
-repository = "https://github.com/criz/riz"
-description = "Self-hosted AWS Lambda host — run TypeScript functions without AWS"
+repository = "https://github.com/crizzuto/riz"
+description = "Self-hosted AWS Lambda runtime — HTTP API v2 + WebSocket handlers in Bun, Python, Rust. MCP server built in."
 license = "MIT"
 
 [[bin]]

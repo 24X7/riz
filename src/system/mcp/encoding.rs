@@ -54,6 +54,24 @@ pub(super) fn generic_envelope_schema() -> serde_json::Value {
     })
 }
 
+/// MCP `outputSchema` for every Riz tool: the AWS Lambda API Gateway v2
+/// response envelope. Returning this on `tools/list` lets MCP 2025-06-18+
+/// clients validate `structuredContent` on `tools/call` responses without
+/// re-parsing `content[0].text`.
+pub(super) fn lambda_response_envelope_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "statusCode": {"type": "integer", "minimum": 100, "maximum": 599},
+            "headers": {"type": "object", "additionalProperties": {"type": "string"}},
+            "cookies": {"type": "array", "items": {"type": "string"}},
+            "body": {"type": "string"},
+            "isBase64Encoded": {"type": "boolean"}
+        },
+        "required": ["statusCode"]
+    })
+}
+
 /// Substitute `{name}` and `{name+}` segments in `pattern` with values from
 /// `params`. Segments without a matching param key are left as-is (caller
 /// error — the Router's match will then reject the request as a 404).

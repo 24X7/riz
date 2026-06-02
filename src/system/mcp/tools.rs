@@ -8,7 +8,9 @@ use crate::gateway::{
 use crate::state::FunctionKind;
 use http::{HeaderMap, HeaderValue, Method};
 
-use super::encoding::{generic_envelope_schema, substitute_path_params, urlencode};
+use super::encoding::{
+    generic_envelope_schema, lambda_response_envelope_schema, substitute_path_params, urlencode,
+};
 use super::protocol::{
     JsonRpcError, Tool, ToolContent, ToolsCallParams, ToolsCallResult, ToolsListResult,
 };
@@ -65,6 +67,7 @@ impl McpHandler {
                 name,
                 description,
                 input_schema: generic_envelope_schema(),
+                output_schema: Some(lambda_response_envelope_schema()),
             });
         }
         let value = serde_json::to_value(ToolsListResult { tools }).map_err(|e| JsonRpcError {
@@ -199,15 +202,22 @@ impl McpHandler {
         };
 
         let is_error = inner.status_code >= 400;
-        let inner_json = serde_json::to_string(&inner).map_err(|e| JsonRpcError {
+        let inner_value = serde_json::to_value(&inner).map_err(|e| JsonRpcError {
+            code: -32603,
+            message: e.to_string(),
+        })?;
+        let inner_text = serde_json::to_string(&inner_value).map_err(|e| JsonRpcError {
             code: -32603,
             message: e.to_string(),
         })?;
         let result = ToolsCallResult {
             content: vec![ToolContent {
                 kind: "text",
-                text: inner_json,
+                text: inner_text,
             }],
+            // 2025-06-18+ clients prefer this typed shape over re-parsing
+            // content[0].text; older clients ignore the unknown field.
+            structured_content: Some(inner_value),
             is_error,
         };
         let value = serde_json::to_value(result).map_err(|e| JsonRpcError {

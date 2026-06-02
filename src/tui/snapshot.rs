@@ -18,7 +18,6 @@ pub struct TuiSnapshot {
     /// Accumulated log entries (capped at 500 most-recent).
     pub log_entries: VecDeque<LogEntry>,
     /// Unix seconds when this snapshot was captured.
-    // FIXME(wave-9): used by TUI status bar for "last updated at HH:MM:SS".
     #[allow(dead_code)]
     pub captured_at_secs: u64,
 }

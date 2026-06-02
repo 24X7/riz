@@ -34,7 +34,7 @@ Function-centric config matches AWS exactly: one `[function.<name>]` block per f
 - **Per-function process isolation** with semaphore-bounded concurrency, automatic respawn on crash/timeout, liveness watcher
 - **Terminal dashboard** (ratatui) — real nearest-rank P50/P75/P90/P95/P99 over a 5-minute rolling window, plus host process stats and system endpoint visibility
 - **Prometheus metrics** at `/_riz/metrics` — `riz_invocations_total`, `riz_errors_total`, `riz_latency_ms` (summary), `riz_cold_starts_total`, `riz_function_healthy`, `riz_uptime_seconds`
-- **MCP server** at `/_riz/mcp` — spec-compliant JSON-RPC 2.0 (`initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`, `resources/list`, `prompts/list`, batch). Every user function becomes an LLM-invokable tool with no code changes.
+- **MCP server** at `/_riz/mcp` — JSON-RPC 2.0, defaults to spec **2025-11-25** (current stable). Negotiates legacy 2024-11-05 / 2025-03-26 / 2025-06-18 too — older clients get their requested version echoed on `initialize`. Methods: `initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`, `resources/list`, `resources/templates/list`, `prompts/list`. JSON-RPC batching is still accepted (removed in 2025-06-18 but kept for legacy-client compat). Every user function in `riz.toml` automatically becomes an MCP tool — no SDK, no wrappers.
 - **Health endpoints** — `/health` (liveness 200), `/ready` (per-pool readiness), `/_riz/health` (rich per-function status)
 - **30-second graceful drain** on SIGTERM/SIGINT (hard cap enforced)
 - **Single Rust binary** with embedded Bun and Python adapters (no install dance)

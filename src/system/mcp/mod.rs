@@ -9,14 +9,16 @@
 //! through the Router — so any function becomes MCP-callable with no changes
 //! to the function's own code.
 //!
-//! Transport: stateless HTTP. One JSON-RPC message (or a batch array) per
-//! POST. Notifications (requests without `id`) get a 204 No Content. Batches
-//! return a 200 with an array of responses (notifications inside a batch
-//! contribute nothing).
+//! Transport: stateless HTTP. One JSON-RPC message per POST. Notifications
+//! (requests without `id`) get a 204 No Content. JSON-RPC batch arrays are
+//! still accepted for legacy 2024-11-05 / 2025-03-26 clients — batching was
+//! removed in MCP 2025-06-18, and new clients should send single messages.
 //!
-//! Protocol version: advertises "2024-11-05" — the widely-supported baseline.
-//! On `initialize`, echoes the version requested by the client if recognized;
-//! otherwise responds with the baseline (client may choose to disconnect).
+//! Protocol version: defaults to **2025-11-25** (current stable). On
+//! `initialize`, echoes the version requested by the client if it appears in
+//! `SUPPORTED_PROTOCOL_VERSIONS` (currently 2024-11-05, 2025-03-26,
+//! 2025-06-18, 2025-11-25); otherwise responds with the server default and
+//! lets the client decide whether to proceed.
 
 mod encoding;
 mod protocol;
@@ -44,10 +46,25 @@ pub struct McpHandler {
 impl McpHandler {
     pub fn new(riz_state: Arc<RizState>, bearer_token: Option<String>) -> Self {
         Self {
-            routes: vec![RouteEntry {
-                method: RouteMethod::Post,
-                path: "/_riz/mcp".into(),
-            }],
+            routes: vec![
+                // POST is the JSON-RPC + Streamable-HTTP request path.
+                RouteEntry {
+                    method: RouteMethod::Post,
+                    path: "/_riz/mcp".into(),
+                },
+                // GET on the MCP endpoint is part of the Streamable HTTP
+                // transport spec (2025-03-26+): clients use it to subscribe to
+                // server-initiated SSE streams. Riz is fundamentally
+                // request/response — no server push — so we accept GET and
+                // return 405 with a JSON-RPC method-not-allowed shape, which
+                // is the spec-sanctioned response for transport-supported-
+                // but-not-used. Without this route the gateway would 404,
+                // which clients can't disambiguate from "endpoint missing".
+                RouteEntry {
+                    method: RouteMethod::Get,
+                    path: "/_riz/mcp".into(),
+                },
+            ],
             riz_state,
             router: tokio::sync::RwLock::new(None),
             bearer_token,
@@ -95,6 +112,23 @@ impl LambdaHandler for McpHandler {
                     &serde_json::json!({"error": "unauthorized"}),
                 ));
             }
+        }
+        // Streamable HTTP (MCP 2025-03-26+): GET is reserved for server-initiated
+        // SSE streams. Riz doesn't push, so return 405 with the JSON-RPC error
+        // shape and Allow: POST per HTTP semantics.
+        if event.http_method == http::Method::GET {
+            let body = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": serde_json::Value::Null,
+                "error": {
+                    "code": -32601,
+                    "message": "GET not supported on /_riz/mcp — server does not initiate streams. Use POST with JSON-RPC body."
+                }
+            });
+            let mut resp = http_json_response(405, &body);
+            resp.headers
+                .insert("allow", http::HeaderValue::from_static("POST"));
+            return Ok(resp);
         }
         let body = event.body.as_deref().unwrap_or("{}");
         // Parse as raw JSON first to detect batch (array) vs single (object)
@@ -592,5 +626,171 @@ mod tests {
         let resp = h.invoke(evt(req)).await.unwrap();
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         assert_eq!(body["error"]["code"], -32600);
+    }
+
+    // ─── MCP 2025-11-25 spec compliance ─────────────────────────────────────
+    //
+    // These tests are the regression gate for the spec-version upgrade from
+    // 2024-11-05 → 2025-11-25. They lock in: (1) the new default protocol
+    // version, (2) structured tool output / outputSchema (added 2025-06-18),
+    // (3) Streamable HTTP transport GET handling (2025-03-26+).
+
+    #[tokio::test]
+    async fn initialize_with_no_version_defaults_to_2025_11_25() {
+        let s = Arc::new(RizState::new());
+        let h = McpHandler::new(s, None);
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
+        assert_eq!(body["result"]["protocolVersion"], "2025-11-25");
+    }
+
+    #[tokio::test]
+    async fn initialize_echoes_2025_06_18_when_requested() {
+        let s = Arc::new(RizState::new());
+        let h = McpHandler::new(s, None);
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
+        assert_eq!(body["result"]["protocolVersion"], "2025-06-18");
+    }
+
+    #[tokio::test]
+    async fn initialize_echoes_2025_11_25_when_requested() {
+        let s = Arc::new(RizState::new());
+        let h = McpHandler::new(s, None);
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
+        assert_eq!(body["result"]["protocolVersion"], "2025-11-25");
+    }
+
+    #[tokio::test]
+    async fn tools_list_advertises_lambda_output_schema() {
+        let s = Arc::new(RizState::new());
+        s.register(user_state()).await;
+        let h = McpHandler::new(s, None);
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
+        let tool = &body["result"]["tools"][0];
+        assert_eq!(tool["name"], "api");
+        let output_schema = &tool["outputSchema"];
+        assert!(
+            output_schema.is_object(),
+            "tools/list must declare outputSchema (MCP 2025-06-18+)"
+        );
+        assert_eq!(output_schema["type"], "object");
+        assert!(
+            output_schema["properties"]["statusCode"].is_object(),
+            "outputSchema must describe the Lambda response envelope"
+        );
+        assert_eq!(
+            output_schema["required"][0], "statusCode",
+            "statusCode is the only universally-required Lambda response field"
+        );
+    }
+
+    #[tokio::test]
+    async fn tools_call_returns_structured_content_with_lambda_envelope() {
+        let s = Arc::new(RizState::new());
+        s.register(user_state()).await;
+        let h = McpHandler::new(s, None);
+        // Empty router → tools/call hits "unknown tool" path on Router::empty,
+        // but for the test we don't need a real handler — wire up a Router
+        // that 404s and verify the 404 response is reported as structuredContent.
+        h.set_router(Arc::new(Router::empty())).await;
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"api","arguments":{}}}"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
+        let result = &body["result"];
+        // 2025-06-18+ structuredContent must be present alongside content[].
+        assert!(
+            result["structuredContent"].is_object(),
+            "tools/call must include structuredContent (MCP 2025-06-18+). got: {result}"
+        );
+        let sc = &result["structuredContent"];
+        assert!(
+            sc["statusCode"].is_number(),
+            "structuredContent must be the Lambda response envelope shape"
+        );
+        // The text content is still present for older-client back-compat.
+        assert!(
+            result["content"].is_array() && !result["content"].as_array().unwrap().is_empty(),
+            "content array must remain for pre-2025-06-18 clients"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_on_mcp_endpoint_returns_405_with_allow_post() {
+        // Streamable HTTP (MCP 2025-03-26+) reserves GET for server-initiated
+        // SSE streams. Riz doesn't push, so it must respond cleanly — not 404
+        // — so clients can distinguish "transport supported, GET unused" from
+        // "wrong endpoint".
+        let s = Arc::new(RizState::new());
+        let h = McpHandler::new(s, None);
+        let mut e = make_event_with_body("GET", "/_riz/mcp", "");
+        e.http_method = http::Method::GET;
+        let resp = h.invoke(e).await.unwrap();
+        assert_eq!(resp.status_code, 405);
+        let allow = resp
+            .headers
+            .get("allow")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert_eq!(allow, "POST", "405 must advertise Allow: POST");
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
+        assert_eq!(body["jsonrpc"], "2.0");
+        assert_eq!(body["error"]["code"], -32601);
+    }
+
+    #[tokio::test]
+    async fn initialize_accepts_client_elicitation_capability_silently() {
+        // MCP 2025-11-25 adds `elicitation` as a CLIENT capability — clients
+        // advertise it so servers know they can call `elicitation/create` for
+        // user input. Riz is a server and doesn't drive elicitations, so the
+        // capability is informational only. The test guards against a future
+        // regression where a strict-parse change would reject unknown
+        // capabilities and break newer clients.
+        let s = Arc::new(RizState::new());
+        let h = McpHandler::new(s, None);
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+            "protocolVersion":"2025-11-25",
+            "capabilities":{
+                "elicitation":{},
+                "roots":{"listChanged":true},
+                "sampling":{}
+            },
+            "clientInfo":{"name":"newer-client","version":"1.0"}
+        }}"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        assert_eq!(resp.status_code, 200);
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
+        assert_eq!(body["result"]["protocolVersion"], "2025-11-25");
+        assert!(
+            body["result"]["capabilities"]["tools"].is_object(),
+            "server must still advertise its own tools capability"
+        );
+        // Riz must NOT echo back elicitation as a SERVER capability — that
+        // would be a lie (we don't initiate elicitations).
+        assert!(
+            body["result"]["capabilities"]["elicitation"].is_null(),
+            "server must not falsely advertise elicitation capability"
+        );
+    }
+
+    #[tokio::test]
+    async fn handler_advertises_both_get_and_post_routes() {
+        // McpHandler.routes() must include POST + GET so the Router doesn't
+        // 404 the GET path before invoke() can return 405.
+        let s = Arc::new(RizState::new());
+        let h = McpHandler::new(s, None);
+        let route_keys: Vec<String> = h
+            .routes()
+            .iter()
+            .map(|r| format!("{} {}", r.method.as_str(), r.path))
+            .collect();
+        assert!(route_keys.contains(&"POST /_riz/mcp".to_string()));
+        assert!(route_keys.contains(&"GET /_riz/mcp".to_string()));
     }
 }

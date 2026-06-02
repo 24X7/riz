@@ -4,14 +4,14 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Riz — Self-hosted Lambda runtime</title>
-  <meta name="description" content="Run your AWS Lambda functions on any Linux box. Single Rust binary. HTTP API Gateway v2 compatible. No Docker, no cold start tax, no AWS bill."/>
-  <meta property="og:title" content="Riz — Self-hosted Lambda runtime"/>
-  <meta property="og:description" content="Run your AWS Lambda functions on any Linux box. Single Rust binary. HTTP API Gateway v2 compatible."/>
+  <meta name="description" content="Self-hosted AWS Lambda runtime. Every function becomes a current-spec MCP tool (2025-11-25). Bun · Python · Rust. HTTP API Gateway v2 + WebSocket. Single Rust binary, predictable cost."/>
+  <meta property="og:title" content="Riz — Self-hosted Lambda runtime with built-in MCP"/>
+  <meta property="og:description" content="Run AWS HTTP API v2 + WebSocket Lambdas on a single Rust binary — and every function becomes a current-spec MCP tool for Claude Code, Cursor, and any MCP client."/>
   <meta property="og:url" content="https://riz.dev"/>
   <meta property="og:type" content="website"/>
   <meta name="twitter:card" content="summary_large_image"/>
-  <meta name="twitter:title" content="Riz — Self-hosted Lambda runtime"/>
-  <meta name="twitter:description" content="Your Lambda. Your box. Your rules."/>
+  <meta name="twitter:title" content="Riz — Self-hosted Lambda runtime + MCP server"/>
+  <meta name="twitter:description" content="Your Lambda. Your box. Your rules. Every function auto-registered as a current-spec MCP tool."/>
   <link rel="canonical" href="https://riz.dev"/>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
@@ -722,12 +722,12 @@
 <!-- HERO -->
 <section class="hero">
   <div class="hero-l">
-    <div class="eyebrow">// open source · rust · v0.1</div>
+    <div class="eyebrow">// open source · rust · v0.1 · mcp 2025-11-25</div>
     <h1>Your Lambda.<br/><em>Your box.</em><br/>Your rules.</h1>
     <p class="sub">
-      <strong>Run your AWS HTTP API v2 + WebSocket Lambda handlers on a single Rust binary.</strong>
-      Zero code changes, zero Docker, real percentiles in your terminal, and an MCP server
-      so any function becomes an LLM tool.
+      <strong>Every AWS HTTP API v2 + WebSocket Lambda you run becomes a spec-current MCP tool.</strong>
+      Point Claude or Cursor at the endpoint; your APIs are agent-callable. Zero SDK,
+      zero wrappers — and the same handler still serves real traffic on a single Rust binary.
     </p>
     <div class="install">
       <span class="pr">$</span>
@@ -805,33 +805,34 @@
 <div class="strip">
   <div class="si">
     <span class="sn">01</span>
-    <div><h3>Drop-in compatible</h3><p>HTTP API Gateway v2 payload format. Your existing Lambda runs on Riz unchanged.</p></div>
+    <div><h3>MCP-native at the runtime layer</h3><p>Every function auto-exposed as an MCP tool. Spec 2025-11-25 with Streamable HTTP + structured output. No SDK, no wrapper.</p></div>
   </div>
   <div class="si">
     <span class="sn">02</span>
-    <div><h3>Process isolation</h3><p>Every invocation runs in an isolated OS process. Lambda semantics, native speed.</p></div>
+    <div><h3>Lambda code drop-in</h3><p>Exact AWS HTTP API Gateway v2 payload. Your existing handlers move to Riz unchanged.</p></div>
   </div>
   <div class="si">
     <span class="sn">03</span>
-    <div><h3>Terminal dashboard</h3><p>P50–P99 latency, live logs, and perf graphs. Built on ratatui. Actually useful.</p></div>
+    <div><h3>Terminal dashboard</h3><p>P50–P99 latency, live logs, perf graphs. Built on ratatui. Actually useful, not a status page.</p></div>
   </div>
   <div class="si">
     <span class="sn">04</span>
-    <div><h3>Single binary</h3><p>Written in Rust. No Docker, no daemon, no dependencies. Just <code style="font-family:var(--mono);font-size:.78em">riz run</code>.</p></div>
+    <div><h3>Single Rust binary</h3><p>No Docker, no container runtime, no daemon. <code style="font-family:var(--mono);font-size:.78em">riz run</code> and you're serving.</p></div>
   </div>
 </div>
 
 <!-- MCP -->
 <section class="split" id="mcp">
   <div class="sp-t">
-    <span class="lbl">// MCP server, built in</span>
+    <span class="lbl">// MCP server, built in · spec 2025-11-25</span>
     <h2>Your APIs.<br/><em>An LLM's hands.</em></h2>
-    <p>Riz ships a spec-compliant <strong>MCP server</strong> at <code style="font-family:var(--mono);font-size:.82em;color:var(--accent)">/_riz/mcp</code>. Every function in your <code style="font-family:var(--mono);font-size:.82em;color:var(--accent)">riz.toml</code> automatically becomes a tool an LLM can invoke.</p>
-    <p>No SDKs, no wrappers, no second runtime. Drop your existing Lambda code in, point Claude or Cursor at the endpoint, and your APIs are agent-callable.</p>
+    <p>Riz ships a current-spec <strong>MCP server</strong> at <code style="font-family:var(--mono);font-size:.82em;color:var(--accent)">/_riz/mcp</code>. Every function in your <code style="font-family:var(--mono);font-size:.82em;color:var(--accent)">riz.toml</code> auto-registers as a tool with a typed output schema, ready for Claude Code, Cursor, or any 2025-11-25 client.</p>
+    <p>Streamable HTTP transport, structured tool output, full lifecycle negotiation back to the 2024-11-05 baseline. No SDK, no wrappers — your existing Lambda handler IS the tool.</p>
     <div class="pills">
       <span class="pill">jsonrpc 2.0</span>
-      <span class="pill">mcp 2024-11-05</span>
-      <span class="pill">batched</span>
+      <span class="pill">mcp 2025-11-25</span>
+      <span class="pill">streamable http</span>
+      <span class="pill">structured output</span>
     </div>
   </div>
   <div class="sp-c">
@@ -963,7 +964,7 @@ $ claude mcp add riz-local \
               <li><code>/_riz/health</code> · <code>/_riz/metrics</code> · <code>/_riz/registry</code></li>
               <li>Terminal dashboard: P50/P75/P90/P95/P99 over 5-min window</li>
               <li>Datadog metrics emitter</li>
-              <li>MCP server (spec 2024-11-05, JSON-RPC, batches, lifecycle)</li>
+              <li>MCP server — spec 2025-11-25 (also negotiates 2024-11-05 / 2025-03-26 / 2025-06-18). JSON-RPC 2.0, full lifecycle.</li>
             </ul>
           </article>
 
@@ -1096,7 +1097,7 @@ $ claude mcp add riz-local \
 <section class="cta">
   <div>
     <span class="lbl">// get started</span>
-    <h2>Ship your functions<br/><em>anywhere.</em></h2>
+    <h2>Ship Lambdas<br/><em>without AWS.</em></h2>
   </div>
   <div class="cta-btns">
     <a href="https://github.com/crizzuto/riz" class="bp" target="_blank">View on GitHub ↗</a>

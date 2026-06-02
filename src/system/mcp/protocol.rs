@@ -6,8 +6,25 @@ use std::collections::HashMap;
 /// MCP protocol versions this server understands. We echo back the client's
 /// version if it appears here; otherwise we respond with SERVER_DEFAULT and let
 /// the client decide whether to proceed.
-pub(super) const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2024-11-05", "2025-03-26"];
-pub(super) const SERVER_DEFAULT_PROTOCOL_VERSION: &str = "2024-11-05";
+///
+/// Spec history that shapes this list:
+///   - 2024-11-05  — original public baseline; still widely deployed in clients.
+///   - 2025-03-26  — introduces Streamable HTTP transport, JSON-RPC batching.
+///   - 2025-06-18  — REMOVES JSON-RPC batching, adds structured tool output
+///                   (`outputSchema` / `structuredContent`), tighter OAuth.
+///   - 2025-11-25  — current stable. Adds elicitation, async tasks, enhanced
+///                   sampling, Client ID Metadata Documents, the extensions
+///                   system, mandatory RFC 8707 Resource Indicators on OAuth.
+///
+/// Default points at the newest stable; older clients still get their requested
+/// version echoed back so legacy negotiation keeps working.
+pub(super) const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
+    "2024-11-05",
+    "2025-03-26",
+    "2025-06-18",
+    "2025-11-25",
+];
+pub(super) const SERVER_DEFAULT_PROTOCOL_VERSION: &str = "2025-11-25";
 
 #[derive(Deserialize)]
 pub(super) struct JsonRpcRequest {
@@ -34,6 +51,12 @@ pub(super) struct Tool {
     pub(super) description: String,
     #[serde(rename = "inputSchema")]
     pub(super) input_schema: serde_json::Value,
+    /// MCP 2025-06-18+: declares the JSON Schema of the structured payload
+    /// the tool returns alongside its free-text `content`. Clients use this
+    /// to validate `structuredContent` on responses. Always-Some for Riz —
+    /// every function returns an AWS Lambda response envelope.
+    #[serde(rename = "outputSchema", skip_serializing_if = "Option::is_none")]
+    pub(super) output_schema: Option<serde_json::Value>,
 }
 
 #[derive(Serialize)]
@@ -44,6 +67,12 @@ pub(super) struct ToolsListResult {
 #[derive(Serialize)]
 pub(super) struct ToolsCallResult {
     pub(super) content: Vec<ToolContent>,
+    /// MCP 2025-06-18+: typed payload that validates against the tool's
+    /// declared `outputSchema`. For Riz this is the parsed Lambda response
+    /// (statusCode, headers, body, isBase64Encoded) — clients that want
+    /// structured access skip parsing `content[0].text` as JSON.
+    #[serde(rename = "structuredContent", skip_serializing_if = "Option::is_none")]
+    pub(super) structured_content: Option<serde_json::Value>,
     #[serde(rename = "isError")]
     pub(super) is_error: bool,
 }

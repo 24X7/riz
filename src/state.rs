@@ -137,7 +137,6 @@ impl LatencyWindow {
         (q(0.50), q(0.75), q(0.90), q(0.95), q(0.99))
     }
 
-    // FIXME(wave-8): used in latency coverage tests (8.5) and future TUI sparkline.
     #[allow(dead_code)]
     pub fn count(&mut self, now: Instant) -> usize {
         self.evict_stale(now);
@@ -145,7 +144,6 @@ impl LatencyWindow {
     }
 
     /// Raw sample count including stale entries — for tests and MAX_SAMPLES checks.
-    // FIXME(wave-8): test-support method for capacity assertions (Wave 8.5).
     #[allow(dead_code)]
     pub fn raw_len(&self) -> usize {
         self.samples.len()
@@ -303,7 +301,6 @@ pub struct FunctionState {
 #[derive(Clone, Debug, Default)]
 pub struct FunctionStateSnapshot {
     pub name: String,
-    // FIXME(wave-9): rendered in TUI routes column.
     #[allow(dead_code)]
     pub routes: Vec<String>,
     pub kind: FunctionKind,
@@ -318,7 +315,6 @@ pub struct FunctionStateSnapshot {
     pub p90_ms: f64,
     pub p95_ms: f64,
     pub p99_ms: f64,
-    // FIXME(wave-9): rendered in TUI last-active column.
     #[allow(dead_code)]
     pub last_invoked_secs_ago: Option<f64>,
 }
