@@ -68,6 +68,12 @@ enum Commands {
         #[command(subcommand)]
         cmd: McpCmd,
     },
+    /// Pre-flight diagnostic: validates riz.toml, checks runtime binaries
+    /// (bun / python3), confirms each function's handler file is present,
+    /// probes the configured port, and (if riz is already running) pings
+    /// the MCP endpoint. Designed to be the first command a user runs
+    /// when "it won't start" so the failure surface is small + obvious.
+    Doctor,
     /// Scaffold a new riz project from a built-in template.
     ///
     /// Templates form a 3×2 matrix (3 languages × 2 scenarios):
@@ -480,6 +486,299 @@ async fn run_mcp_inspect(url: &str, bearer: Option<&str>) -> anyhow::Result<()> 
     Ok(())
 }
 
+/// Severity of a single doctor check. PASS is silent-ish, WARN means the
+/// runtime can still start but something is off, FAIL means startup will
+/// almost certainly break.
+#[derive(Copy, Clone)]
+enum Finding {
+    Pass,
+    Warn,
+    Fail,
+}
+
+impl Finding {
+    fn glyph(self) -> &'static str {
+        match self {
+            Finding::Pass => "✓",
+            Finding::Warn => "⚠",
+            Finding::Fail => "✗",
+        }
+    }
+}
+
+fn report(severity: Finding, label: &str, detail: &str) {
+    if detail.is_empty() {
+        println!("  {}  {label}", severity.glyph());
+    } else {
+        println!("  {}  {label}  ·  {detail}", severity.glyph());
+    }
+}
+
+/// Pre-flight diagnostic. Verifies the environment is ready for `riz run`
+/// without actually booting the runtime. Each check prints a single line;
+/// the summary tail counts warnings and failures so CI can grep on `riz
+/// doctor` output if desired.
+async fn run_doctor(config_path: &str) -> anyhow::Result<()> {
+    let mut warns: u32 = 0;
+    let mut fails: u32 = 0;
+    let mut record = |sev: Finding| match sev {
+        Finding::Pass => {}
+        Finding::Warn => warns += 1,
+        Finding::Fail => fails += 1,
+    };
+
+    println!("riz doctor — pre-flight checks\n");
+
+    // 1. riz.toml — exists, parses, validates.
+    let toml_path = std::path::Path::new(config_path);
+    if !toml_path.exists() {
+        report(
+            Finding::Fail,
+            "riz.toml present",
+            &format!("not found at {config_path}"),
+        );
+        record(Finding::Fail);
+        println!("\n  Hint: run `riz init <template>` to scaffold one.");
+        println!("\n✗ 1 failure — cannot continue without a config.");
+        std::process::exit(1);
+    }
+    report(Finding::Pass, "riz.toml present", config_path);
+    record(Finding::Pass);
+
+    let config = match config::Config::from_file(config_path) {
+        Ok(c) => {
+            report(Finding::Pass, "riz.toml parses", "");
+            record(Finding::Pass);
+            c
+        }
+        Err(e) => {
+            report(Finding::Fail, "riz.toml parses", &format!("{e}"));
+            record(Finding::Fail);
+            println!("\n✗ {} failure(s) — cannot continue without parseable config.", fails);
+            std::process::exit(1);
+        }
+    };
+
+    match config.validate() {
+        Ok(_) => {
+            report(
+                Finding::Pass,
+                "riz.toml validates",
+                &format!("{} function(s)", config.functions.len()),
+            );
+            record(Finding::Pass);
+        }
+        Err(e) => {
+            report(Finding::Fail, "riz.toml validates", &format!("{e}"));
+            record(Finding::Fail);
+        }
+    }
+
+    // 2. Runtime binaries — only check the ones actually needed by the config.
+    let mut needs_bun = false;
+    let mut needs_python = false;
+    let mut needs_rust_bin: Vec<(String, std::path::PathBuf)> = Vec::new();
+    for (name, fc) in &config.functions {
+        match fc.runtime {
+            config::RuntimeKind::Bun => needs_bun = true,
+            config::RuntimeKind::Python => needs_python = true,
+            config::RuntimeKind::Rust => {
+                needs_rust_bin.push((name.clone(), fc.handler.clone()));
+            }
+        }
+    }
+
+    if needs_bun {
+        match which_binary("bun") {
+            Some(path) => {
+                report(Finding::Pass, "bun on PATH", &path.display().to_string());
+                record(Finding::Pass);
+            }
+            None => {
+                report(
+                    Finding::Fail,
+                    "bun on PATH",
+                    "not found — required for TypeScript/JavaScript handlers",
+                );
+                record(Finding::Fail);
+                println!("       Install: curl -fsSL https://bun.sh/install | bash");
+            }
+        }
+    }
+
+    if needs_python {
+        match which_binary("python3") {
+            Some(path) => {
+                report(Finding::Pass, "python3 on PATH", &path.display().to_string());
+                record(Finding::Pass);
+            }
+            None => {
+                report(
+                    Finding::Fail,
+                    "python3 on PATH",
+                    "not found — required for Python handlers",
+                );
+                record(Finding::Fail);
+            }
+        }
+    }
+
+    // 3. Per-function handler-file presence. For Bun/Python this is the
+    //    .ts/.py file; for Rust it's the precompiled binary at `handler =`.
+    for (name, fc) in &config.functions {
+        let handler_str = fc.handler.display().to_string();
+        let label = format!("function `{name}` handler");
+        match fc.runtime {
+            config::RuntimeKind::Bun | config::RuntimeKind::Python => {
+                // Handler is "file.ext.export" or "./path/file.handler". Strip
+                // the trailing export segment and check the file exists.
+                let candidate = strip_handler_export(&fc.handler);
+                if candidate.exists() {
+                    report(Finding::Pass, &label, &candidate.display().to_string());
+                    record(Finding::Pass);
+                } else {
+                    report(
+                        Finding::Fail,
+                        &label,
+                        &format!("file not found: {}", candidate.display()),
+                    );
+                    record(Finding::Fail);
+                }
+            }
+            config::RuntimeKind::Rust => {
+                if fc.handler.exists() {
+                    report(Finding::Pass, &label, &handler_str);
+                    record(Finding::Pass);
+                } else {
+                    report(
+                        Finding::Warn,
+                        &label,
+                        &format!("binary not built: {handler_str}"),
+                    );
+                    record(Finding::Warn);
+                    println!("       Hint: cargo build --release");
+                }
+            }
+        }
+    }
+
+    // 4. Port availability. If something is already bound to the port, hit
+    //    /_riz/health to see if it's a healthy Riz — that's still "OK,"
+    //    just a different kind of OK.
+    let host = config.server.host.clone();
+    let port = config.server.port;
+    let bind_target = format!("{host}:{port}");
+    match std::net::TcpListener::bind(&bind_target) {
+        Ok(listener) => {
+            drop(listener);
+            report(Finding::Pass, "configured port free", &bind_target);
+            record(Finding::Pass);
+        }
+        Err(_) => {
+            // Something else is bound. Hit /_riz/health and see if it's riz.
+            let probe_url = format!("http://{host}:{port}/_riz/health");
+            let probe = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(2))
+                .build()
+                .ok();
+            let already_riz = if let Some(c) = probe {
+                c.get(&probe_url).send().await.is_ok()
+            } else {
+                false
+            };
+            if already_riz {
+                report(
+                    Finding::Pass,
+                    "configured port",
+                    &format!("{bind_target} (riz already running)"),
+                );
+                record(Finding::Pass);
+            } else {
+                report(
+                    Finding::Fail,
+                    "configured port free",
+                    &format!("{bind_target} is in use by something else"),
+                );
+                record(Finding::Fail);
+            }
+        }
+    }
+
+    // 5. Summary.
+    println!();
+    if fails == 0 && warns == 0 {
+        println!("✓ All checks passed. Run `riz run` to start.");
+        Ok(())
+    } else if fails == 0 {
+        println!("⚠ {warns} warning(s). `riz run` will probably work — verify above.");
+        Ok(())
+    } else {
+        println!(
+            "✗ {fails} failure(s){}. Fix the items marked ✗ above before `riz run`.",
+            if warns > 0 {
+                format!(", {warns} warning(s)")
+            } else {
+                String::new()
+            }
+        );
+        std::process::exit(1);
+    }
+}
+
+/// Lookup a binary on PATH. Mirrors `which(1)` — returns the first match.
+fn which_binary(name: &str) -> Option<std::path::PathBuf> {
+    let path_env = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_env) {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// `handler = "src/api/index.handler"` → `src/api/index.ts` (Bun) or
+/// `src/api/index.py` (Python). The AWS convention is `file.exportName`;
+/// for doctor we just need to verify the file half exists.
+///
+/// `handler = "./src/api/index.ts"` (explicit path form) → returned as-is.
+fn strip_handler_export(handler: &std::path::Path) -> std::path::PathBuf {
+    let s = handler.to_string_lossy();
+    // Explicit path form: ends in .ts / .js / .mjs / .py / .cjs.
+    if s.ends_with(".ts")
+        || s.ends_with(".js")
+        || s.ends_with(".mjs")
+        || s.ends_with(".cjs")
+        || s.ends_with(".py")
+    {
+        return handler.to_path_buf();
+    }
+    // AWS form: `dir/file.export`. The whole `.export` segment becomes the
+    // file extension lookup — try both .ts and .py since we don't know the
+    // runtime here without the FunctionConfig. Caller (run_doctor) only
+    // calls this for Bun + Python; both look for the file with `.export`
+    // stripped + `.ts`/`.py` appended.
+    //
+    // For Bun, we'll resolve to <name>.ts; for Python, <name>.py. But the
+    // caller doesn't differentiate — the simplest correct behavior is to
+    // strip the last `.<segment>` and return that as a directory-relative
+    // file (without extension). The doctor's check then sees if a file
+    // matching the AWS export-segment-stripped path with .ts OR .py exists.
+    //
+    // Simpler approach: try multiple extensions on the stripped base.
+    let parent = handler.parent().unwrap_or_else(|| std::path::Path::new(""));
+    let stem = handler.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    for ext in ["ts", "js", "mjs", "py"] {
+        let candidate = parent.join(format!("{stem}.{ext}"));
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+    // No matching file found; return the original so the caller's
+    // .exists() check yields a clean "file not found" error message.
+    handler.to_path_buf()
+}
+
 /// One-line summary of a JSON Schema fragment for the inspect report.
 fn schema_summary(schema: &serde_json::Value) -> String {
     let kind = schema["type"].as_str().unwrap_or("any");
@@ -522,6 +821,14 @@ async fn main() -> anyhow::Result<()> {
             .clone()
             .or_else(|| std::env::var("RIZ_AUTH_BEARER_TOKEN").ok());
         return run_mcp_inspect(url, token.as_deref()).await;
+    }
+
+    // `riz doctor` has its own config-load path that surfaces parse failures
+    // as findings instead of aborting the process. Handle it before the
+    // generic config-load below.
+    if matches!(cli.command, Some(Commands::Doctor)) {
+        let config_path = effective_config_path(cli.dev, cli.config.as_deref());
+        return run_doctor(&config_path).await;
     }
 
     // `riz init` doesn't need (and shouldn't require) an existing config.

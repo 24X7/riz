@@ -83,6 +83,14 @@ riz mcp inspect
 
 Runs `initialize` + `tools/list` against your running Riz and prints a one-screen report — spec version, server capabilities, every registered tool with its input + output schemas. Add `--bearer <token>` (or set `RIZ_AUTH_BEARER_TOKEN`) for auth-gated endpoints; `--url` to point at a remote instance.
 
+**Troubleshoot "it won't start":**
+
+```bash
+riz doctor
+```
+
+Pre-flight diagnostic. Validates `riz.toml`, checks runtime binaries (`bun` / `python3`) for every runtime your config uses, confirms each function's handler file exists, probes the configured port. Prints ✓ / ⚠ / ✗ per check + a summary. Designed to be the first command you run when something's off, before opening an issue.
+
 ## Features (v0.1)
 
 **Shipping today:**
