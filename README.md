@@ -75,6 +75,14 @@ Note on batching: JSON-RPC batch requests were removed in MCP 2025-06-18. Riz st
 
 Bearer-token protection: set `RIZ_AUTH_BEARER_TOKEN` or `[auth] bearer_token` in `riz.toml` to require `Authorization: Bearer <token>` on `/_riz/mcp` and other system endpoints. `/_riz/health` stays open for liveness probes.
 
+**Verify your setup** before pointing Claude or Cursor at the endpoint:
+
+```bash
+riz mcp inspect
+```
+
+Runs `initialize` + `tools/list` against your running Riz and prints a one-screen report — spec version, server capabilities, every registered tool with its input + output schemas. Add `--bearer <token>` (or set `RIZ_AUTH_BEARER_TOKEN`) for auth-gated endpoints; `--url` to point at a remote instance.
+
 ## Features (v0.1)
 
 **Shipping today:**

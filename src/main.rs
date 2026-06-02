@@ -63,6 +63,11 @@ enum Commands {
         s3_bucket: String,
         s3_key: String,
     },
+    /// MCP utilities (inspect a running Riz instance, etc.).
+    Mcp {
+        #[command(subcommand)]
+        cmd: McpCmd,
+    },
     /// Scaffold a new riz project from a built-in template.
     ///
     /// Templates form a 3×2 matrix (3 languages × 2 scenarios):
@@ -88,6 +93,25 @@ enum Commands {
         /// is already inside a git repo.
         #[arg(long)]
         git: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum McpCmd {
+    /// Connect to a running Riz instance and print the MCP server's
+    /// capabilities + registered tools. The lowest-friction way to
+    /// verify your MCP setup before pointing Claude or Cursor at it.
+    ///
+    /// Defaults to `http://localhost:3000/_riz/mcp`. Pass --url to point
+    /// at a remote instance; pass --bearer when the endpoint is auth-gated.
+    Inspect {
+        /// MCP endpoint URL.
+        #[arg(long, default_value = "http://localhost:3000/_riz/mcp")]
+        url: String,
+        /// Bearer token for auth-gated endpoints. Reads $RIZ_AUTH_BEARER_TOKEN
+        /// when omitted.
+        #[arg(long)]
+        bearer: Option<String>,
     },
 }
 
@@ -319,6 +343,157 @@ fn print_next_steps(template: &str, target: &std::path::Path) {
     println!();
 }
 
+/// Connect to a Riz MCP endpoint, run `initialize` + `tools/list`, and print
+/// a human-readable report. Intended as a self-validation step before
+/// pointing Claude / Cursor / any MCP client at the server — surfaces
+/// auth, transport, and tool-registration problems in one place.
+async fn run_mcp_inspect(url: &str, bearer: Option<&str>) -> anyhow::Result<()> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?;
+
+    let auth_header = |req: reqwest::RequestBuilder| -> reqwest::RequestBuilder {
+        if let Some(t) = bearer {
+            req.header("authorization", format!("Bearer {t}"))
+        } else {
+            req
+        }
+    };
+
+    // ── initialize ────────────────────────────────────────────────────────
+    let init_body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": { "name": "riz-mcp-inspect", "version": env!("CARGO_PKG_VERSION") }
+        }
+    });
+
+    let init_resp = auth_header(client.post(url).json(&init_body))
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to POST {url}: {e}"))?;
+
+    let status = init_resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(anyhow::anyhow!(
+            "401 Unauthorized from {url}. The endpoint is bearer-token protected. \
+             Pass --bearer <token> or set RIZ_AUTH_BEARER_TOKEN."
+        ));
+    }
+    if !status.is_success() {
+        let txt = init_resp.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!(
+            "initialize failed: HTTP {status}\n{txt}"
+        ));
+    }
+    let init_json: serde_json::Value = init_resp.json().await?;
+    if let Some(err) = init_json.get("error") {
+        return Err(anyhow::anyhow!(
+            "initialize returned JSON-RPC error: {err}"
+        ));
+    }
+
+    let protocol_version = init_json["result"]["protocolVersion"]
+        .as_str()
+        .unwrap_or("(unknown)");
+    let server_name = init_json["result"]["serverInfo"]["name"]
+        .as_str()
+        .unwrap_or("(unknown)");
+    let server_version = init_json["result"]["serverInfo"]["version"]
+        .as_str()
+        .unwrap_or("");
+    let caps: Vec<String> = init_json["result"]["capabilities"]
+        .as_object()
+        .map(|o| o.keys().cloned().collect())
+        .unwrap_or_default();
+
+    println!("Connected to {url}");
+    println!("  server:        {server_name} {server_version}");
+    println!("  protocol:      {protocol_version}");
+    println!(
+        "  capabilities:  {}",
+        if caps.is_empty() {
+            "(none)".to_string()
+        } else {
+            caps.join(", ")
+        }
+    );
+
+    // ── tools/list ────────────────────────────────────────────────────────
+    let list_body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/list"
+    });
+    let list_resp = auth_header(client.post(url).json(&list_body))
+        .send()
+        .await?
+        .error_for_status()?;
+    let list_json: serde_json::Value = list_resp.json().await?;
+    if let Some(err) = list_json.get("error") {
+        return Err(anyhow::anyhow!(
+            "tools/list returned JSON-RPC error: {err}"
+        ));
+    }
+
+    let tools = list_json["result"]["tools"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+
+    println!();
+    if tools.is_empty() {
+        println!("No tools registered. Add a `[function.<name>]` block to riz.toml.");
+        return Ok(());
+    }
+    println!("Registered tools ({}):", tools.len());
+    for tool in &tools {
+        let name = tool["name"].as_str().unwrap_or("(unnamed)");
+        let desc = tool["description"].as_str().unwrap_or("");
+        let has_output_schema = tool.get("outputSchema").is_some();
+        println!();
+        println!("  • {name}");
+        if !desc.is_empty() {
+            println!("    {desc}");
+        }
+        println!(
+            "    inputSchema:   {}",
+            schema_summary(&tool["inputSchema"])
+        );
+        if has_output_schema {
+            println!(
+                "    outputSchema:  {} (MCP 2025-06-18+ structured output)",
+                schema_summary(&tool["outputSchema"])
+            );
+        } else {
+            println!("    outputSchema:  — (not declared)");
+        }
+    }
+    println!();
+    println!(
+        "✓ MCP endpoint healthy. Point Claude / Cursor at {url} to use these tools."
+    );
+    Ok(())
+}
+
+/// One-line summary of a JSON Schema fragment for the inspect report.
+fn schema_summary(schema: &serde_json::Value) -> String {
+    let kind = schema["type"].as_str().unwrap_or("any");
+    let props: Vec<&str> = schema["properties"]
+        .as_object()
+        .map(|o| o.keys().map(|s| s.as_str()).collect())
+        .unwrap_or_default();
+    if props.is_empty() {
+        kind.to_string()
+    } else {
+        format!("{kind} {{ {} }}", props.join(", "))
+    }
+}
+
 fn effective_config_path(dev: bool, explicit: Option<&str>) -> String {
     explicit.map(|s| s.to_string()).unwrap_or_else(|| {
         if dev {
@@ -336,6 +511,18 @@ fn effective_log_level(dev: bool, explicit: Option<&str>) -> &str {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+
+    // `riz mcp inspect` doesn't load a config — it talks to a running
+    // instance. Handle it before the config-load path.
+    if let Some(Commands::Mcp {
+        cmd: McpCmd::Inspect { url, bearer },
+    }) = &cli.command
+    {
+        let token = bearer
+            .clone()
+            .or_else(|| std::env::var("RIZ_AUTH_BEARER_TOKEN").ok());
+        return run_mcp_inspect(url, token.as_deref()).await;
+    }
 
     // `riz init` doesn't need (and shouldn't require) an existing config.
     // Handle it before the config-load path.

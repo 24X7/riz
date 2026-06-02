@@ -14,6 +14,46 @@ riz run
 
 ---
 
+## Step 0: verify your setup
+
+Before pointing any external MCP client at Riz, run:
+
+```bash
+riz mcp inspect
+```
+
+This boots a minimal in-process MCP client, runs `initialize` + `tools/list` against your running Riz, and prints a one-screen report:
+
+```
+Connected to http://localhost:3000/_riz/mcp
+  server:        riz 0.1.0
+  protocol:      2025-11-25
+  capabilities:  tools
+
+Registered tools (3):
+
+  • api
+    Invoke function `api` (bun runtime). Routes: [GET /api/{id}]
+    inputSchema:   object { body, headers, isBase64Encoded, pathParams, queryParams, route }
+    outputSchema:  object { body, cookies, headers, isBase64Encoded, statusCode } (MCP 2025-06-18+ structured output)
+
+✓ MCP endpoint healthy. Point Claude / Cursor at http://localhost:3000/_riz/mcp to use these tools.
+```
+
+If `inspect` shows what you expect, every other MCP client will see the same thing. If it surfaces a 401, a missing tool, or a connection error, fix that first.
+
+Bearer-protected setups:
+
+```bash
+RIZ_AUTH_BEARER_TOKEN=mytoken riz mcp inspect
+# or:
+riz mcp inspect --bearer mytoken
+# or against a remote instance:
+riz mcp inspect --url https://api.example.com/_riz/mcp --bearer $TOKEN
+```
+
+---
+
 ## Claude Code
 
 ```bash
