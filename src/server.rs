@@ -91,6 +91,13 @@ pub async fn run(state: Arc<AppState>, addr: SocketAddr) -> anyhow::Result<()> {
     info!("riz listening on {addr}");
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
+    // Channel from "shutdown signal observed inside the graceful-shutdown
+    // future" to the outer task. We start the drain timeout clock ONLY
+    // after the signal fires — the previous code applied the timeout to
+    // the entire serve_future, which meant riz force-crashed exactly 30s
+    // after boot regardless of whether a signal ever arrived.
+    let (signal_observed_tx, signal_observed_rx) = tokio::sync::oneshot::channel::<()>();
+
     let shutdown_state = state.clone();
     let serve_future = axum::serve(listener, app).with_graceful_shutdown(async move {
         shutdown_signal().await;
@@ -123,17 +130,40 @@ pub async fn run(state: Arc<AppState>, addr: SocketAddr) -> anyhow::Result<()> {
             "shutdown signal received — draining in-flight requests (max {}s)",
             SHUTDOWN_DRAIN_TIMEOUT.as_secs(),
         );
+        // Tell the outer task to start the drain deadline. send() consumes
+        // the sender; the closure runs at most once so this is fine.
+        let _ = signal_observed_tx.send(());
     });
 
-    // Hard cap the drain. axum's graceful shutdown would otherwise wait
-    // indefinitely if a handler hangs.
-    match tokio::time::timeout(SHUTDOWN_DRAIN_TIMEOUT, serve_future).await {
-        Ok(result) => result?,
-        Err(_elapsed) => {
-            tracing::warn!(
-                "drain timeout ({}s) elapsed — forcing shutdown with requests still in flight",
-                SHUTDOWN_DRAIN_TIMEOUT.as_secs(),
-            );
+    // axum::serve(...).with_graceful_shutdown(...) returns a
+    // WithGracefulShutdown which implements IntoFuture, not Future. We need
+    // a real Future to use with tokio::select! and tokio::time::timeout,
+    // so convert via IntoFuture::into_future().
+    use std::future::IntoFuture;
+    let serve_future = serve_future.into_future();
+    tokio::pin!(serve_future);
+
+    // Two phases:
+    //   1. Until the shutdown signal fires, just run serve_future. No
+    //      timeout — the server is supposed to serve indefinitely.
+    //   2. Once the signal fires (signal_observed_rx resolves), race
+    //      serve_future against SHUTDOWN_DRAIN_TIMEOUT. If axum drains
+    //      in time, exit cleanly; otherwise log + force shutdown.
+    tokio::select! {
+        // Server returned on its own (graceful drain completed naturally,
+        // OR an unexpected error). Propagate the result.
+        r = &mut serve_future => r?,
+        // Signal fired. Switch to drain-timeout mode.
+        _ = signal_observed_rx => {
+            match tokio::time::timeout(SHUTDOWN_DRAIN_TIMEOUT, serve_future).await {
+                Ok(r) => r?,
+                Err(_elapsed) => {
+                    tracing::warn!(
+                        "drain timeout ({}s) elapsed — forcing shutdown with requests still in flight",
+                        SHUTDOWN_DRAIN_TIMEOUT.as_secs(),
+                    );
+                }
+            }
         }
     }
     tracing::info!("draining complete — killing child processes");
