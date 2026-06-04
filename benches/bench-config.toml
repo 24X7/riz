@@ -1,6 +1,6 @@
 # Benchmark scenario: single bun handler at concurrency=20 (one process pool,
 # 20 in-flight slots). Mirrors a realistic prod sizing for a small endpoint.
-# Run with: ./target/release/riz --no-tui --log-level warn --config benches/bench-config.toml run
+# Run with: ./target/release/riz --log-level warn --config benches/bench-config.toml run
 [server]
 port = 3000
 host = "127.0.0.1"

@@ -21,7 +21,7 @@ if ! command -v wrk >/dev/null 2>&1; then
 fi
 
 echo "starting riz (release, concurrency=20)..."
-"$BIN" --no-tui --log-level warn --config "$CFG" run >/tmp/riz-bench.log 2>&1 &
+"$BIN" --log-level warn --config "$CFG" run >/tmp/riz-bench.log 2>&1 &
 RIZ_PID=$!
 trap 'kill $RIZ_PID 2>/dev/null || true; wait $RIZ_PID 2>/dev/null || true' EXIT INT TERM
 

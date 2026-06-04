@@ -102,7 +102,6 @@ fn mcp_inspect_against_running_riz_lists_tools_and_spec_version() {
 
     let mut server = Command::new(riz_binary())
         .args([
-            "--no-tui",
             "--config",
             cfg_dir.path().join("riz.toml").to_str().unwrap(),
             "run",

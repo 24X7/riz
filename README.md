@@ -161,7 +161,7 @@ cargo build --release
 # → chat [bun]           routes: ANY /chat        (WebSocket)
 # → crud-accounts [bun]  routes: ANY /accounts/{id}, ANY /accounts
 
-./target/release/riz --no-tui --log-level warn --config examples/riz.dev.toml run &
+./target/release/riz --log-level warn --config examples/riz.dev.toml run &
 
 # All of these return real data:
 curl http://localhost:3000/ping
@@ -315,7 +315,7 @@ Or scaffold a fresh project from any of the 6 built-in templates with `riz init 
 
 ## Production
 
-- `riz run --no-tui --log-level info` runs in headless mode with JSON logs (structured for Datadog/CloudWatch ingestion).
+- `riz run` runs headless by default with JSON logs to stdout (structured for Datadog/CloudWatch ingestion). Pass `--dev` instead to boot the TUI.
 - Set `RIZ_AUTH_BEARER_TOKEN` to gate `/_riz/*` admin endpoints with a shared secret. `/_riz/health` stays open for liveness probes.
 - Hot-swap a function by POSTing to `/_riz/deploy` with `{"lambda": "name", "s3_bucket": "...", "s3_key": "..."}`. In-flight requests drain over 30 seconds; new requests hit the new pool atomically.
 - The Prometheus metrics at `/_riz/metrics` are compatible with Datadog Agent's OpenMetrics integration and direct scraping.

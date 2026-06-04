@@ -47,7 +47,7 @@ Enter
 Sleep 1500ms
 
 # Frame 2 — cd + run
-Type "cd my-app && riz run --no-tui"
+Type "cd my-app && riz run"
 Sleep 600ms
 Enter
 Sleep 3000ms

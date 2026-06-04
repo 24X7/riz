@@ -58,7 +58,7 @@ cargo watch -x 'nextest run -E "test(mcp_inspect)"' # re-run by name pattern on 
 cargo run -- --dev run
 
 # Without TUI (better for scripting / piping):
-cargo run -- --no-tui --log-level warn --config examples/riz.dev.toml run
+cargo run -- --log-level warn --config examples/riz.dev.toml run
 
 # Override the port:
 cargo run -- --dev --port 4000 run
@@ -111,7 +111,7 @@ After modifying anything in `src/process/` or `src/runtime/`, the fastest end-to
 
 ```bash
 # Boot, hit every example route, verify, tear down
-cargo run --quiet -- --no-tui --log-level warn --config examples/riz.dev.toml run &
+cargo run --quiet -- --log-level warn --config examples/riz.dev.toml run &
 RIZ_PID=$!
 sleep 3                                                   # let bun/python workers spawn
 curl -s http://127.0.0.1:3000/ping
@@ -254,7 +254,7 @@ Most flakes on CI are timing-related — `cargo nextest list-tests` shows the te
 ### Step through a request in production-like mode
 
 ```bash
-RUST_LOG=riz=trace cargo run -- --no-tui --log-level trace run
+RUST_LOG=riz=trace cargo run -- --log-level trace run
 # Then in another terminal:
 curl -v http://127.0.0.1:3000/<route>
 ```
@@ -265,7 +265,7 @@ The structured JSON logs include the `req` correlation ID so you can grep one re
 
 ```bash
 cargo install cargo-flamegraph
-sudo cargo flamegraph --bin riz -- --no-tui --log-level warn run
+sudo cargo flamegraph --bin riz -- --log-level warn run
 # Hit it with wrk in another terminal, then Ctrl-C
 ```
 

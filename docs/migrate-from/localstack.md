@@ -85,7 +85,7 @@ docker stop localstack
 
 # Start Riz:
 riz run
-# (Or, headless: riz run --no-tui --log-level info)
+# (Headless mode is the default — TUI only on `riz run --dev`)
 
 # Verify routes:
 riz routes

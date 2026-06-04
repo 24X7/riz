@@ -21,7 +21,7 @@ Tested on: Apple M-series, 1 host process + 20 Bun worker processes, localhost l
 cargo build --release
 
 # 2. Start riz with the bench config (concurrency = 20)
-./target/release/riz --no-tui --log-level warn \
+./target/release/riz --log-level warn \
     --config benches/bench-config.toml run
 
 # 3. In another terminal, hammer with wrk

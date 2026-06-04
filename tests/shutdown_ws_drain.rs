@@ -97,7 +97,6 @@ method = "ANY"
 
     let mut server = Command::new(riz_binary())
         .args([
-            "--no-tui",
             "--log-level",
             "warn",
             "--config",

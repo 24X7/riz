@@ -176,7 +176,7 @@ The 30-second deploy is just:
 ```bash
 scp riz target-host:/usr/local/bin/
 scp riz.toml index.ts target-host:/srv/myapp/
-ssh target-host 'cd /srv/myapp && riz run --no-tui'
+ssh target-host 'cd /srv/myapp && riz run'
 ```
 
 Or wrap in a systemd unit. The `docs/production.md` doc has an example.

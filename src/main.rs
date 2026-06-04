@@ -13,6 +13,7 @@ mod server;
 mod state;
 mod system;
 mod tui;
+mod tui_log_layer;
 mod ws;
 
 #[cfg(test)]
@@ -37,9 +38,6 @@ struct Cli {
 
     #[arg(short, long)]
     port: Option<u16>,
-
-    #[arg(long)]
-    no_tui: bool,
 
     /// Log level. Defaults to debug in --dev mode, info otherwise.
     #[arg(long)]
@@ -858,12 +856,31 @@ async fn main() -> anyhow::Result<()> {
     let log_level = effective_log_level(cli.dev, cli.log_level.as_deref());
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
 
-    if cli.dev {
-        tracing_subscriber::fmt()
-            .pretty()
-            .with_env_filter(filter)
+    // TUI is driven SOLELY by --dev. `riz run --dev` turns the TUI on
+    // and routes every log into its log panel; plain `riz run` is
+    // headless with structured JSON logs on stdout. No --no-tui flag,
+    // no TTY auto-detection — one mental model, one switch.
+    let tui_enabled = cli.dev;
+
+    // log_tx must exist before we install the tracing subscriber when
+    // in TUI mode — TuiLogLayer needs the sink set at registry time.
+    let (log_tx, log_rx) = tokio::sync::mpsc::channel::<state::LogEntry>(10_000);
+
+    if tui_enabled {
+        // TUI mode: route ALL tracing events into the TUI's log channel.
+        // Writing to stdout while the TUI owns the alternate screen
+        // corrupts the rendered display (layout "moves," escape
+        // sequences leak, scroll breaks).
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::util::SubscriberInitExt;
+        tui_log_layer::set_sink(log_tx.clone());
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(tui_log_layer::TuiLogLayer)
             .init();
     } else {
+        // Headless: structured JSON for ingestion (Datadog, CloudWatch,
+        // Loki, etc.). Same format you'd want piping to `jq`.
         tracing_subscriber::fmt()
             .json()
             .with_env_filter(filter)
@@ -908,7 +925,9 @@ async fn main() -> anyhow::Result<()> {
     let registry = Arc::new(process::runtime::RuntimeRegistry::new()?);
     let cache = cache::CacheLayer::new(&config.cache);
     let metrics = metrics::MetricsEmitter::new(&config.datadog);
-    let (log_tx, log_rx) = tokio::sync::mpsc::channel::<state::LogEntry>(10_000);
+    // log_tx / log_rx were already created earlier (before tracing init)
+    // so the TUI log layer's sink could be set at registry time. They're
+    // in scope from the outer let-binding.
 
     let deploy_cfg = &config.deploy;
     if config.effective_deploy_key().is_none() && deploy_cfg.allowed_cidrs.is_empty() {
@@ -1032,14 +1051,9 @@ async fn main() -> anyhow::Result<()> {
         ws_connections,
     });
 
-    // Dev mode forces TUI on regardless of --no-tui and atty check.
-    // Prod mode: TUI only if stdout is a TTY and --no-tui not set.
-    let tui_enabled = if cli.dev {
-        true
-    } else {
-        !cli.no_tui && std::io::IsTerminal::is_terminal(&std::io::stdout())
-    };
-
+    // tui_enabled was determined earlier (before tracing init) so the
+    // tracing-subscriber composition matches the actual TUI choice. The
+    // value is still in scope from the outer let-binding.
     if tui_enabled {
         let tui_state = app_state.clone();
         let tui_handle = tokio::runtime::Handle::current();

@@ -69,7 +69,7 @@ fn typescript_http_scaffold_boots_and_serves_hello() {
     rewrite_port(&target.join("riz.toml"), port);
 
     let mut server = Command::new(riz_binary())
-        .args(["--no-tui", "--log-level", "warn", "run"])
+        .args(["--log-level", "warn", "run"])
         .current_dir(&target)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -132,7 +132,7 @@ fn python_http_scaffold_boots_and_serves_hello() {
     rewrite_port(&target.join("riz.toml"), port);
 
     let mut server = Command::new(riz_binary())
-        .args(["--no-tui", "--log-level", "warn", "run"])
+        .args(["--log-level", "warn", "run"])
         .current_dir(&target)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

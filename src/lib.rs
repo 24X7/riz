@@ -13,6 +13,7 @@ pub mod server;
 pub mod state;
 pub mod system;
 pub mod tui;
+pub mod tui_log_layer;
 pub mod ws;
 
 pub mod test_helpers;
