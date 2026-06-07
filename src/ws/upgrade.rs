@@ -76,6 +76,7 @@ async fn handle_socket(
         query.clone(),
     );
 
+    let connect_start = std::time::Instant::now();
     let connect_resp: ApiGatewayProxyResponse = match state
         .process_manager
         .invoke_generic(&function_name, &connect_evt, timeout_ms)
@@ -103,6 +104,20 @@ async fn handle_socket(
             return;
         }
     };
+    let connect_latency = connect_start.elapsed().as_secs_f64() * 1000.0;
+    let connect_healthy = connect_resp.status_code < 500;
+    state
+        .riz_state
+        .record_invocation(&function_name, connect_latency, connect_healthy, false)
+        .await;
+    state.push_log(
+        "INFO",
+        Some(&function_name),
+        format!(
+            "WS $connect {} {:.0}ms conn={} fn={function_name}",
+            connect_resp.status_code, connect_latency, connection_id
+        ),
+    );
     if connect_resp.status_code != 200 {
         warn!(
             "ws $connect rejected by {function_name}: status {}",
@@ -176,51 +191,96 @@ async fn handle_socket(
                 conn.touch();
                 match msg {
                     Message::Text(text) => {
+                        let msg_bytes = text.len();
                         let ev = build_message(&stage, read_id.as_str(), connected_at_ms, Some(text), false);
-                        match read_state.process_manager
+                        let start = std::time::Instant::now();
+                        let result = read_state.process_manager
                             .invoke_generic::<_, ApiGatewayProxyResponse>(&read_fn, &ev, timeout_ms)
-                            .await
-                        {
-                            Ok(_) => {}
+                            .await;
+                        let latency = start.elapsed().as_secs_f64() * 1000.0;
+                        match result {
+                            Ok(resp) => {
+                                let healthy = resp.status_code < 500;
+                                read_state.riz_state
+                                    .record_invocation(&read_fn, latency, healthy, false)
+                                    .await;
+                                read_state.push_log(
+                                    "INFO",
+                                    Some(&read_fn),
+                                    format!(
+                                        "WS $default {} {:.0}ms conn={} bytes={msg_bytes} fn={read_fn}",
+                                        resp.status_code, latency, read_id
+                                    ),
+                                );
+                            }
                             Err(PoolError::Timeout(ref name, ms)) => {
+                                read_state.riz_state.record_invocation(&read_fn, latency, false, false).await;
+                                read_state.push_log("WARN", Some(name), format!("WS $default timeout {ms}ms conn={read_id} fn={name}"));
                                 warn!(function = %name, timeout_ms = ms, "ws $default timed out — closing connection");
                                 break;
                             }
                             Err(PoolError::InvalidResponse(ref name, ref detail)) => {
+                                read_state.riz_state.record_invocation(&read_fn, latency, false, false).await;
+                                read_state.push_log("ERROR", Some(name), format!("WS $default malformed conn={read_id} fn={name}: {detail}"));
                                 warn!(function = %name, detail = %detail, "ws $default malformed response — closing connection");
                                 break;
                             }
                             Err(PoolError::SemaphoreExhausted(ref name)) => {
+                                read_state.push_log("WARN", Some(name), format!("WS $default backpressure conn={read_id} fn={name}"));
                                 warn!(function = %name, "ws $default semaphore exhausted (transient backpressure)");
                                 // keep connection open — transient backpressure
                             }
                             Err(e) => {
+                                read_state.riz_state.record_invocation(&read_fn, latency, false, false).await;
+                                read_state.push_log("ERROR", Some(&read_fn), format!("WS $default error conn={read_id} fn={read_fn}: {e}"));
                                 warn!("ws $default dispatch error on {read_fn}: {e}");
                             }
                         }
                     }
                     Message::Binary(bytes) => {
                         use base64::Engine;
+                        let msg_bytes = bytes.len();
                         let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
                         let ev = build_message(&stage, read_id.as_str(), connected_at_ms, Some(b64), true);
-                        match read_state.process_manager
+                        let start = std::time::Instant::now();
+                        let result = read_state.process_manager
                             .invoke_generic::<_, ApiGatewayProxyResponse>(&read_fn, &ev, timeout_ms)
-                            .await
-                        {
-                            Ok(_) => {}
+                            .await;
+                        let latency = start.elapsed().as_secs_f64() * 1000.0;
+                        match result {
+                            Ok(resp) => {
+                                let healthy = resp.status_code < 500;
+                                read_state.riz_state
+                                    .record_invocation(&read_fn, latency, healthy, false)
+                                    .await;
+                                read_state.push_log(
+                                    "INFO",
+                                    Some(&read_fn),
+                                    format!(
+                                        "WS $default(bin) {} {:.0}ms conn={} bytes={msg_bytes} fn={read_fn}",
+                                        resp.status_code, latency, read_id
+                                    ),
+                                );
+                            }
                             Err(PoolError::Timeout(ref name, ms)) => {
+                                read_state.riz_state.record_invocation(&read_fn, latency, false, false).await;
+                                read_state.push_log("WARN", Some(name), format!("WS $default(bin) timeout {ms}ms conn={read_id} fn={name}"));
                                 warn!(function = %name, timeout_ms = ms, "ws $default (binary) timed out — closing connection");
                                 break;
                             }
                             Err(PoolError::InvalidResponse(ref name, ref detail)) => {
+                                read_state.riz_state.record_invocation(&read_fn, latency, false, false).await;
+                                read_state.push_log("ERROR", Some(name), format!("WS $default(bin) malformed conn={read_id} fn={name}: {detail}"));
                                 warn!(function = %name, detail = %detail, "ws $default (binary) malformed response — closing connection");
                                 break;
                             }
                             Err(PoolError::SemaphoreExhausted(ref name)) => {
+                                read_state.push_log("WARN", Some(name), format!("WS $default(bin) backpressure conn={read_id} fn={name}"));
                                 warn!(function = %name, "ws $default (binary) semaphore exhausted (transient backpressure)");
-                                // keep connection open — transient backpressure
                             }
                             Err(e) => {
+                                read_state.riz_state.record_invocation(&read_fn, latency, false, false).await;
+                                read_state.push_log("ERROR", Some(&read_fn), format!("WS $default(bin) error conn={read_id} fn={read_fn}: {e}"));
                                 warn!("ws $default (binary) dispatch error on {read_fn}: {e}");
                             }
                         }
@@ -234,10 +294,28 @@ async fn handle_socket(
 
     // 4. Dispatch $disconnect (best-effort), remove from store, wait for writer.
     let disc_evt = build_disconnect(&stage, read_id.as_str(), connected_at_ms);
-    let _ = state
+    let disc_start = std::time::Instant::now();
+    let disc_result = state
         .process_manager
         .invoke_generic::<_, ApiGatewayProxyResponse>(&function_name, &disc_evt, timeout_ms)
         .await;
+    let disc_latency = disc_start.elapsed().as_secs_f64() * 1000.0;
+    let (disc_status, disc_healthy) = match &disc_result {
+        Ok(r) => (r.status_code, r.status_code < 500),
+        Err(_) => (0i64, false),
+    };
+    state
+        .riz_state
+        .record_invocation(&function_name, disc_latency, disc_healthy, false)
+        .await;
+    state.push_log(
+        "INFO",
+        Some(&function_name),
+        format!(
+            "WS $disconnect {disc_status} {disc_latency:.0}ms conn={} fn={function_name}",
+            read_id
+        ),
+    );
 
     // Remove from store — this drops the Arc<Connection> held by the store,
     // but `conn` (this task) and `outbound_local` still hold sender references.
