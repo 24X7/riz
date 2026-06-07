@@ -1,0 +1,176 @@
+# Comprehensive example config — every handler in examples/lambdas/ wired up.
+# Run with:
+#   ./target/release/riz --log-level info --config examples/riz.all.toml run
+# (or:  ./target/release/riz --dev --config examples/riz.all.toml run  for the TUI)
+#
+# Companion exercise script: examples/smoke-all.sh
+#
+# Routes:
+#   GET  /ping                  → ping (Bun)
+#   GET  /accounts/{id}         → accounts (Bun)
+#   ANY  /events                → events (Bun)
+#   ANY  /accounts              → crud-accounts (Bun)
+#   ANY  /accounts/{id}         → crud-accounts (Bun)
+#   ANY  /echo-bun              → echo-bun (Bun)
+#   ANY  /echo-python           → echo-python (Python)
+#   ANY  /echo-rust             → echo-rust (Rust)
+#   ANY  /protected             → events (Bun) gated by auth-allow-bun authorizer (allows)
+#   ANY  /forbidden             → events (Bun) gated by auth-deny-bun  authorizer (denies)
+#   WS   /chat                  → chat (Bun)
+#   WS   /chat-python           → chat-python (Python)
+#   WS   /chat-rust             → chat-rust (Rust)
+
+[server]
+port = 3000
+host = "127.0.0.1"
+
+[cache]
+default_ttl_secs = 0
+max_size_mb = 32
+
+[datadog]
+enabled = false
+
+# ─────────────── Bun HTTP ───────────────
+
+[function.ping]
+runtime = "bun"
+handler = "./examples/lambdas/ping/index.handler"
+timeout_ms = 1000
+concurrency = 2
+
+[function.accounts]
+runtime = "bun"
+handler = "./examples/lambdas/accounts/index.handler"
+timeout_ms = 1000
+concurrency = 2
+[[function.accounts.routes]]
+path = "/accounts/{id}"
+method = "GET"
+
+[function.events]
+runtime = "bun"
+handler = "./examples/lambdas/events/index.handler"
+timeout_ms = 1000
+concurrency = 2
+[[function.events.routes]]
+path = "/events"
+method = "ANY"
+
+[function.crud-accounts]
+runtime = "bun"
+handler = "./examples/lambdas/crud-accounts/index.handler"
+timeout_ms = 5000
+concurrency = 4
+[[function.crud-accounts.routes]]
+path = "/accounts"
+method = "ANY"
+[[function.crud-accounts.routes]]
+path = "/crud/{id}"   # avoid collision with `accounts` above
+method = "ANY"
+
+[function.echo-bun]
+runtime = "bun"
+handler = "./examples/lambdas/echo-bun/index.handler"
+timeout_ms = 5000
+concurrency = 4
+[[function.echo-bun.routes]]
+path = "/echo-bun"
+method = "ANY"
+
+# ─────────────── Python HTTP ───────────────
+
+[function.echo-python]
+runtime = "python"
+handler = "./examples/lambdas/echo-python/main.lambda_handler"
+timeout_ms = 5000
+concurrency = 2
+[[function.echo-python.routes]]
+path = "/echo-python"
+method = "ANY"
+
+# ─────────────── Rust HTTP ───────────────
+
+[function.echo-rust]
+runtime = "rust"
+handler = "./target/release/echo-rust"
+timeout_ms = 5000
+concurrency = 2
+[[function.echo-rust.routes]]
+path = "/echo-rust"
+method = "ANY"
+
+# ─────────────── Authorizers ───────────────
+# The two auth handlers below are LIVE functions referenced from other
+# functions' `[function.X.authorizer]` blocks. They must be registered as
+# functions in their own right so the runtime knows how to spawn them.
+
+[function.auth-allow]
+runtime = "bun"
+handler = "./examples/lambdas/auth-allow-bun/index.handler"
+timeout_ms = 1000
+concurrency = 2
+
+[function.auth-deny]
+runtime = "bun"
+handler = "./examples/lambdas/auth-deny-bun/index.handler"
+timeout_ms = 1000
+concurrency = 2
+
+# /protected — same handler as /events but gated by auth-allow (always passes)
+[function.protected]
+runtime = "bun"
+handler = "./examples/lambdas/events/index.handler"
+timeout_ms = 1000
+concurrency = 2
+authorizer = "auth-allow"
+[[function.protected.routes]]
+path = "/protected"
+method = "ANY"
+
+# /forbidden — same handler as /events but gated by auth-deny (always 401s)
+[function.forbidden]
+runtime = "bun"
+handler = "./examples/lambdas/events/index.handler"
+timeout_ms = 1000
+concurrency = 2
+authorizer = "auth-deny"
+[[function.forbidden.routes]]
+path = "/forbidden"
+method = "ANY"
+
+# ─────────────── Bun WebSocket ───────────────
+
+[function.chat]
+protocol = "websocket"
+runtime = "bun"
+handler = "./examples/lambdas/chat/index.handler"
+timeout_ms = 5000
+concurrency = 4
+[[function.chat.routes]]
+path = "/chat"
+method = "ANY"
+
+# ─────────────── Python WebSocket ───────────────
+
+[function.chat-python]
+protocol = "websocket"
+runtime = "python"
+handler = "./examples/lambdas/chat-python/main.lambda_handler"
+timeout_ms = 5000
+concurrency = 4
+[[function.chat-python.routes]]
+path = "/chat-python"
+method = "ANY"
+
+# ─────────────── Rust WebSocket ───────────────
+
+[function.chat-rust]
+protocol = "websocket"
+runtime = "rust"
+handler = "./target/release/chat-rust"
+timeout_ms = 5000
+concurrency = 4
+[[function.chat-rust.routes]]
+path = "/chat-rust"
+method = "ANY"
