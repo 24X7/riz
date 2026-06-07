@@ -36,11 +36,38 @@ pub fn request_shutdown() {
 /// (e.g. from both the normal exit path AND the panic hook) is fine. Each
 /// crossterm call returns Ok on a no-op; we ignore errors because by the
 /// time this runs, we've usually already lost the chance to report them.
+///
+/// Writes the restore sequence to BOTH stdout and /dev/tty (best-effort).
+/// stdout works in the normal happy path; /dev/tty is the belt-and-suspenders
+/// path that works even if stdout has been redirected, closed by a parent
+/// process exiting, or attached to a pipe that no longer leads to the user's
+/// terminal. Without /dev/tty fallback, a process killed mid-render (or
+/// where the parent shell closed the pipe before the cleanup ran) leaves
+/// the terminal in raw mode + mouse-capture mode — and at that point the
+/// user can't even kill the orphan because their keystrokes are intercepted.
 fn restore_terminal() {
     let _ = disable_raw_mode();
     let mut stdout = io::stdout();
     let _ = execute!(stdout, LeaveAlternateScreen, DisableMouseCapture);
     let _ = execute!(stdout, crossterm::cursor::Show);
+    // Belt-and-suspenders: /dev/tty is the controlling terminal regardless
+    // of how stdout was set up. On macOS + Linux this is the reliable path.
+    if let Ok(mut tty) = std::fs::OpenOptions::new().write(true).open("/dev/tty") {
+        let _ = execute!(tty, LeaveAlternateScreen, DisableMouseCapture);
+        let _ = execute!(tty, crossterm::cursor::Show);
+    }
+}
+
+/// RAII guard. Restores the terminal when dropped, including during a
+/// panic unwind. Belt and suspenders to the explicit cleanup paths +
+/// the panic hook — there is no exit path from `run_tui_with_watch`
+/// that doesn't restore terminal state, even if a panic happens after
+/// the closure returns but before the explicit `restore_terminal()`.
+struct TerminalGuard;
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        restore_terminal();
+    }
 }
 
 /// Install a global panic hook that restores the terminal before delegating
@@ -67,12 +94,34 @@ pub fn run_tui(state: Arc<AppState>, handle: tokio::runtime::Handle) -> anyhow::
     // raw mode so the first snapshot is available (or at worst a default) by
     // the first tick.
     let watch_rx = snapshot::spawn_snapshotter(state, &handle);
-    run_tui_with_watch(watch_rx)
+    let result = run_tui_with_watch(watch_rx);
+    // If the TUI exited under its own steam (user hit q / Ctrl-C / Esc /
+    // Ctrl-D), the server is still running in the tokio main. Without
+    // this, the user has to hit Ctrl-C a SECOND time from the now-headless
+    // shell to actually terminate riz. Sending SIGTERM to ourselves
+    // engages the existing graceful-shutdown path.
+    //
+    // Skipped when SHUTDOWN_REQUESTED is already set — that means the
+    // server initiated the shutdown and the TUI broke its loop in
+    // response; the server is already on its way out.
+    if !SHUTDOWN_REQUESTED.load(Ordering::Relaxed) {
+        #[cfg(unix)]
+        {
+            use nix::sys::signal::{kill, Signal};
+            use nix::unistd::Pid;
+            let _ = kill(Pid::this(), Signal::SIGTERM);
+        }
+    }
+    result
 }
 
 pub fn run_tui_with_watch(watch_rx: watch::Receiver<TuiSnapshot>) -> anyhow::Result<()> {
     install_panic_hook();
     enable_raw_mode()?;
+    // Drop guard. From here onward, ANY exit path from this function — normal
+    // return, anyhow::Result::Err, panic unwind, thread cancellation — runs
+    // restore_terminal() via the guard's Drop.
+    let _guard = TerminalGuard;
     let mut stdout = io::stdout();
 
     // Everything after enable_raw_mode must clean up raw mode on any error
@@ -139,6 +188,21 @@ fn run_loop<B: ratatui::backend::Backend>(
 
         if event::poll(tick)? {
             if let Event::Key(key) = event::read()? {
+                // In raw mode the terminal does NOT translate Ctrl-C to
+                // SIGINT — it arrives as a key event. We have to handle it
+                // ourselves or the user is trapped: every Ctrl-C they hit
+                // is silently intercepted and the process can't be killed
+                // from the controlling terminal. Same for Ctrl-D / Ctrl-\.
+                use crossterm::event::KeyModifiers;
+                let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+                if ctrl
+                    && matches!(
+                        key.code,
+                        KeyCode::Char('c') | KeyCode::Char('d') | KeyCode::Char('\\')
+                    )
+                {
+                    break;
+                }
                 match key.code {
                     KeyCode::Char('q') => break,
                     KeyCode::Esc => {
@@ -150,7 +214,7 @@ fn run_loop<B: ratatui::backend::Backend>(
                             break;
                         }
                     }
-                    // `c` always clears the route filter (mnemonic: "clear")
+                    // `c` (without Ctrl) clears the route filter (mnemonic: "clear")
                     KeyCode::Char('c') => {
                         app.selected_route = None;
                     }
