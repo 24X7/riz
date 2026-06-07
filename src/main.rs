@@ -32,7 +32,8 @@ use tracing_subscriber::EnvFilter;
     about = "Self-hosted AWS Lambda runtime — HTTP API v2 + WebSocket, MCP-native"
 )]
 struct Cli {
-    /// Config file. Defaults to riz.dev.toml in --dev mode, riz.toml otherwise.
+    /// Config file. Defaults to ./riz.toml in the current directory.
+    /// No implicit fallback — if you want a different file, pass it.
     #[arg(short, long)]
     config: Option<String>,
 
@@ -43,7 +44,9 @@ struct Cli {
     #[arg(long)]
     log_level: Option<String>,
 
-    /// Developer mode: colorized logs, debug level, TUI always on, defaults to riz.dev.toml.
+    /// Developer mode: TUI on, debug log level. Has no effect on which
+    /// config is loaded — pass --config explicitly when working inside
+    /// this repo (e.g. --config examples/riz.dev.toml).
     #[arg(long)]
     dev: bool,
 
@@ -795,14 +798,13 @@ fn schema_summary(schema: &serde_json::Value) -> String {
     }
 }
 
-fn effective_config_path(dev: bool, explicit: Option<&str>) -> String {
-    explicit.map(|s| s.to_string()).unwrap_or_else(|| {
-        if dev {
-            "examples/riz.dev.toml".into()
-        } else {
-            "riz.toml".into()
-        }
-    })
+fn effective_config_path(_dev: bool, explicit: Option<&str>) -> String {
+    // Always ./riz.toml unless --config is explicit. --dev is a UX flag
+    // (TUI + debug logs), not a config-resolution mode. Anywhere outside
+    // this repo's `examples/` dir, the old `examples/riz.dev.toml` default
+    // was a footgun: silent failure if the file wasn't there, or worse,
+    // accidental load of an example config you didn't mean to run.
+    explicit.map(|s| s.to_string()).unwrap_or_else(|| "riz.toml".into())
 }
 
 fn effective_log_level(dev: bool, explicit: Option<&str>) -> &str {
@@ -1130,8 +1132,8 @@ mod tests {
     }
 
     #[test]
-    fn config_defaults_by_mode() {
-        assert_eq!(effective_config_path(true, None), "examples/riz.dev.toml");
+    fn default_config_is_riz_toml() {
+        assert_eq!(effective_config_path(true, None), "riz.toml");
         assert_eq!(effective_config_path(false, None), "riz.toml");
     }
 
