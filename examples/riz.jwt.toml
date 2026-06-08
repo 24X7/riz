@@ -1,0 +1,48 @@
+# JWT authorizer example.
+#
+# Unlike the REQUEST authorizers in riz.all.toml (auth-allow / auth-deny, which
+# are local Bun functions), a JWT authorizer validates a bearer token's
+# signature + claims against your identity provider's JWKS endpoint. In
+# production that `jwks_uri` points at a real IdP:
+#
+#   Auth0      https://<tenant>.us.auth0.com/.well-known/jwks.json
+#   Cognito    https://cognito-idp.<region>.amazonaws.com/<pool>/.well-known/jwks.json
+#   Okta       https://<org>.okta.com/oauth2/default/v1/keys
+#   Keycloak   https://<host>/realms/<realm>/protocol/openid-connect/certs
+#
+# riz fetches the JWKS, then on each request validates the token's signature
+# (RS256 / ES256), `iss`, `aud`, and `exp`. A valid token → 200 and the claims
+# are injected onto event.requestContext.authorizer; an invalid/expired/missing
+# token → 401, and the handler never runs.
+#
+# This is proven end-to-end in tests/wave_3_acceptance.rs.
+#
+# NOTE: riz fetches the JWKS at startup, so booting THIS config requires the
+# jwks_uri below to be reachable. Point it at your IdP (or a local JWKS server)
+# before `riz run`.
+
+[server]
+port = 3000
+host = "127.0.0.1"
+
+[function.api]
+runtime = "bun"
+handler = "./examples/lambdas/events/index.handler"
+timeout_ms = 5000
+concurrency = 2
+
+# JWT authorizer block. All three fields are required and validated.
+[function.api.authorizer]
+type = "jwt"
+issuer = "https://your-tenant.us.auth0.com/"
+audience = "https://api.example.com"
+jwks_uri = "https://your-tenant.us.auth0.com/.well-known/jwks.json"
+
+[[function.api.routes]]
+path = "/api"
+method = "ANY"
+
+# Try it once the JWKS endpoint is reachable:
+#   curl -i http://127.0.0.1:3000/api                          # → 401 (no token)
+#   curl -i -H "Authorization: Bearer <valid-token>" \
+#        http://127.0.0.1:3000/api                              # → 200
