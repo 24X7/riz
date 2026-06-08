@@ -48,6 +48,7 @@ Riz v0.1 is the Lambda runtime your agent can call. Riz v1 is the runtime your a
 | A/B win rate in `/_riz/health` | Needs Eval. v2. |
 | OAuth 2.1 + RFC 8707 Resource Indicators | New auth subsystem; bearer-token covers the v1 buyer. v2. |
 | MCP federation | Needs discovery protocol + multi-instance lifecycle. v2. |
+| WebSocket as a second MCP transport | Solves no problem today, unlocks zero capability, YAGNI. ~1-day add when a concrete client need appears. See item #11 scope decision. |
 | Stateful agent memory (`/_riz/memory/{agent_id}`) | Out of scope per user — separate "agent state layer" project. |
 | Java / JVM runtime | Out of scope per user. |
 
@@ -328,7 +329,7 @@ By shipping `/_riz/v1/chat/completions`, riz inherits **every existing OpenAI cl
 
 ---
 
-### 11. MCP Streamable HTTP — SSE streaming
+### 11. MCP Streamable HTTP — SSE streaming (HTTP transport only)
 
 **Industry context.** Formal MCP spec 2025-11-25 mandates **Streamable HTTP** as the standard transport:
 - POST for client → server (current riz behavior)
@@ -341,6 +342,14 @@ Real implementations using this transport:
 - Cline, Cursor, Claude Code
 
 Server can multiplex notifications + responses on a single SSE channel, keyed by JSON-RPC id.
+
+**Scope decision: HTTP only in v1.** WebSocket-as-MCP-transport is technically possible (riz already has WS infrastructure for user chat handlers) but explicitly out of scope here for three reasons:
+
+1. **Solves no problem today.** Every real MCP client speaks Streamable HTTP. Shipping WS now is building for hypothetical demand.
+2. **Unlocks zero capability.** Anything WS could carry, HTTP+SSE already carries. We'd pay maintenance + auth + docs cost forever in exchange for nothing.
+3. **YAGNI applies cleanly.** Riz is greenfield. When someone shows up with a real WS use case (probably browser-based agent doing rapid multi-tool dispatch), it's a ~1-day add. Pay that cost then, not now.
+
+This is a deliberate scope choice, not an oversight. Re-evaluate when a real client request arrives.
 
 **Why we care.** Riz today does POST request/response. Without the GET-SSE upgrade we can't push tool progress, partial results, or server-initiated capability changes — basic spec compliance. This is the smallest path to "fully conformant 2025-11-25 server."
 
