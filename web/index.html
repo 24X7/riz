@@ -322,6 +322,240 @@
       animation:blink 1.1s step-end infinite;
     }
 
+    /* ── HERO SCENES (rotating capability diagram) ──
+       Four scenes crossfade every ~6s telling the same story: how a
+       request flows through riz in v0.1 (MCP, live TUI) and how that
+       same contract gains AI-substrate capabilities in v0.2 (WASM
+       guards, LLM gateway). Each scene shows REAL data — payloads,
+       budgets, percentiles — so the diagram reads as a working
+       system, not a marketing block. */
+    .scenes{
+      position:relative;width:100%;max-width:560px;
+      aspect-ratio:560/520;
+      z-index:1;
+      opacity:0;animation:up 0.6s ease forwards 0.35s;
+    }
+    .scene{
+      position:absolute;inset:0;
+      opacity:0;transform:translateY(6px) scale(0.99);
+      transition:opacity 0.7s ease,transform 0.7s ease;
+      pointer-events:none;
+      display:flex;flex-direction:column;
+    }
+    .scene.active{opacity:1;transform:translateY(0) scale(1);pointer-events:auto}
+
+    .scene-hd{
+      font-family:var(--mono);font-size:0.62rem;font-weight:700;
+      letter-spacing:0.18em;text-transform:uppercase;color:var(--amber);
+      margin-bottom:0.5rem;display:flex;align-items:center;gap:0.6rem;
+    }
+    .scene-hd .tag{
+      font-size:0.5rem;color:var(--ink4);
+      border:1px solid var(--ink4);padding:0.12rem 0.45rem;border-radius:2px;
+      letter-spacing:0.1em;
+    }
+    .scene-hd .tag.live{color:var(--amber);border-color:var(--amber)}
+    .scene-ttl{
+      font-family:var(--serif);font-size:1.5rem;font-weight:800;
+      letter-spacing:-0.02em;line-height:1.15;color:var(--ink);
+      margin-bottom:0.85rem;
+    }
+    .scene-ttl em{font-style:italic;font-weight:300;color:var(--amber)}
+    .scene-body{
+      flex:1;background:var(--t-bg);border:1px solid var(--t-bd);
+      border-radius:6px;padding:1.25rem 1.2rem 1.55rem;position:relative;
+      box-shadow:0 1px 0 rgba(255,255,255,0.04),
+                 0 18px 50px rgba(0,0,0,0.55),
+                 0 4px 16px rgba(0,0,0,0.35);
+      display:flex;flex-direction:column;
+    }
+    .scene-note{
+      font-family:var(--mono);font-size:0.55rem;color:var(--ink4);
+      letter-spacing:0.06em;text-transform:uppercase;
+      border-top:1px dashed var(--t-bd);padding-top:0.6rem;margin-top:0.7rem;
+    }
+
+    /* Carousel dots */
+    .dots{
+      position:absolute;bottom:-2.2rem;left:50%;transform:translateX(-50%);
+      display:flex;gap:0.45rem;z-index:2;
+    }
+    .dots button{
+      width:6px;height:6px;border-radius:50%;
+      background:var(--ink4);border:0;padding:0;cursor:pointer;
+      transition:background 0.25s,width 0.25s;
+    }
+    .dots button.active{background:var(--amber);width:22px;border-radius:3px}
+    .dots button:hover{background:var(--amber-hi)}
+
+    /* ── Shared diagram primitives ── */
+    .tier-lbl{
+      font-family:var(--mono);font-size:0.55rem;font-weight:700;
+      color:var(--ink4);letter-spacing:0.18em;text-transform:uppercase;
+      margin-bottom:0.4rem;
+    }
+    .chip-row{display:flex;gap:0.42rem;justify-content:center;flex-wrap:wrap}
+    .chip{
+      font-family:var(--mono);font-size:0.64rem;color:var(--ink);
+      background:#161C2E;border:1px solid #2A3454;
+      padding:0.42rem 0.75rem;border-radius:3px;
+      box-shadow:inset 0 1px 0 rgba(255,255,255,0.04);
+    }
+    .chip .rt{
+      display:inline-block;
+      font-size:0.5rem;font-weight:700;color:var(--amber);
+      text-transform:uppercase;letter-spacing:0.1em;
+      margin-right:0.5rem;padding:0.1rem 0.32rem;
+      border:1px solid var(--amber);border-radius:2px;
+    }
+    /* Thick gradient arrow between tiers */
+    .flow-arr{
+      display:flex;align-items:center;justify-content:center;
+      gap:0.6rem;margin:0.55rem 0;
+    }
+    .flow-line{
+      flex:1;height:2px;
+      background:linear-gradient(to right,transparent 0%,var(--amber) 50%,transparent 100%);
+      opacity:0.55;
+    }
+    .flow-lbl{
+      font-family:var(--mono);font-size:0.55rem;font-weight:700;
+      color:var(--amber);letter-spacing:0.12em;text-transform:uppercase;
+      white-space:nowrap;
+    }
+
+    /* ── Scene 1: MCP topology — clients → wire → riz → functions ── */
+    .mcp-hub{
+      align-self:center;
+      background:var(--amber);color:var(--acc-t);
+      border-radius:5px;padding:0.7rem 1.1rem;
+      box-shadow:0 6px 20px rgba(240,165,0,0.32),
+                 0 0 0 1px rgba(240,165,0,0.45);
+      font-family:var(--mono);text-align:center;min-width:240px;
+    }
+    .mcp-hub-ttl{font-size:0.78rem;font-weight:700;letter-spacing:0.04em}
+    .mcp-hub-sub{
+      font-size:0.55rem;font-weight:500;color:rgba(14,18,32,0.78);
+      letter-spacing:0.08em;text-transform:uppercase;margin-top:0.18rem;
+    }
+    .mcp-hub-meta{
+      display:flex;gap:1rem;justify-content:center;
+      margin-top:0.42rem;padding-top:0.42rem;
+      border-top:1px solid rgba(14,18,32,0.18);
+    }
+    .mcp-hub-meta span{
+      font-size:0.55rem;color:rgba(14,18,32,0.78);
+      letter-spacing:0.04em;
+    }
+    .mcp-hub-meta b{color:var(--acc-t);font-weight:700}
+    /* Wire — shows the actual JSON-RPC envelope on the way down */
+    .wire{
+      align-self:center;
+      font-family:var(--mono);font-size:0.55rem;color:var(--ink3);
+      background:rgba(0,0,0,0.32);
+      border:1px solid var(--t-bd);border-radius:3px;
+      padding:0.45rem 0.6rem;margin:0.4rem 0;
+      max-width:340px;line-height:1.5;text-align:left;
+    }
+    .wire .k{color:var(--amber)}
+    .wire .v{color:#C8D8F0}
+    .wire .s{color:#65F0A3}
+
+    /* ── Scene 2: WASM guard pipeline — pre → handler → post ── */
+    .pipe{display:flex;flex-direction:column;gap:0.32rem;align-items:stretch}
+    .pipe-step{
+      font-family:var(--mono);font-size:0.62rem;
+      padding:0.55rem 0.8rem;border-radius:3px;
+      background:#161C2E;border:1px solid #2A3454;
+      color:var(--ink);
+      box-shadow:inset 0 1px 0 rgba(255,255,255,0.03);
+    }
+    .pipe-step.req,.pipe-step.res{
+      text-align:center;font-weight:700;color:var(--ink3);
+      background:transparent;border:1px dashed var(--ink4);
+      letter-spacing:0.12em;text-transform:uppercase;font-size:0.55rem;
+      padding:0.42rem;
+    }
+    .pipe-step.guard{
+      border-color:var(--amber);color:var(--ink);
+      background:linear-gradient(180deg,rgba(240,165,0,0.10) 0%,rgba(240,165,0,0.02) 100%);
+    }
+    .pipe-step.guard .gh{
+      display:flex;justify-content:space-between;align-items:center;
+      margin-bottom:0.32rem;
+    }
+    .pipe-step.guard .gh b{color:var(--amber);font-weight:700;font-size:0.66rem}
+    .pipe-step.guard .gh .lbl{
+      font-size:0.5rem;color:rgba(240,165,0,0.7);
+      letter-spacing:0.1em;text-transform:uppercase;
+    }
+    .pipe-step.guard .li{
+      display:flex;align-items:center;gap:0.45rem;
+      font-size:0.58rem;color:var(--ink2);line-height:1.7;
+    }
+    .pipe-step.guard .li::before{
+      content:'✓';color:var(--amber);font-weight:700;font-size:0.65rem;
+    }
+    .pipe-step.handler{
+      background:var(--amber);color:var(--acc-t);font-weight:700;
+      border-color:var(--amber);text-align:center;
+      box-shadow:0 6px 20px rgba(240,165,0,0.32);
+    }
+    .pipe-step.handler small{
+      display:block;font-size:0.5rem;font-weight:500;
+      color:rgba(14,18,32,0.7);letter-spacing:0.08em;
+      text-transform:uppercase;margin-top:0.12rem;
+    }
+    .pipe-arr{
+      align-self:center;
+      font-family:var(--mono);font-size:0.65rem;color:var(--amber);
+      line-height:0.5;opacity:0.7;
+    }
+
+    /* ── Scene 3: LLM gateway — handler → riz → providers ── */
+    .gw{
+      display:grid;grid-template-columns:1fr 1.2fr 1fr;gap:0.5rem;
+      align-items:center;
+    }
+    .gw-col{display:flex;flex-direction:column;gap:0.35rem;justify-content:center}
+    .gw-node{
+      font-family:var(--mono);font-size:0.6rem;color:var(--ink);
+      background:#161C2E;border:1px solid #2A3454;
+      padding:0.5rem 0.6rem;border-radius:3px;text-align:center;
+      box-shadow:inset 0 1px 0 rgba(255,255,255,0.04);
+    }
+    .gw-node small{
+      display:block;font-size:0.5rem;color:var(--ink4);
+      letter-spacing:0.08em;margin-top:0.15rem;text-transform:uppercase;
+    }
+    .gw-node.active{
+      border-color:var(--amber);color:var(--amber);
+      background:linear-gradient(180deg,rgba(240,165,0,0.10) 0%,rgba(240,165,0,0.02) 100%);
+    }
+    .gw-node.active small{color:rgba(240,165,0,0.7)}
+    .gw-hub{
+      background:var(--amber);color:var(--acc-t);
+      border:1px solid var(--amber);border-radius:5px;
+      padding:0.7rem 0.6rem;text-align:left;
+      box-shadow:0 6px 20px rgba(240,165,0,0.32);
+      font-family:var(--mono);
+    }
+    .gw-hub-ttl{
+      font-size:0.7rem;font-weight:700;letter-spacing:0.04em;
+      text-align:center;padding-bottom:0.42rem;margin-bottom:0.42rem;
+      border-bottom:1px solid rgba(14,18,32,0.22);
+    }
+    .gw-hub-row{
+      display:flex;justify-content:space-between;align-items:baseline;
+      font-size:0.55rem;color:rgba(14,18,32,0.85);
+      letter-spacing:0.02em;line-height:1.7;
+    }
+    .gw-hub-row b{color:var(--acc-t);font-weight:700}
+    .gw-arr{
+      text-align:center;font-family:var(--mono);font-size:0.7rem;
+      color:var(--amber);opacity:0.6;
+    }
+
     /* ── STRIP ── */
     .strip{
       display:grid;grid-template-columns:repeat(4,1fr);
@@ -354,6 +588,73 @@
       color:var(--ink);margin-bottom:0.55rem;letter-spacing:-0.02em;line-height:1.15;
     }
     .si p{font-size:1.05rem;color:var(--ink2);line-height:1.55}
+
+    /* ── VISION BAND ── 3-up preview of the v0.2 bold pillars,
+       inserted between strip and MCP so the AI-substrate framing
+       lands top-of-page, not buried in the roadmap. */
+    .vision{
+      padding:6rem 10vw;border-bottom:1px solid var(--border);
+      background:var(--bg);position:relative;overflow:hidden;
+    }
+    /* Amber wash, off-center, to give this band its own gravity */
+    .vision::before{
+      content:'';position:absolute;
+      top:-120px;right:-120px;
+      width:520px;height:520px;
+      background:radial-gradient(ellipse 50% 50% at 50% 50%,rgba(240,165,0,0.10) 0%,transparent 70%);
+      filter:blur(36px);pointer-events:none;
+    }
+    .vision-inner{position:relative}
+    .vision h2{margin-bottom:1.25rem;font-size:clamp(2.4rem,3.4vw,3.4rem)}
+    .vision-sub{
+      font-family:var(--sans);font-size:clamp(1.05rem,1.3vw,1.25rem);
+      color:var(--ink2);line-height:1.7;max-width:780px;margin-bottom:3.5rem;
+    }
+    .vrow{
+      display:grid;
+      grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+      gap:1.5rem;
+    }
+    .vcard{
+      background:var(--bg3);border:1px solid var(--border);border-radius:6px;
+      padding:2rem 1.75rem 1.6rem;
+      position:relative;
+      transition:transform 0.2s,border-color 0.2s,box-shadow 0.2s;
+    }
+    .vcard:hover{
+      transform:translateY(-3px);border-color:var(--amber);
+      box-shadow:0 16px 42px rgba(0,0,0,0.55),0 0 0 1px rgba(240,165,0,0.18);
+    }
+    .vcard::before{
+      content:'';position:absolute;top:-1px;left:1.5rem;right:1.5rem;height:2px;
+      background:var(--amber);opacity:0;transition:opacity 0.2s;
+    }
+    .vcard:hover::before{opacity:1}
+    .vtag{
+      display:inline-block;
+      font-family:var(--mono);font-size:0.55rem;font-weight:700;
+      letter-spacing:0.14em;text-transform:uppercase;
+      color:var(--amber);background:var(--acc-bg);
+      border:1px solid var(--acc-bd);padding:0.22rem 0.55rem;
+      border-radius:3px;margin-bottom:1.1rem;
+    }
+    .vcard h3{
+      font-family:var(--serif);font-size:1.55rem;font-weight:800;
+      line-height:1.15;letter-spacing:-0.02em;
+      color:var(--ink);margin-bottom:0.85rem;
+    }
+    .vcard p{
+      font-family:var(--sans);font-size:0.97rem;line-height:1.65;
+      color:var(--ink2);
+    }
+    .vcard p code{
+      font-family:var(--mono);font-size:0.86em;color:var(--amber);
+      background:rgba(240,165,0,0.10);padding:0.06em 0.3em;border-radius:2px;
+    }
+    @media(max-width:960px){
+      .vision{padding:4rem 2rem}
+      .vrow{gap:1rem}
+    }
 
     /* ── SPLIT CONFIG ── */
     .split{
@@ -712,6 +1013,7 @@
 <nav>
   <a href="/" class="logo">riz<span class="tld">.dev</span></a>
   <div class="nav-r">
+    <a href="#vision">Vision</a>
     <a href="#mcp">MCP</a>
     <a href="#config">Config</a>
     <a href="/vs">vs.</a>
@@ -725,13 +1027,12 @@
 <!-- HERO -->
 <section class="hero">
   <div class="hero-l">
-    <div class="eyebrow">// self-hosted lambda runtime · mcp-native · v0.1 · spec 2025-11-25</div>
-    <h1>Your Lambdas.<br/><em>Your box.</em><br/>Agent-ready.</h1>
+    <div class="eyebrow">// the runtime your agent codes against · mcp-native · v0.1 · spec 2025-11-25</div>
+    <h1>Lambda.<br/>Built for <em>agents.</em></h1>
     <p class="sub">
-      <strong>Point Riz at your existing AWS Lambda handlers and every function becomes an MCP tool the moment <code style="font-family:var(--mono);font-size:.82em;color:var(--amber)">riz run</code> boots</strong> —
-      auto-registered, current-spec, typed, ready for Claude Code or Cursor.
-      The same code serves real HTTP + WebSocket traffic on hardware you control.
-      No glue code, no Docker, no rewrite.
+      <strong>Drop your AWS Lambda handlers in and every function becomes a typed MCP tool the moment <code style="font-family:var(--mono);font-size:.82em;color:var(--amber)">riz run</code> boots.</strong>
+      Bun · Python · Rust. Real HTTP API v2 + WebSocket traffic on a single Rust binary you own.
+      The same surface keeps growing — <strong>WASM guards, an LLM gateway, recording &amp; replay</strong> — without changing the contract your handlers already follow.
     </p>
     <div class="install">
       <span class="pr">$</span>
@@ -747,62 +1048,180 @@
     </div>
   </div>
   <div class="hero-r">
-    <div class="tui">
-      <div class="tui-bar">
-        <div class="dot r"></div>
-        <div class="dot y"></div>
-        <div class="dot g"></div>
-        <span class="tui-ttl">riz run — 3 functions active</span>
+    <div class="scenes" id="scenes">
+      <!-- Scene 1 — MCP topology: real wire payload visible -->
+      <div class="scene active" data-scene="mcp">
+        <div class="scene-hd">MCP · agent connectivity <span class="tag live">live · v0.1</span></div>
+        <div class="scene-ttl">Every function is <em>an agent's tool</em>.</div>
+        <div class="scene-body">
+          <div class="tier-lbl">MCP clients</div>
+          <div class="chip-row">
+            <div class="chip">Claude Code</div>
+            <div class="chip">Cursor</div>
+            <div class="chip">Inspector</div>
+          </div>
+
+          <div class="flow-arr">
+            <div class="flow-line"></div>
+            <span class="flow-lbl">POST /_riz/mcp</span>
+            <div class="flow-line"></div>
+          </div>
+
+          <div class="wire">
+{ <span class="k">"jsonrpc"</span>: <span class="s">"2.0"</span>, <span class="k">"method"</span>: <span class="s">"tools/call"</span>,<br/>
+&nbsp;&nbsp;<span class="k">"params"</span>: { <span class="k">"name"</span>: <span class="s">"accounts"</span>, <span class="k">"arguments"</span>: { <span class="k">"id"</span>: <span class="s">"42"</span> } } }
+          </div>
+
+          <div class="mcp-hub">
+            <div class="mcp-hub-ttl">riz · /_riz/mcp</div>
+            <div class="mcp-hub-sub">spec 2025-11-25 · streamable HTTP</div>
+            <div class="mcp-hub-meta">
+              <span><b>14</b> tools</span>
+              <span><b>3</b> runtimes</span>
+              <span><b>0</b> SDK lines</span>
+            </div>
+          </div>
+
+          <div class="flow-arr">
+            <div class="flow-line"></div>
+            <span class="flow-lbl">dispatch → pool</span>
+            <div class="flow-line"></div>
+          </div>
+
+          <div class="tier-lbl">your functions</div>
+          <div class="chip-row">
+            <div class="chip"><span class="rt">bun</span>accounts</div>
+            <div class="chip"><span class="rt">py</span>search</div>
+            <div class="chip"><span class="rt">rs</span>chat</div>
+          </div>
+          <div class="scene-note">// every fn auto-registered · typed input + output schemas</div>
+        </div>
       </div>
-      <div class="tui-body">
-        <div class="t-sb">
-          <div class="t-sb-hd">functions</div>
-          <div class="tf on">
-            <span class="fn-n"><span class="fd a"></span>api</span>
-            <span class="fl a">4ms</span>
-          </div>
-          <div class="tf">
-            <span class="fn-n"><span class="fd w"></span>processor</span>
-            <span class="fl w">11ms</span>
-          </div>
-          <div class="tf">
-            <span class="fn-n"><span class="fd w"></span>encoder</span>
-            <span class="fl w">2ms</span>
-          </div>
-          <div class="t-stats">
-            <div class="sh">api · 5m window</div>
-            <div class="sr">
-              <span class="sl">p50</span><span class="sl">p75</span>
-              <span class="sl">p90</span><span class="sl">p99</span>
+
+      <!-- Scene 2 — WASM guard pipeline: real verdicts visible -->
+      <div class="scene" data-scene="wasm">
+        <div class="scene-hd">WASM guards · safety layer <span class="tag">v0.2</span></div>
+        <div class="scene-ttl">Untrusted code, <em>contained</em>.</div>
+        <div class="scene-body">
+          <div class="pipe">
+            <div class="pipe-step req">incoming request</div>
+            <div class="pipe-arr">▼</div>
+            <div class="pipe-step guard">
+              <div class="gh"><b>guard.in.wasm</b><span class="lbl">pre-invoke · 0.4ms</span></div>
+              <div class="li">schema match (zod)</div>
+              <div class="li">no prompt injection detected</div>
+              <div class="li">rate-limit 47 / 100 in window</div>
             </div>
-            <div class="sr" style="margin-top:.18rem">
-              <span class="sv">4ms</span><span class="sv">6ms</span>
-              <span class="sv">9ms</span><span class="sv b">18ms</span>
+            <div class="pipe-arr">▼</div>
+            <div class="pipe-step handler">your handler runs<small>bun · python · rust · wasm</small></div>
+            <div class="pipe-arr">▼</div>
+            <div class="pipe-step guard">
+              <div class="gh"><b>guard.out.wasm</b><span class="lbl">post-invoke · 0.3ms</span></div>
+              <div class="li">PII redacted (3 emails · 1 ssn)</div>
+              <div class="li">secrets scrubbed (1 token)</div>
+              <div class="li">response shape enforced</div>
+            </div>
+            <div class="pipe-arr">▼</div>
+            <div class="pipe-step res">response delivered</div>
+          </div>
+          <div class="scene-note">// WASI capabilities · no fs / net by default · one guard, three runtimes</div>
+        </div>
+      </div>
+
+      <!-- Scene 3 — LLM gateway: real budgets + active provider -->
+      <div class="scene" data-scene="gateway">
+        <div class="scene-hd">LLM gateway · AI control plane <span class="tag">v0.2</span></div>
+        <div class="scene-ttl">One config. <em>Every model.</em></div>
+        <div class="scene-body">
+          <div class="tier-lbl">your handler</div>
+          <div class="chip-row">
+            <div class="chip" style="font-size:.58rem"><span class="rt">bun</span>ctx.invokeModel("claude-sonnet-4-6", prompt)</div>
+          </div>
+
+          <div class="flow-arr">
+            <div class="flow-line"></div>
+            <span class="flow-lbl">route + cache + cap</span>
+            <div class="flow-line"></div>
+          </div>
+
+          <div class="gw">
+            <div class="gw-col"></div>
+            <div class="gw-col">
+              <div class="gw-hub">
+                <div class="gw-hub-ttl">riz gateway</div>
+                <div class="gw-hub-row"><span>budget 24h</span><b>$42.18 / $50</b></div>
+                <div class="gw-hub-row"><span>semantic cache</span><b>47% hit</b></div>
+                <div class="gw-hub-row"><span>fallback</span><b>3 providers</b></div>
+                <div class="gw-hub-row"><span>audit log</span><b>writing</b></div>
+              </div>
+            </div>
+            <div class="gw-col"></div>
+          </div>
+
+          <div class="flow-arr">
+            <div class="flow-line"></div>
+            <span class="flow-lbl">→ provider</span>
+            <div class="flow-line"></div>
+          </div>
+
+          <div class="tier-lbl">providers</div>
+          <div class="chip-row">
+            <div class="chip" style="border-color:var(--amber);color:var(--amber)">Anthropic ✓</div>
+            <div class="chip">OpenAI</div>
+            <div class="chip">Bedrock</div>
+            <div class="chip">Ollama <small style="color:var(--ink4)">local</small></div>
+          </div>
+          <div class="scene-note">// also speaks OpenAI · POST /_riz/v1/chat/completions</div>
+        </div>
+      </div>
+
+      <!-- Scene 4 — Live TUI (was the hero lead) -->
+      <div class="scene" data-scene="tui">
+        <div class="scene-hd">Live operations · TUI <span class="tag live">live · v0.1</span></div>
+        <div class="scene-ttl">Watch traffic flow <em>in real time</em>.</div>
+        <div class="tui" style="opacity:1;animation:none;max-width:none">
+          <div class="tui-bar">
+            <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+            <span class="tui-ttl">riz run — 3 functions active</span>
+          </div>
+          <div class="tui-body">
+            <div class="t-sb">
+              <div class="t-sb-hd">functions</div>
+              <div class="tf on"><span class="fn-n"><span class="fd a"></span>api</span><span class="fl a">4ms</span></div>
+              <div class="tf"><span class="fn-n"><span class="fd w"></span>processor</span><span class="fl w">11ms</span></div>
+              <div class="tf"><span class="fn-n"><span class="fd w"></span>encoder</span><span class="fl w">2ms</span></div>
+              <div class="t-stats">
+                <div class="sh">api · 5m window</div>
+                <div class="sr"><span class="sl">p50</span><span class="sl">p75</span><span class="sl">p90</span><span class="sl">p99</span></div>
+                <div class="sr" style="margin-top:.18rem"><span class="sv">4ms</span><span class="sv">6ms</span><span class="sv">9ms</span><span class="sv b">18ms</span></div>
+              </div>
+            </div>
+            <div class="t-dt">
+              <div class="dh">api · latency</div>
+              <div class="ch">
+                <div class="cl">20ms ┤                              </div>
+                <div class="cl">15ms ┤             <span class="ca">╭╮</span>           </div>
+                <div class="cl">10ms ┤    <span class="ca">╭─╮</span>   <span class="ca">╭─╯╰──╮</span>     </div>
+                <div class="cl"> 5ms ┤<span class="ca">╭──╯</span> <span class="ca">╰───╯</span>     <span class="ca">╭──</span></div>
+                <div class="cl"> 0ms ┼─────────────────────────────</div>
+                <div class="clb"><span><span class="hl">p50</span> 4ms</span><span><span class="hl">p75</span> 6ms</span><span><span class="hl">p90</span> 9ms</span><span class="bd">p99 18ms</span></div>
+              </div>
+              <div class="lh">logs</div>
+              <div class="ll"><span class="lt">12:04:01</span> [<span class="lf">api</span>] POST /users 200 <span class="lok">OK</span> <span class="lm">4ms</span></div>
+              <div class="ll"><span class="lt">12:04:02</span> [<span class="lf">api</span>] GET /health 200 <span class="lok">OK</span> <span class="lm">2ms</span></div>
+              <div class="ll"><span class="lt">12:04:02</span> [<span class="lf">api</span>] POST /users 200 <span class="lok">OK</span> <span class="lm">5ms</span></div>
+              <div class="ll"><span class="lt">12:04:03</span> [<span class="lf">api</span>] GET /users/42 200 <span class="lok">OK</span> <span class="lm">3ms</span></div>
+              <div class="ll"><span class="lt">12:04:03</span> [<span class="lf">api</span>] <span class="cur"></span></div>
             </div>
           </div>
         </div>
-        <div class="t-dt">
-          <div class="dh">api · latency</div>
-          <div class="ch">
-            <div class="cl">20ms ┤                              </div>
-            <div class="cl">15ms ┤             <span class="ca">╭╮</span>           </div>
-            <div class="cl">10ms ┤    <span class="ca">╭─╮</span>   <span class="ca">╭─╯╰──╮</span>     </div>
-            <div class="cl"> 5ms ┤<span class="ca">╭──╯</span> <span class="ca">╰───╯</span>     <span class="ca">╭──</span></div>
-            <div class="cl"> 0ms ┼─────────────────────────────</div>
-            <div class="clb">
-              <span><span class="hl">p50</span> 4ms</span>
-              <span><span class="hl">p75</span> 6ms</span>
-              <span><span class="hl">p90</span> 9ms</span>
-              <span class="bd">p99 18ms</span>
-            </div>
-          </div>
-          <div class="lh">logs</div>
-          <div class="ll"><span class="lt">12:04:01</span> [<span class="lf">api</span>] POST /users 200 <span class="lok">OK</span> <span class="lm">4ms</span></div>
-          <div class="ll"><span class="lt">12:04:02</span> [<span class="lf">api</span>] GET /health 200 <span class="lok">OK</span> <span class="lm">2ms</span></div>
-          <div class="ll"><span class="lt">12:04:02</span> [<span class="lf">api</span>] POST /users 200 <span class="lok">OK</span> <span class="lm">5ms</span></div>
-          <div class="ll"><span class="lt">12:04:03</span> [<span class="lf">api</span>] GET /users/42 200 <span class="lok">OK</span> <span class="lm">3ms</span></div>
-          <div class="ll"><span class="lt">12:04:03</span> [<span class="lf">api</span>] <span class="cur"></span></div>
-        </div>
+      </div>
+
+      <div class="dots" id="sceneDots">
+        <button class="active" data-i="0" aria-label="MCP scene"></button>
+        <button data-i="1" aria-label="WASM guards scene"></button>
+        <button data-i="2" aria-label="LLM gateway scene"></button>
+        <button data-i="3" aria-label="Live TUI scene"></button>
       </div>
     </div>
   </div>
@@ -820,13 +1239,41 @@
   </div>
   <div class="si">
     <span class="sn">03</span>
-    <div><h3>Untrusted code, contained</h3><p>Every spawned handler gets the on-box safety profile for free — no core dumps, no fork-bombs, no privilege escalation. Opt-in per-function caps for memory, CPU, and a Linux Landlock filesystem allowlist.</p></div>
+    <div><h3>Untrusted code, contained</h3><p>Every spawned handler gets the on-box safety profile for free — <code style="font-family:var(--mono);font-size:.78em">RLIMIT_CORE=0</code>, no fork-bombs, no privilege escalation. Opt-in per-function memory + CPU caps and a Linux Landlock filesystem allowlist. WASM capability sandbox lands in v0.2.</p></div>
   </div>
   <div class="si">
     <span class="sn">04</span>
-    <div><h3>Local Lambda Dev Loop</h3><p>Hot-reload watches your source and hot-swaps the pool in under a second. A live ratatui dashboard shows P50–P99 latency, request logs, and cold-start counts as traffic flows. Familiar Lambda semantics — same context, same timeouts — with a dev loop AWS can't deliver.</p></div>
+    <div><h3>The agent dev loop</h3><p>Edit a handler, hot-swap the pool in under a second, ask Claude to call the tool again — same context, same timeouts, sub-ms feedback. A live ratatui dashboard shows P50–P99 latency, request logs, and cold-start counts in real time. The dev loop AWS can't deliver.</p></div>
   </div>
 </div>
+
+<!-- VISION — what's coming next, surfaced top-of-page -->
+<section class="vision" id="vision">
+  <div class="vision-inner">
+    <span class="lbl">// where riz is going</span>
+    <h2>From Lambda runtime <em>to AI substrate</em>.</h2>
+    <p class="vision-sub">
+      v0.1 ships the Lambda contract you already know, the MCP server agents already speak, and the safety primitives on-box compute makes cheap. Next we close the loop: WASM-sandboxed guards around every call, a single LLM gateway in front of every provider, and recording so agents can replay any request against any change.
+    </p>
+    <div class="vrow">
+      <article class="vcard">
+        <span class="vtag">v0.2 · WASM</span>
+        <h3>Capability-sandboxed guards</h3>
+        <p>Pre- and post-invoke WebAssembly modules wrapped in WASI capabilities. Validate inputs, detect prompt injection, redact PII on the way out — one guard protects Bun, Python, and Rust handlers alike. Or run a guardless <code>runtime = "wasm"</code> handler for sub-ms cold starts on code you didn't write.</p>
+      </article>
+      <article class="vcard">
+        <span class="vtag">v0.2 · gateway</span>
+        <h3>One LLM gateway, every model</h3>
+        <p>Handlers call <code>ctx.invokeModel(name, prompt)</code>. Riz routes to Anthropic, OpenAI, Bedrock, or local Ollama with budget caps, semantic cache, fallback chain, and per-function cost telemetry in <code>/_riz/health</code>. An OpenAI-compatible endpoint comes in the box so existing clients just work.</p>
+      </article>
+      <article class="vcard">
+        <span class="vtag">v0.2 · replay</span>
+        <h3>Record &amp; replay for agents</h3>
+        <p>Every request captured with input, output, timings, and downstream calls. <code>riz replay --since 1h --function chat</code> replays N events against a hot-reloaded handler and diffs the responses. The agent can ship a change, run the replay, and decide if anything regressed — without writing tests.</p>
+      </article>
+    </div>
+  </div>
+</section>
 
 <!-- MCP -->
 <section class="split" id="mcp">
@@ -1013,27 +1460,48 @@ $ claude mcp add riz-local \
 
       </div>
 
-      <!-- ───────── ROADMAP (was "Coming") ───────── -->
+      <!-- ───────── ROADMAP — bold pillars first ───────── -->
       <div class="status-col">
         <h3>Roadmap</h3>
-        <p class="h3-sub">v0.2 and beyond</p>
+        <p class="h3-sub">v0.2 — the AI-substrate pillars</p>
 
           <article class="bucket">
-            <h4>Capability-Sandboxed WASM</h4>
+            <h4>WASM Guards &amp; Standalone Runtime</h4>
             <ul>
-              <li>WebAssembly / WASI handlers wrapped in a host process — the same line-delimited JSON protocol as the other runtimes</li>
-              <li>Filesystem, network, and clock capabilities granted explicitly in <code>riz.toml</code> — no implicit host access</li>
-              <li>Sub-millisecond cold start, one <code>.wasm</code> binary across Linux / macOS / edge</li>
-              <li>The differentiator no Lambda emulator ships: safe execution of code you didn't write</li>
+              <li>Pre-invoke guards (<code>guard_in</code>) — validate schemas, detect prompt injection, enforce rate limits before the handler runs</li>
+              <li>Post-invoke guards (<code>guard_out</code>) — redact PII, scrub secrets, enforce response shape before bytes leave</li>
+              <li>One <code>.wasm</code> guard protects Bun + Python + Rust handlers alike — language-agnostic safety layer</li>
+              <li>Standalone <code>runtime = "wasm"</code> handlers — sub-ms cold start, WASI capability sandbox (no fs/net by default)</li>
             </ul>
           </article>
 
           <article class="bucket">
-            <h4>Additional Runtimes</h4>
+            <h4>LLM Gateway</h4>
             <ul>
-              <li>Node.js native runtime — for shops that won't ship Bun in prod</li>
-              <li>Go support via the existing static-binary protocol (thin <code>riz-go-runtime</code> module + templates; the runtime kernel is reused from Rust)</li>
-              <li>Java / JVM runtime adapter</li>
+              <li>One config block, every provider — Anthropic · OpenAI · Bedrock · Vertex · Ollama with fallback chain</li>
+              <li>Per-function budget caps + cost telemetry surfaced in <code>/_riz/health</code></li>
+              <li>Semantic-similarity cache — drops cost 30–70% on repetitive workloads</li>
+              <li>Streaming pass-through to MCP clients (token-level via WS upgrade)</li>
+              <li>OpenAI-compatible endpoint <code>POST /_riz/v1/chat/completions</code> — existing clients just work</li>
+            </ul>
+          </article>
+
+          <article class="bucket">
+            <h4>Record &amp; Replay</h4>
+            <ul>
+              <li>Every request captured with input, output, timings, downstream calls</li>
+              <li><code>riz replay --since 1h --function chat</code> against a hot-reloaded handler, diff the responses</li>
+              <li>Dataset export ready for OpenAI / Anthropic fine-tune APIs</li>
+              <li>The agentic test loop: ship a change, replay last N events, see if anything regressed</li>
+            </ul>
+          </article>
+
+          <article class="bucket">
+            <h4>Eval Harness + Prompt Versioning</h4>
+            <ul>
+              <li>Versioned prompts as first-class config — hot-reload without redeploy</li>
+              <li><code>riz eval &lt;function&gt;</code> ranks prompt × model × guard combos on quality / cost / latency</li>
+              <li>A/B win rate visible in <code>/_riz/health</code> per prompt version</li>
             </ul>
           </article>
 
@@ -1041,22 +1509,28 @@ $ claude mcp add riz-local \
             <h4>Smarter MCP</h4>
             <ul>
               <li>Per-route MCP tool schemas — typed input shapes from path + query parameters</li>
-              <li>AI inspection tools — <code>riz.tail_logs</code>, <code>riz.replay_request</code>, <code>riz.scaffold</code></li>
+              <li>Auto-derived from TS types / Python annotations / Rust derives</li>
+              <li>MCP over WebSocket — streaming tool results for long-running calls</li>
               <li>OAuth 2.1 + RFC 8707 Resource Indicators (bearer-token path remains default)</li>
+              <li>MCP federation — child riz instances auto-advertise to a parent; agents see all tools</li>
             </ul>
           </article>
 
           <article class="bucket">
-            <h4>Event Sources</h4>
+            <h4>Additional Runtimes</h4>
             <ul>
-              <li>Non-HTTP event sources (SQS, SNS, S3, EventBridge) — v0.2</li>
+              <li>Node.js native runtime — for shops that won't ship Bun in prod</li>
+              <li>Go support via the existing static-binary protocol (thin <code>riz-go-runtime</code> module + templates)</li>
+              <li>Java / JVM runtime adapter</li>
             </ul>
           </article>
 
           <article class="bucket">
-            <h4>Distributed Tracing</h4>
+            <h4>Event Sources &amp; Tracing</h4>
             <ul>
+              <li>Non-HTTP event sources (SQS, SNS, S3, EventBridge)</li>
               <li>OpenTelemetry exporter with W3C Trace Context propagation (X-Ray headers come free)</li>
+              <li>Stateful agent memory — <code>/_riz/memory/{agent_id}</code> KV + vector blob store</li>
             </ul>
           </article>
 
@@ -1141,6 +1615,46 @@ $ claude mcp add riz-local \
     });
   }
 
+  // Scene carousel — 4 capability vignettes, ~6s each, crossfade.
+  // Pauses when the user hovers the carousel or clicks a dot. Resumes
+  // after 12s of inactivity so the rotation isn't sticky.
+  (function(){
+    const scenes = document.querySelectorAll('#scenes .scene');
+    const dots   = document.querySelectorAll('#sceneDots button');
+    if (!scenes.length) return;
+    let i = 0, autoTimer, idleTimer;
+    const INTERVAL = 6000;
+    const IDLE_RESUME = 12000;
+
+    function show(n){
+      scenes.forEach((s, idx) => s.classList.toggle('active', idx === n));
+      dots.forEach((d, idx) => d.classList.toggle('active', idx === n));
+      i = n;
+    }
+    function tick(){ show((i + 1) % scenes.length); }
+    function start(){ stop(); autoTimer = setInterval(tick, INTERVAL); }
+    function stop(){ if (autoTimer) clearInterval(autoTimer); }
+    function pauseThenResume(){
+      stop();
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(start, IDLE_RESUME);
+    }
+
+    dots.forEach((d, idx) => d.addEventListener('click', () => {
+      show(idx); pauseThenResume();
+    }));
+
+    const root = document.getElementById('scenes');
+    root.addEventListener('mouseenter', stop);
+    root.addEventListener('mouseleave', start);
+
+    // Respect reduced motion — don't auto-rotate, just show #1.
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!reducedMotion) start();
+  })();
+
+  // Live TUI log roller — only ticks while the TUI scene is visible so
+  // hidden frames don't pile up rows offscreen.
   const entries = [
     ['12:04:04','api','GET /users 200 OK','3ms'],
     ['12:04:05','processor','POST /queue 200 OK','11ms'],
@@ -1148,18 +1662,22 @@ $ claude mcp add riz-local \
     ['12:04:07','encoder','POST /encode 200 OK','2ms'],
     ['12:04:08','api','GET /health 200 OK','1ms'],
   ];
-  let idx = 0;
-  const cursorLine = document.querySelector('.cur').parentElement;
+  let logIdx = 0;
+  const cursorLine = document.querySelector('.cur')?.parentElement;
+  const tuiScene = document.querySelector('[data-scene="tui"]');
 
-  setInterval(() => {
-    const e = entries[idx++ % entries.length];
-    const line = document.createElement('div');
-    line.className = 'll';
-    line.innerHTML = `<span class="lt">${e[0]}</span> [<span class="lf">${e[1]}</span>] ${e[2]} <span class="lm">${e[3]}</span>`;
-    cursorLine.parentElement.insertBefore(line, cursorLine);
-    const all = document.querySelectorAll('.t-dt .ll');
-    if (all.length > 5) all[0].remove();
-  }, 1800);
+  if (cursorLine && tuiScene) {
+    setInterval(() => {
+      if (!tuiScene.classList.contains('active')) return;
+      const e = entries[logIdx++ % entries.length];
+      const line = document.createElement('div');
+      line.className = 'll';
+      line.innerHTML = `<span class="lt">${e[0]}</span> [<span class="lf">${e[1]}</span>] ${e[2]} <span class="lm">${e[3]}</span>`;
+      cursorLine.parentElement.insertBefore(line, cursorLine);
+      const all = document.querySelectorAll('.t-dt .ll');
+      if (all.length > 5) all[0].remove();
+    }, 1800);
+  }
 </script>
 </body>
 </html>
