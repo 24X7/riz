@@ -81,9 +81,9 @@ enum Commands {
     Doctor,
     /// Scaffold a new riz project from a built-in template.
     ///
-    /// Templates form a 3×2 matrix (3 languages × 2 scenarios):
-    ///   - `typescript-http`, `python-http`, `rust-http`
-    ///   - `typescript-websocket`, `python-websocket`, `rust-websocket`
+    /// Available templates:
+    ///   - HTTP: `typescript-http`, `python-http`, `rust-http`, `nodejs-http`
+    ///   - WebSocket: `typescript-websocket`, `python-websocket`, `rust-websocket`
     ///
     /// The template's files are written into <dir> (defaults to the
     /// current directory). Use after install:
@@ -132,13 +132,14 @@ const TEMPLATES: &[(&str, &str, &str)] = &[
     ("typescript-http",      "HTTP",      "TypeScript / Bun"),
     ("python-http",          "HTTP",      "Python"),
     ("rust-http",            "HTTP",      "Rust"),
+    ("nodejs-http",          "HTTP",      "Node.js"),
     ("typescript-websocket", "WebSocket", "TypeScript / Bun"),
     ("python-websocket",     "WebSocket", "Python"),
     ("rust-websocket",       "WebSocket", "Rust"),
 ];
 
 fn print_template_list() {
-    println!("Available templates (3 languages × 2 scenarios):\n");
+    println!("Available templates:\n");
     println!("  {:<24} {:<12} {}", "TEMPLATE", "SCENARIO", "LANGUAGE");
     for (name, scenario, lang) in TEMPLATES {
         println!("  {name:<24} {scenario:<12} {lang}");
@@ -186,6 +187,16 @@ fn template_files(name: &str) -> Option<&'static [(&'static str, &'static str)]>
             (
                 "README.md",
                 include_str!("../assets/templates/rust-http/README.md"),
+            ),
+        ]),
+        "nodejs-http" => Some(&[
+            (
+                "index.mjs",
+                include_str!("../assets/templates/nodejs-http/index.mjs"),
+            ),
+            (
+                "riz.toml",
+                include_str!("../assets/templates/nodejs-http/riz.toml"),
             ),
         ]),
         "typescript-websocket" => Some(&[
@@ -242,7 +253,7 @@ fn run_init(template: &str, dir: Option<&str>, git: bool) -> anyhow::Result<()> 
     let files = template_files(template).ok_or_else(|| {
         anyhow::anyhow!(
             "unknown template '{template}'. Available: typescript-http, python-http, \
-             rust-http, typescript-websocket, python-websocket, rust-websocket. \
+             rust-http, nodejs-http, typescript-websocket, python-websocket, rust-websocket. \
              (Run `riz init --list` for a formatted table.)"
         )
     })?;
@@ -582,11 +593,13 @@ async fn run_doctor(config_path: &str) -> anyhow::Result<()> {
     // 2. Runtime binaries — only check the ones actually needed by the config.
     let mut needs_bun = false;
     let mut needs_python = false;
+    let mut needs_node = false;
     let mut needs_rust_bin: Vec<(String, std::path::PathBuf)> = Vec::new();
     for (name, fc) in &config.functions {
         match fc.runtime {
             config::RuntimeKind::Bun => needs_bun = true,
             config::RuntimeKind::Python => needs_python = true,
+            config::RuntimeKind::Node => needs_node = true,
             config::RuntimeKind::Rust => {
                 needs_rust_bin.push((name.clone(), fc.handler.clone()));
             }
@@ -628,13 +641,33 @@ async fn run_doctor(config_path: &str) -> anyhow::Result<()> {
         }
     }
 
-    // 3. Per-function handler-file presence. For Bun/Python this is the
-    //    .ts/.py file; for Rust it's the precompiled binary at `handler =`.
+    if needs_node {
+        match which_binary("node") {
+            Some(path) => {
+                report(Finding::Pass, "node on PATH", &path.display().to_string());
+                record(Finding::Pass);
+            }
+            None => {
+                report(
+                    Finding::Fail,
+                    "node on PATH",
+                    "not found — required for Node.js handlers",
+                );
+                record(Finding::Fail);
+                println!("       Install: https://nodejs.org/en/download");
+            }
+        }
+    }
+
+    // 3. Per-function handler-file presence. For Bun/Python/Node this is the
+    //    .ts/.py/.mjs file; for Rust it's the precompiled binary at `handler =`.
     for (name, fc) in &config.functions {
         let handler_str = fc.handler.display().to_string();
         let label = format!("function `{name}` handler");
         match fc.runtime {
-            config::RuntimeKind::Bun | config::RuntimeKind::Python => {
+            config::RuntimeKind::Bun
+            | config::RuntimeKind::Python
+            | config::RuntimeKind::Node => {
                 // Handler is "file.ext.export" or "./path/file.handler". Strip
                 // the trailing export segment and check the file exists.
                 let candidate = strip_handler_export(&fc.handler);

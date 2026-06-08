@@ -341,6 +341,7 @@ impl FunctionConfig {
             let runtime_ext = match self.runtime {
                 RuntimeKind::Bun => "ts",
                 RuntimeKind::Python => "py",
+                RuntimeKind::Node => "mjs",
                 RuntimeKind::Rust => unreachable!("handled above"),
             };
             return (
@@ -353,6 +354,7 @@ impl FunctionConfig {
         let runtime_ext = match self.runtime {
             RuntimeKind::Bun => "ts",
             RuntimeKind::Python => "py",
+            RuntimeKind::Node => "mjs",
             RuntimeKind::Rust => unreachable!("handled above"),
         };
         (
@@ -388,6 +390,7 @@ pub enum RuntimeKind {
     Bun,
     Rust,
     Python,
+    Node,
 }
 
 impl RuntimeKind {
@@ -396,6 +399,7 @@ impl RuntimeKind {
             Self::Bun => "bun",
             Self::Rust => "rust",
             Self::Python => "python",
+            Self::Node => "node",
         }
     }
 }

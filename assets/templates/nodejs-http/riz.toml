@@ -1,0 +1,13 @@
+[server]
+port = 3000
+host = "127.0.0.1"
+
+[function.hello]
+runtime = "node"
+handler = "index.handler"
+timeout_ms = 5000
+concurrency = 2
+
+[[function.hello.routes]]
+path = "/hello"
+method = "GET"

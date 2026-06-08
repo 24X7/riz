@@ -1,5 +1,6 @@
 pub mod bun;
 pub mod liveness;
+pub mod node;
 pub mod pool;
 pub mod python;
 pub mod runtime;

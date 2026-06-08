@@ -36,6 +36,13 @@ fn python3_available() -> bool {
         .is_ok()
 }
 
+fn node_available() -> bool {
+    std::process::Command::new("node")
+        .arg("--version")
+        .output()
+        .is_ok()
+}
+
 fn echo_rust_binary() -> PathBuf {
     let target_dir = std::env::var("CARGO_TARGET_DIR")
         .map(PathBuf::from)
@@ -293,4 +300,40 @@ method = "GET"
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.expect("json");
     assert_canonical_echo_shape(&body, "echo-rust", "/echo", "GET", TIMEOUT_MS);
+}
+
+#[tokio::test]
+async fn node_echo_emits_canonical_shape() {
+    if !node_available() {
+        eprintln!("SKIP: node not on PATH");
+        return;
+    }
+    let handler = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/examples/lambdas/echo-node/index.handler"
+    );
+    let config_toml = format!(
+        r#"
+[server]
+port = 0
+host = "127.0.0.1"
+
+[function.echo-node]
+runtime = "node"
+handler = "{handler}"
+timeout_ms = {TIMEOUT_MS}
+concurrency = 1
+
+[[function.echo-node.routes]]
+path = "/echo"
+method = "GET"
+"#
+    );
+    let addr = boot_riz(&config_toml).await;
+    let url = format!("http://{addr}/echo");
+    wait_for_ready(&url).await;
+    let resp = reqwest::get(&url).await.expect("GET");
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.expect("json");
+    assert_canonical_echo_shape(&body, "echo-node", "/echo", "GET", TIMEOUT_MS);
 }

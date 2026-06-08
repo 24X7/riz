@@ -62,6 +62,10 @@ curl -s -X DELETE http://127.0.0.1:3000/crud/1; echo
 section "echo-bun (Bun) — GET /echo-bun?status=200"
 curl -s 'http://127.0.0.1:3000/echo-bun?status=200&name=alice' | head -c 240; echo
 
+# ─── Node.js HTTP ───
+section "echo-node (Node.js) — GET /echo-node"
+curl -s 'http://127.0.0.1:3000/echo-node?name=alice' | head -c 240; echo
+
 # ─── Python HTTP ───
 section "echo-python (Python) — POST /echo-python"
 curl -s -X POST -H 'content-type: application/json' \

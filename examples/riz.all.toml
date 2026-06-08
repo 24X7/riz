@@ -12,6 +12,7 @@
 #   ANY  /accounts              → crud-accounts (Bun)
 #   ANY  /accounts/{id}         → crud-accounts (Bun)
 #   ANY  /echo-bun              → echo-bun (Bun)
+#   ANY  /echo-node             → echo-node (Node.js)
 #   ANY  /echo-python           → echo-python (Python)
 #   ANY  /echo-rust             → echo-rust (Rust)
 #   ANY  /protected             → events (Bun) gated by auth-allow-bun authorizer (allows)
@@ -76,6 +77,17 @@ timeout_ms = 5000
 concurrency = 4
 [[function.echo-bun.routes]]
 path = "/echo-bun"
+method = "ANY"
+
+# ─────────────── Node.js HTTP ───────────────
+
+[function.echo-node]
+runtime = "node"
+handler = "./examples/lambdas/echo-node/index.handler"
+timeout_ms = 5000
+concurrency = 2
+[[function.echo-node.routes]]
+path = "/echo-node"
 method = "ANY"
 
 # ─────────────── Python HTTP ───────────────

@@ -100,6 +100,47 @@ fn init_python_http_creates_handler_and_config() {
 }
 
 #[test]
+fn init_nodejs_http_creates_handler_and_config() {
+    assert_riz_available();
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let target = tmp.path().join("node-app");
+
+    let out = Command::new(riz_binary())
+        .args(["init", "nodejs-http"])
+        .arg(&target)
+        .output()
+        .expect("spawn riz init");
+    assert!(
+        out.status.success(),
+        "riz init nodejs-http failed: status={:?} stderr={}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let index_mjs = target.join("index.mjs");
+    let riz_toml = target.join("riz.toml");
+    assert!(
+        index_mjs.exists(),
+        "expected {} to exist",
+        index_mjs.display()
+    );
+    assert!(riz_toml.exists(), "expected {} to exist", riz_toml.display());
+
+    let handler_src = std::fs::read_to_string(&index_mjs).expect("read index.mjs");
+    assert!(
+        handler_src.contains("export const handler"),
+        "index.mjs must export handler; got {handler_src}"
+    );
+    let toml_src = std::fs::read_to_string(&riz_toml).expect("read riz.toml");
+    assert!(
+        toml_src.contains("runtime = \"node\""),
+        "riz.toml must set runtime = node; got {toml_src}"
+    );
+    let parsed: riz::config::Config = toml::from_str(&toml_src).expect("toml parses");
+    parsed.validate().expect("generated config must validate");
+}
+
+#[test]
 fn init_refuses_to_overwrite_existing_file() {
     assert_riz_available();
     let tmp = tempfile::TempDir::new().expect("tempdir");
@@ -147,10 +188,11 @@ fn init_unknown_template_fails_with_helpful_message() {
             && stderr.contains("typescript-http")
             && stderr.contains("python-http")
             && stderr.contains("rust-http")
+            && stderr.contains("nodejs-http")
             && stderr.contains("typescript-websocket")
             && stderr.contains("python-websocket")
             && stderr.contains("rust-websocket"),
-        "stderr must list ALL 6 available templates (3 langs × 2 scenarios); got {stderr}"
+        "stderr must list ALL available templates; got {stderr}"
     );
 }
 
@@ -206,7 +248,7 @@ fn init_python_websocket_creates_chat_handler() {
 }
 
 #[test]
-fn init_list_enumerates_six_templates() {
+fn init_list_enumerates_all_templates() {
     assert_riz_available();
     let out = Command::new(riz_binary())
         .args(["init", "--list"])
@@ -222,6 +264,7 @@ fn init_list_enumerates_six_templates() {
         "typescript-http",
         "python-http",
         "rust-http",
+        "nodejs-http",
         "typescript-websocket",
         "python-websocket",
         "rust-websocket",
