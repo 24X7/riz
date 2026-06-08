@@ -499,6 +499,14 @@ impl Config {
                     "function name '{name}' uses reserved '_riz' prefix"
                 ));
             }
+            // concurrency = 0 spawns no worker processes and a 0-permit
+            // semaphore, so every invocation 503s forever with no startup
+            // error explaining why. Reject it up front.
+            if func.concurrency == 0 {
+                return Err(format!(
+                    "function '{name}' has concurrency = 0 — must be at least 1"
+                ));
+            }
             // All three runtimes (Bun, Python, Rust) are shipped — no validation
             // rejection needed. Adapters live in src/process/{bun,python,rust}.rs
             // and the registry returns the right one per RuntimeKind.
@@ -599,6 +607,29 @@ concurrency = 2
         assert_eq!(routes.len(), 1);
         assert_eq!(routes[0].path, "/ping");
         assert_eq!(routes[0].method, "ANY");
+    }
+
+    #[test]
+    fn validate_rejects_zero_concurrency() {
+        // concurrency = 0 spawns no processes and a 0-permit semaphore, so every
+        // invocation 503s forever with no startup error. Must be rejected.
+        let toml_str = r#"
+[server]
+port = 4000
+
+[function.api]
+runtime = "bun"
+handler = "./api.ts"
+concurrency = 0
+"#;
+        let config: Config = toml::from_str(toml_str).expect("parses");
+        let err = config
+            .validate()
+            .expect_err("concurrency = 0 must be rejected");
+        assert!(
+            err.contains("concurrency"),
+            "error must mention concurrency; got: {err}"
+        );
     }
 
     #[test]
