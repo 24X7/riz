@@ -400,14 +400,43 @@ impl ProcessManager {
                 }
             },
             Ok(Err(e)) => {
-                warn!("ws handler error on {function_name}: {e}");
+                warn!("ws handler crash on {function_name}: {e} — restarting");
                 handle_process_failure(&pool, &mut handle, function_name).await;
+                // Re-arm the liveness watcher for the respawned PID — same as
+                // the HTTP invoke path and the malformed-response arm above.
+                // Without this the respawned WS process is left unwatched and
+                // a later out-of-band death would never be respawned.
+                spawn_liveness_watcher(
+                    handle.pid,
+                    arc.clone(),
+                    pool.clone(),
+                    function_name.to_string(),
+                );
                 Err(PoolError::Other(function_name.into(), e))
             }
             Err(_) => {
-                warn!("ws handler timeout on {function_name} after {timeout_ms}ms");
+                warn!("ws handler timeout on {function_name} after {timeout_ms}ms — killing and restarting");
                 kill_process_group(handle.pid);
                 let _ = handle._child.kill().await;
+                // Respawn in place and re-arm the watcher — mirrors the HTTP
+                // invoke timeout arm. Previously this left a dead handle in the
+                // pool (stale PID in pool_stats) until the 200ms liveness poll
+                // happened to notice.
+                match spawn_with_cold_start_record(&pool, function_name).await {
+                    Ok(new_handle) => {
+                        *handle = new_handle;
+                        spawn_liveness_watcher(
+                            handle.pid,
+                            arc.clone(),
+                            pool.clone(),
+                            function_name.to_string(),
+                        );
+                    }
+                    Err(spawn_err) => {
+                        error!("failed to respawn {function_name}: {spawn_err}");
+                        pool.healthy.store(false, Ordering::Relaxed);
+                    }
+                }
                 pool.restart_count.fetch_add(1, Ordering::Relaxed);
                 Err(PoolError::Timeout(function_name.into(), timeout_ms))
             }
