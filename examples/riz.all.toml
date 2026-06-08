@@ -32,6 +32,17 @@ max_size_mb = 32
 [datadog]
 enabled = false
 
+# Global CORS — applies to every user function. A per-function
+# [function.<name>.cors] block overrides this for that function's routes.
+# Demo: an OPTIONS preflight returns 204 with the Access-Control-* headers;
+# a real request echoes Access-Control-Allow-Origin for an allowed origin.
+[cors]
+allow_origins = ["https://app.example.com"]
+allow_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+allow_headers = ["content-type", "authorization"]
+allow_credentials = true
+max_age_secs = 600
+
 # ─────────────── Bun HTTP ───────────────
 
 [function.ping]
@@ -45,6 +56,10 @@ runtime = "bun"
 handler = "./examples/lambdas/accounts/index.handler"
 timeout_ms = 1000
 concurrency = 2
+# Response caching: GET /accounts/{id} is cached for 30s. The handler stamps
+# a `ts` into the body, so a cache HIT replays the same ts; POST /cache/invalidate
+# with prefix "GET:/accounts/" evicts it and the next GET stamps a fresh ts.
+cache_ttl_secs = 30
 [[function.accounts.routes]]
 path = "/accounts/{id}"
 method = "GET"
@@ -75,6 +90,11 @@ runtime = "bun"
 handler = "./examples/lambdas/echo-bun/index.handler"
 timeout_ms = 5000
 concurrency = 4
+# Stage variables — surfaced on the event as `stageVariables`, mirroring AWS
+# API Gateway per-stage config. The echo handler reflects them in its response.
+[function.echo-bun.stage_variables]
+region = "us-east-1"
+tier = "demo"
 [[function.echo-bun.routes]]
 path = "/echo-bun"
 method = "ANY"
@@ -97,6 +117,16 @@ runtime = "python"
 handler = "./examples/lambdas/echo-python/main.lambda_handler"
 timeout_ms = 5000
 concurrency = 2
+# On-box safety caps applied to this handler's child process:
+#   cpu_time_secs → RLIMIT_CPU (SIGXCPU then SIGKILL on runaway loops)
+#   allowed_paths → Linux Landlock filesystem allowlist (no-op off Linux)
+#   memory_mb     → RLIMIT_AS  (mirrors AWS Lambda MemorySize) — available but
+#                   left off here: Bun/Python JITs reserve large virtual address
+#                   space, so a low RLIMIT_AS is platform-sensitive. Opt in per host.
+# (An always-on profile — RLIMIT_CORE=0, fd/file-size caps, PDEATHSIG,
+#  NO_NEW_PRIVS — applies to every handler regardless of these opt-ins.)
+cpu_time_secs = 10
+allowed_paths = ["./examples/lambdas/echo-python", "/tmp"]
 [[function.echo-python.routes]]
 path = "/echo-python"
 method = "ANY"
