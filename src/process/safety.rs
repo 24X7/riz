@@ -5,11 +5,12 @@
 //! must be async-signal-safe (no allocator, no mutex, no Rust-level
 //! synchronization beyond what libc provides). Plain syscalls only.
 //!
-//! Current scope: a single always-on protection, RLIMIT_CORE = 0,
-//! which prevents lambda crashes from generating multi-gigabyte core
-//! dumps that can fill the host disk. Future Wave-10 increments will
-//! add additional primitives one at a time, each with its own commit
-//! and acceptance gate.
+//! The always-on profile caps a child's blast radius before it can harm
+//! the host: RLIMIT_CORE = 0 (no multi-gigabyte core dumps on crash),
+//! RLIMIT_NOFILE = 4096 (fd-leak ceiling), RLIMIT_FSIZE = 100 MiB
+//! (single-file write cap), and on Linux RLIMIT_NPROC = 256 plus
+//! PR_SET_PDEATHSIG(SIGKILL) and PR_SET_NO_NEW_PRIVS. Opt-in per-function
+//! caps (memory_mb, cpu_time_secs, allowed_paths) layer on top elsewhere.
 
 /// Apply the always-on safety profile to the current process. Called
 /// from the `pre_exec` closure that `Command` runs in the child after

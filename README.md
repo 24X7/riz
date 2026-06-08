@@ -1,6 +1,6 @@
 # Riz
 
-> **Self-hosted AWS Lambda runtime.** HTTP API Gateway v2 + WebSocket APIs compatible. Single Rust binary. Bun, Python, and Rust handlers. No Docker, no AWS bill.
+> **Self-hosted AWS Lambda runtime.** HTTP API Gateway v2 + WebSocket APIs compatible. Single Rust binary. Bun, Node.js, Python, and Rust handlers. No Docker, no AWS bill.
 
 [Landing page](https://riz.dev) · [Releases](https://github.com/crizzuto/riz/releases) · MIT licensed
 
@@ -33,8 +33,8 @@ riz run
 #   {"message":"hello, alice","method":"GET", ...}
 ```
 
-Other templates (3 languages × 2 scenarios):
-`typescript-http` · `python-http` · `rust-http` ·
+Other templates:
+`typescript-http` · `python-http` · `rust-http` · `nodejs-http` ·
 `typescript-websocket` · `python-websocket` · `rust-websocket`.
 
 Edit `index.ts`, save, the next request hits the new code — no
@@ -103,7 +103,7 @@ riz init --list        # → 6 templates (3 langs × HTTP+WebSocket)
 riz init typescript-http my-app
 cd my-app
 riz doctor             # confirms bun is on PATH + port 3000 is free
-riz run                # boots; opens the live TUI by default
+riz run                # boots headless (JSON logs); add --dev for the live TUI
 
 # In a second terminal:
 curl 'http://localhost:3000/hello?name=alice'
@@ -145,7 +145,7 @@ riz init --list                          # enumerate all 6 templates
 
 ### 3 · Run the bundled example fleet (cloned repo, no init needed)
 
-The repo ships `examples/riz.dev.toml` with 6 working functions across 3 runtimes:
+The repo ships `examples/riz.dev.toml` with 6 working functions (Bun + Python):
 
 ```bash
 # From the riz repo root:
@@ -196,7 +196,7 @@ riz mcp inspect --url https://api.example.com/_riz/mcp --bearer $RIZ_AUTH_BEARER
 
 ```bash
 # Hard rule for this repo: always cargo nextest, never cargo test.
-cargo nextest run                # full suite (~60s, 705+ tests)
+cargo nextest run                # full suite (~60s, 725 tests)
 cargo nextest run --test cli_init        # init-only tests
 cargo nextest run --test cli_doctor      # doctor-only tests
 cargo nextest run --test cli_mcp_inspect # mcp-inspect tests
@@ -225,9 +225,9 @@ Last measured (M-series, localhost): 91k req/s, p50 152 µs, **p99 845 µs**. Me
 ## Features (v0.1)
 
 **Shipping today:**
-- AWS HTTP API Gateway v2 — full request/response shape, all 7 verbs (cross-runtime parity-tested: TS/JS via Bun, Python, Rust)
+- AWS HTTP API Gateway v2 — full request/response shape, all 7 verbs (cross-runtime parity-tested: TS via Bun, JS via Node.js, Python, Rust)
 - AWS WebSocket APIs — `$connect` / `$default` / `$disconnect` + `@connections` management API at `/_riz/connections/{id}` (GET/POST/DELETE) and `/_riz/connections` (LIST). Handlers in **Bun, Python, and Rust** (all three end-to-end tested).
-- Bun, Python, and Rust runtime adapters
+- Bun, Node.js, Python, and Rust runtime adapters
 - Lambda context — `getRemainingTimeInMillis`, `functionName`, `invokedFunctionArn`, `awsRequestId`
 - Lambda authorizers — REQUEST (verified end-to-end with Bun) + JWT (with JWKS URL, TTL cache)
 - CORS auto-preflight — `[cors]` config block, OPTIONS → 204, echoed `Access-Control-Allow-Origin` on non-preflight, attacker-origin rejection
@@ -243,10 +243,9 @@ Last measured (M-series, localhost): 91k req/s, p50 152 µs, **p99 845 µs**. Me
 
 ## Roadmap (v0.2 and beyond)
 
-**Capability-sandboxed WASM (WASI)** — the differentiator no Lambda emulator ships: WebAssembly handlers wrapped in a host process that grants filesystem, network, and clock capabilities explicitly via `riz.toml`. Same line-delimited JSON protocol as the Bun/Python/Rust adapters; the WASM runtime (wasmtime/wasmer) enforces the capability boundary. Sub-millisecond cold start, one `.wasm` binary across Linux/macOS/edge. Targets the multi-tenant SaaS + untrusted-MCP-tools use cases.
+**Capability-sandboxed WASM (WASI)** — the differentiator no Lambda emulator ships: WebAssembly handlers wrapped in a host process that grants filesystem, network, and clock capabilities explicitly via `riz.toml`. Same line-delimited JSON protocol as the Bun/Node/Python/Rust adapters; the WASM runtime (wasmtime/wasmer) enforces the capability boundary. Sub-millisecond cold start, one `.wasm` binary across Linux/macOS/edge. Targets the multi-tenant SaaS + untrusted-MCP-tools use cases.
 
 **Additional runtimes**
-- Node.js native runtime — for shops that won't ship Bun in prod
 - Go support via the existing static-binary protocol (thin `riz-go-runtime` module + templates + examples; the runtime kernel is the same one Rust uses)
 - Java / JVM runtime adapter
 
@@ -310,8 +309,8 @@ Or scaffold a fresh project from any of the 6 built-in templates with `riz init 
 ## Reliability
 
 - **All 20 production-readiness bug-tracker entries closed.** See `docs/production-bugs.md` — every entry carries a `✅ RESOLVED` marker with the code lines that ship the fix and the regression-gate test name.
-- **680+ tests, drift-prevented landing page.** `cargo nextest run` runs the full suite. `tests/landing_page_contract.rs` enforces every claim on this README and the landing page against a real proof test — removing a feature without removing its claim fails CI.
-- **Cross-runtime parity-tested.** Each shipped runtime (Bun, Python, Rust) is exercised end-to-end through the same matrix of HTTP capability tests (status codes, verbs, path params, query string, body, headers, cookies, stage variables, binary body, error pass-through, response headers, response cookies). WebSocket lifecycle + `@connections` is also end-to-end tested per runtime.
+- **725 tests.** `cargo nextest run` runs the full suite. `tests/landing_page_contract.rs` checks the landing-page config snippet parses + validates against the real config code.
+- **Cross-runtime parity-tested.** Each shipped HTTP runtime (Bun, Node.js, Python, Rust) is exercised end-to-end through the same matrix of HTTP capability tests (status codes, verbs, path params, query string, body, headers, cookies, stage variables, binary body, error pass-through, response headers, response cookies). WebSocket lifecycle + `@connections` is end-to-end tested in Bun, Python, and Rust.
 
 ## Production
 

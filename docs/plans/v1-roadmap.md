@@ -1,7 +1,7 @@
 # Riz v1 Roadmap — Ranked, Shovel-Ready (Revised)
 
 **Status:** plan of record · written 2026-06-08 · supersedes the AWS-event-sources draft
-**Goal:** Take v0.1 (Lambda runtime + MCP server) and ship v1 as the self-hosted, agent-native Lambda substrate. 14 items, each mapped to a real industry pattern or formal spec. Compound subsystems (embeddings, eval scoring, OAuth, federation, stateful memory) push to v2.
+**Goal:** Take v0.1 (Lambda runtime + MCP server) and ship v1 as the self-hosted, agent-native Lambda substrate. 13 items, each mapped to a real industry pattern or formal spec. Compound subsystems (embeddings, eval scoring, OAuth, federation, stateful memory) push to v2.
 
 ---
 
@@ -15,7 +15,7 @@ Riz v0.1 is the Lambda runtime your agent can call. Riz v1 is the runtime your a
 
 ---
 
-## In v1 (14 items)
+## In v1 (13 items — #14 deferred to v2; #5 shipped)
 
 | # | Item | Category | Effort |
 |---|---|---|---|
@@ -23,7 +23,7 @@ Riz v0.1 is the Lambda runtime your agent can call. Riz v1 is the runtime your a
 | 2 | WASM standalone runtime (`runtime = "wasm"`) | Sandboxing | M |
 | 3 | WASM pre-invoke guards (`guard_in`) | Sandboxing — middleware | S after #2 |
 | 4 | WASM post-invoke guards (`guard_out`) | Sandboxing — middleware | S after #2 |
-| 5 | Node.js native runtime | Runtime breadth | S |
+| 5 | Node.js native runtime ✅ **SHIPPED** | Runtime breadth | S |
 | 6 | Go native runtime | Runtime breadth | S–M |
 | 7 | OpenTelemetry exporter (infra spans) | Observability — distributed tracing | M |
 | 8 | LLM gateway — provider routing | AI Gateway | M |
@@ -32,12 +32,12 @@ Riz v0.1 is the Lambda runtime your agent can call. Riz v1 is the runtime your a
 | 11 | MCP Streamable HTTP — SSE streaming | MCP spec compliance | S |
 | 12 | MCP progress notifications during tool call | MCP spec compliance | S after #11 |
 | 13 | Per-route MCP tool schemas | MCP polish | S |
-| 14 | Auto-derived MCP schemas from handler code | MCP polish — quality | L (TS → Py → Rs) |
 
 ## Out of v1 (deferred or out of scope)
 
 | Item | Why deferred / dropped |
 |---|---|
+| #14 Auto-derived MCP schemas from handler code | Violates the atomic-shipment rule — needs 3 independent language parsers (TS oxc/swc, Python `ast`, Rust proc-macro). #13's per-route schemas capture ~80% of the tool-calling-accuracy win at S effort. v2. |
 | AWS event sources (SQS / SNS / S3 / EventBridge) | OUT OF SCOPE — durable directive: "AWS HTTP/WS Lambdas only." |
 | Record (raw capture, dataset export) | Pure recording without replay/eval is just a log file. Captured-envelope persistence folds into #1; replay + dataset export wait for v2 when scoring + dispatcher reuse ship. |
 | Replay CLI (`riz replay`) | Needs capture + a dispatcher entry point for synthetic invocations + a diff renderer. v2. |
@@ -177,7 +177,14 @@ Each entry: **Industry context** · **Why we care** · **Why you care** · **Acc
 
 ---
 
-### 5. Node.js native runtime
+### 5. Node.js native runtime — ✅ SHIPPED (2026-06-08)
+
+**Shipped.** `runtime = "node"` works via `src/process/node.rs` +
+`assets/node-adapter.mjs` (ESM, `pathToFileURL` dynamic import). `nodejs-http`
+template + `riz init` support, `doctor` check for `node`, `echo-node` example
+(+ README), wired into `riz.all.toml` / `smoke-all.sh`. Full cross-runtime
+parity matrix vs Bun: echo, errors, response, verbs, context, request_shape,
+binary (`tests/runtime_parity_*.rs`, all green).
 
 **Industry context.** Node is the #1 production Lambda runtime by share (AWS public stats: ~50%+ of Lambdas). Bun is fast but enterprise won't ship it for compliance (no LTS, no FedRAMP, single-vendor). Riz today supports Bun for TS only — we're missing the actual production runtime.
 
@@ -271,7 +278,7 @@ The adapter pattern is the same as our Python adapter — line-delimited JSON ov
 - One e2e test per provider against a mock
 
 **Touches.** `src/gateway/{mod,anthropic,openai,ollama}.rs` (new), per-runtime SDK additions (`crates/riz-rust-runtime`, Python adapter, Bun adapter, Node adapter), `tests/gateway_*.rs`
-**Depends on.** Nothing in this list — but #5/#6/#2 broaden the runtimes that benefit.
+**Depends on.** Nothing in this list — but #6/#2 broaden the runtimes that benefit (#5 Node shipped).
 **Effort.** M.
 
 ---
@@ -408,7 +415,12 @@ When a riz function calls the gateway with `invokeModelStream`, each token turns
 
 ---
 
-### 14. Auto-derived MCP schemas from handler code
+### 14. Auto-derived MCP schemas from handler code — ⏬ DEFERRED TO v2
+
+**Why deferred (2026-06-08):** the only v1 item that breaks the "atomic shipment"
+rule — it needs three independent language parsers, and even the TS-first slice
+is L effort. #13 (per-route schemas, S) delivers most of the tool-calling-accuracy
+win first. Build #13 in v1; revisit auto-derivation in v2.
 
 **Industry context.** "Schema-as-types" pattern. tRPC, Zod, Effect-TS, Pydantic, attrs — all extract type info to produce runtime schemas. Anthropic + OpenAI both publish guidance: precise tool input schemas materially improve LLM tool-calling accuracy.
 
@@ -458,12 +470,27 @@ v1 ships here. v2 begins with replay / eval / semantic cache / OAuth / federatio
 
 ---
 
-## What I want from the next loop
+## Status & build order (live)
 
-After compact, the first turn should:
+**Shipped:** #5 Node.js runtime (2026-06-08) — full cross-runtime parity matrix vs Bun.
 
-1. **Confirm the cut.** Anything I left in v1 that should be v2? Anything I deferred that should ship now?
-2. **Confirm the phase order.** Is "Observability + breadth first" right, or should WASM lead because it's the more differentiated story?
-3. **Pick the lead item.** Default: **#1 Event reporting / observability emission**, since it has zero dependencies, lays foundations for #7 (OTel) and v2 replay, and aligns with the "events = observability" reading you corrected me on.
+**Cut refined (2026-06-08):** #14 (auto-derived MCP schemas, L) deferred to v2 —
+it's the only item that breaks the atomic-shipment rule; #13 captures most of the
+value at S effort. v1 is now 13 items.
 
-Once a phase is signed off, I write the implementation plan for the lead item and we iterate in the loop pattern.
+**Decided next build order** (re-ranked for production-readiness + mass appeal +
+single-binary; the LLM gateway is pulled earlier than the original Phase 3 because
+the OpenAI-compatible endpoint is the single biggest adoption multiplier):
+
+1. **Codebase hardening first** — fix the WS `invoke_generic` liveness/respawn
+   asymmetry (`src/process/mod.rs`), parse WS `$connect` query params
+   (`src/ws/upgrade.rs`), reject `concurrency = 0` in `validate()`. Surgical,
+   high-ROW, all TDD. (Surfaced by the codebase-health assessment.)
+2. **#8 → #10** LLM gateway → OpenAI-compatible endpoint — biggest adoption multiplier.
+3. **#1** Event reporting (zero deps, production table-stakes; foundation for #7 + v2 replay).
+4. **#2 → #3 → #4** WASM runtime → guards — the category-defining differentiator.
+5. **#11 → #12** MCP Streamable HTTP / SSE → progress notifications (cheap spec wins).
+6. **#13** Per-route MCP tool schemas (~30% tool-calling accuracy lift, S effort).
+
+Each loop iteration: show the plan + what's next, build the lead item end-to-end
+with tests, keep slop out, and re-rank as reality changes.

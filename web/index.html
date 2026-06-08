@@ -4,7 +4,7 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Riz — Self-hosted Lambda runtime</title>
-  <meta name="description" content="Self-hosted AWS Lambda runtime. Every function becomes a current-spec MCP tool (2025-11-25). Bun · Python · Rust. HTTP API Gateway v2 + WebSocket. Single Rust binary, predictable cost."/>
+  <meta name="description" content="Self-hosted AWS Lambda runtime. Every function becomes a current-spec MCP tool (2025-11-25). Bun · Node.js · Python · Rust. HTTP API Gateway v2 + WebSocket. Single Rust binary, predictable cost."/>
   <meta property="og:title" content="Riz — Self-hosted Lambda runtime with built-in MCP"/>
   <meta property="og:description" content="Run AWS HTTP API v2 + WebSocket Lambdas on a single Rust binary — and every function becomes a current-spec MCP tool for Claude Code, Cursor, and any MCP client."/>
   <meta property="og:url" content="https://riz.dev"/>
@@ -22,7 +22,7 @@
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": "Riz",
-    "description": "Self-hosted AWS Lambda runtime. HTTP API Gateway v2 compatible. Single Rust binary. Bun, Python, and Rust runtimes. Process isolation. Terminal dashboard.",
+    "description": "Self-hosted AWS Lambda runtime. HTTP API Gateway v2 compatible. Single Rust binary. Bun, Node.js, Python, and Rust runtimes. Process isolation. Terminal dashboard.",
     "url": "https://riz.dev",
     "applicationCategory": "DeveloperApplication",
     "operatingSystem": "Linux, macOS",
@@ -1031,7 +1031,7 @@
     <h1>Lambda.<br/>Built for <em>agents.</em></h1>
     <p class="sub">
       <strong>Drop your AWS Lambda handlers in and every function becomes a typed MCP tool the moment <code style="font-family:var(--mono);font-size:.82em;color:var(--amber)">riz run</code> boots.</strong>
-      Bun · Python · Rust. Real HTTP API v2 + WebSocket traffic on a single Rust binary you own.
+      Bun · Node.js · Python · Rust. Real HTTP API v2 + WebSocket traffic on a single Rust binary you own.
       The same surface keeps growing — <strong>WASM guards, an LLM gateway, recording &amp; replay</strong> — without changing the contract your handlers already follow.
     </p>
     <div class="install">
@@ -1040,7 +1040,7 @@
       <button class="cp" onclick="doCopy(this)">copy</button>
     </div>
     <div class="hmeta">
-      Bun · Python · Rust &nbsp;·&nbsp;
+      Bun · Node.js · Python · Rust &nbsp;·&nbsp;
       <span style="color:var(--amber)">91k req/s · p99 &lt; 1ms</span>
       <span style="color:var(--ink4)">(<a href="https://github.com/crizzuto/riz/blob/main/benches/README.md" target="_blank" style="color:var(--ink4)">how</a>)</span>
       &nbsp;·&nbsp;
@@ -1322,6 +1322,7 @@ $ claude mcp add riz-local \
     <div class="pills runtimes">
       <span class="pill-group-label">runtimes</span>
       <span class="pill">bun</span>
+      <span class="pill">node</span>
       <span class="pill">python</span>
       <span class="pill">rust</span>
     </div>
@@ -1380,6 +1381,7 @@ $ claude mcp add riz-local \
             <h4>Function Runtimes</h4>
             <ul>
               <li>Bun (TypeScript / JavaScript) handlers</li>
+              <li>Node.js runtime adapter</li>
               <li>Python runtime adapter</li>
               <li>Rust runtime adapter</li>
             </ul>
@@ -1434,7 +1436,7 @@ $ claude mcp add riz-local \
           <article class="bucket">
             <h4>Developer CLI</h4>
             <ul>
-              <li><code>riz init &lt;template&gt;</code> — scaffold a working project (6 templates: TS/Python/Rust × HTTP/WebSocket)</li>
+              <li><code>riz init &lt;template&gt;</code> — scaffold a working project (7 templates: TS/Python/Rust/Node × HTTP, TS/Python/Rust × WebSocket)</li>
               <li><code>riz run</code> — boot the runtime with riz.toml + handler-source hot reload</li>
               <li><code>riz validate</code> / <code>riz routes</code> — config check + route table</li>
               <li><code>riz deploy</code> — S3 hot-swap deploy with auto health-check rollback</li>
@@ -1519,7 +1521,6 @@ $ claude mcp add riz-local \
           <article class="bucket">
             <h4>Additional Runtimes</h4>
             <ul>
-              <li>Node.js native runtime — for shops that won't ship Bun in prod</li>
               <li>Go support via the existing static-binary protocol (thin <code>riz-go-runtime</code> module + templates)</li>
               <li>Java / JVM runtime adapter</li>
             </ul>
