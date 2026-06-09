@@ -5,6 +5,9 @@ members = [
     "examples/lambdas/echo-rust",
     "examples/lambdas/chat-rust",
 ]
+# echo-wasm is built for wasm32-wasip1, not the host target — keep it out of the
+# host workspace so `cargo build` / `cargo nextest` don't try to compile it.
+exclude = ["examples/lambdas/echo-wasm"]
 
 [package]
 name = "riz"
@@ -53,6 +56,10 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 subtle = "2"
 jsonwebtoken = "9"
 reqwest = { version = "0.12", features = ["json", "blocking"] }
+# Embedded WASM runtime (runtime = "wasm"). wasmtime enforces the WASI
+# capability sandbox; the .wasm runs in the `riz __wasm-host` subprocess.
+wasmtime = "45"
+wasmtime-wasi = "45"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4"

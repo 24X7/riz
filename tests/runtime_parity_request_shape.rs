@@ -54,6 +54,30 @@ fn echo_rust_available() -> bool {
             .unwrap_or(false)
 }
 
+/// The compiled wasm32-wasip1 echo module (built by
+/// `cargo build --release --target wasm32-wasip1` in examples/lambdas/echo-wasm).
+fn echo_wasm_module() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("examples/lambdas/echo-wasm/target/wasm32-wasip1/release/echo-wasm.wasm")
+}
+
+/// The built riz host binary — needed because WasmRuntime re-invokes
+/// `riz __wasm-host`. In-process tests set `RIZ_HOST_BIN` to point at it.
+fn riz_host_binary() -> PathBuf {
+    let target_dir = std::env::var("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target"));
+    target_dir.join("release").join("riz")
+}
+
+fn echo_wasm_available() -> bool {
+    let m = echo_wasm_module();
+    let host = riz_host_binary();
+    m.exists()
+        && std::fs::metadata(&m).map(|md| md.len() > 0).unwrap_or(false)
+        && host.exists()
+}
+
 // ---------- shared server boot ----------
 
 async fn boot_riz(config_toml: &str) -> SocketAddr {
@@ -298,4 +322,40 @@ method = "GET"
     );
     let addr = boot_riz(&config_toml).await;
     exercise_path_and_query(addr, "echo-rust").await;
+}
+
+#[tokio::test]
+async fn wasm_echo_passes_path_and_query() {
+    if !echo_wasm_available() {
+        eprintln!(
+            "SKIP: echo-wasm module or riz host binary not built. Run \
+             `cargo build --release` and \
+             `cargo build --release --target wasm32-wasip1` in examples/lambdas/echo-wasm first."
+        );
+        return;
+    }
+    // WasmRuntime re-invokes `riz __wasm-host`; in-process tests boot build_app
+    // under the nextest binary, so point it at the real riz host binary.
+    std::env::set_var("RIZ_HOST_BIN", riz_host_binary());
+    let handler = echo_wasm_module();
+    let config_toml = format!(
+        r#"
+[server]
+port = 0
+host = "127.0.0.1"
+
+[function.echo-wasm]
+runtime = "wasm"
+handler = "{handler}"
+timeout_ms = {TIMEOUT_MS}
+concurrency = 1
+
+[[function.echo-wasm.routes]]
+path = "/users/{{id}}"
+method = "GET"
+"#,
+        handler = handler.display()
+    );
+    let addr = boot_riz(&config_toml).await;
+    exercise_path_and_query(addr, "echo-wasm").await;
 }

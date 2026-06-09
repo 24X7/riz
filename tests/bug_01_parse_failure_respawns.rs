@@ -45,8 +45,13 @@ fn make_function_config(handler: PathBuf) -> FunctionConfig {
         runtime: RuntimeKind::Rust, // Rust runtime execs the handler binary directly
         protocol: Protocol::Http,
         handler,
-        timeout_ms: 2000,
-        integration_timeout_ms: 5000,
+        // Generous timeout: under heavy parallel test load the handler process
+        // can be CPU-starved. If it doesn't emit its (malformed) line before
+        // this deadline, invoke() returns Timeout instead of the InvalidResponse
+        // this test asserts on. 15s gives starvation plenty of headroom while
+        // still bounding a truly-hung process.
+        timeout_ms: 15000,
+        integration_timeout_ms: 15000,
         stage_variables: Default::default(),
         cache_ttl_secs: None,
         concurrency: 1,
@@ -89,7 +94,7 @@ async fn parse_failure_kills_and_respawns_the_process() {
 
     // Invoke — script emits "not json", parse fails inside `invoke`.
     let event = make_event("GET", "/ping");
-    let result = mgr.invoke("badfn", &event, 2000).await;
+    let result = mgr.invoke("badfn", &event, 15000).await;
 
     match result {
         Err(PoolError::InvalidResponse(name, _)) => {

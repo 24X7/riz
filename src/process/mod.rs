@@ -6,6 +6,7 @@ pub mod python;
 pub mod runtime;
 pub mod rust;
 pub mod safety;
+pub mod wasm;
 
 use crate::config::FunctionConfig;
 use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};

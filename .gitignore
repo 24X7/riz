@@ -1,4 +1,8 @@
 /target/
+# Nested Cargo target dirs — e.g. examples/lambdas/echo-wasm is an independent
+# workspace (built for wasm32-wasip1) so its artifacts don't land in /target/.
+# Never commit build output; the .wasm is built from source by the demo/tests.
+**/target/
 *.swp
 .DS_Store
 __pycache__/

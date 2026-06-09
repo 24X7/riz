@@ -3,6 +3,7 @@ use crate::process::bun::BunRuntime;
 use crate::process::node::NodeRuntime;
 use crate::process::python::PythonRuntime;
 use crate::process::rust::RustRuntime;
+use crate::process::wasm::WasmRuntime;
 use tokio::process::Command;
 
 pub trait LambdaRuntime: Send + Sync + 'static {
@@ -17,6 +18,7 @@ pub struct RuntimeRegistry {
     python: PythonRuntime,
     rust: RustRuntime,
     node: NodeRuntime,
+    wasm: WasmRuntime,
 }
 
 impl RuntimeRegistry {
@@ -26,6 +28,7 @@ impl RuntimeRegistry {
             python: PythonRuntime::new()?,
             rust: RustRuntime::new(),
             node: NodeRuntime::new()?,
+            wasm: WasmRuntime::new(),
         })
     }
 
@@ -35,6 +38,7 @@ impl RuntimeRegistry {
             RuntimeKind::Python => &self.python,
             RuntimeKind::Rust => &self.rust,
             RuntimeKind::Node => &self.node,
+            RuntimeKind::Wasm => &self.wasm,
         }
     }
 }
@@ -69,5 +73,12 @@ mod tests {
         let r = RuntimeRegistry::new().expect("registry");
         let rt = r.get(&RuntimeKind::Node);
         assert_eq!(rt.name(), "node");
+    }
+
+    #[test]
+    fn runtime_registry_registers_wasm() {
+        let r = RuntimeRegistry::new().expect("registry");
+        let rt = r.get(&RuntimeKind::Wasm);
+        assert_eq!(rt.name(), "wasm");
     }
 }

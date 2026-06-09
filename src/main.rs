@@ -604,6 +604,10 @@ async fn run_doctor(config_path: &str) -> anyhow::Result<()> {
             config::RuntimeKind::Rust => {
                 needs_rust_bin.push((name.clone(), fc.handler.clone()));
             }
+            // WASM needs no external toolchain at run time — wasmtime is
+            // embedded in the riz binary. The `.wasm` module presence is
+            // checked in the per-function handler-file pass below.
+            config::RuntimeKind::Wasm => {}
         }
     }
 
@@ -696,6 +700,20 @@ async fn run_doctor(config_path: &str) -> anyhow::Result<()> {
                     );
                     record(Finding::Warn);
                     println!("       Hint: cargo build --release");
+                }
+            }
+            config::RuntimeKind::Wasm => {
+                if fc.handler.exists() {
+                    report(Finding::Pass, &label, &handler_str);
+                    record(Finding::Pass);
+                } else {
+                    report(
+                        Finding::Warn,
+                        &label,
+                        &format!("wasm module not built: {handler_str}"),
+                    );
+                    record(Finding::Warn);
+                    println!("       Hint: cargo build --release --target wasm32-wasip1");
                 }
             }
         }
@@ -845,8 +863,25 @@ fn effective_log_level(dev: bool, explicit: Option<&str>) -> &str {
     explicit.unwrap_or(if dev { "debug" } else { "info" })
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
+    // Intercept the embedded wasmtime host subprocess BEFORE any tokio runtime
+    // spins up. `riz __wasm-host <module.wasm> [--dir PATH] [--env K=V]` loads a
+    // wasm32-wasip1 module under the WASI capability sandbox and runs its
+    // blocking stdin/stdout loop synchronously. This is what the WasmRuntime
+    // adapter spawns for each pool worker; keeping it out of the async runtime
+    // means each wasm worker stays lean (no multi-threaded scheduler per child).
+    let argv: Vec<String> = std::env::args().collect();
+    if argv.get(1).map(String::as_str) == Some("__wasm-host") {
+        return process::wasm::run_host(&argv[2..]);
+    }
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(async_main())
+}
+
+async fn async_main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     // `riz mcp inspect` doesn't load a config — it talks to a running

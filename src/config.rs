@@ -366,9 +366,9 @@ impl FunctionConfig {
     ///   and ignored (handler returned verbatim)
     pub fn module_and_export(&self) -> (PathBuf, String) {
         let s = self.handler.to_string_lossy().to_string();
-        if matches!(self.runtime, RuntimeKind::Rust) {
-            // Rust handlers are compiled binaries — the path IS the executable,
-            // no module/export split.
+        if matches!(self.runtime, RuntimeKind::Rust | RuntimeKind::Wasm) {
+            // Rust handlers are compiled binaries and WASM handlers are `.wasm`
+            // modules — the path IS the artifact, no module/export split.
             return (self.handler.clone(), String::new());
         }
         // Explicit Riz-native form: "file:exportName"
@@ -394,7 +394,7 @@ impl FunctionConfig {
                 RuntimeKind::Bun => "ts",
                 RuntimeKind::Python => "py",
                 RuntimeKind::Node => "mjs",
-                RuntimeKind::Rust => unreachable!("handled above"),
+                RuntimeKind::Rust | RuntimeKind::Wasm => unreachable!("handled above"),
             };
             return (
                 PathBuf::from(format!("{module}.{runtime_ext}")),
@@ -407,7 +407,7 @@ impl FunctionConfig {
             RuntimeKind::Bun => "ts",
             RuntimeKind::Python => "py",
             RuntimeKind::Node => "mjs",
-            RuntimeKind::Rust => unreachable!("handled above"),
+            RuntimeKind::Rust | RuntimeKind::Wasm => unreachable!("handled above"),
         };
         (
             PathBuf::from(format!("{s}.{runtime_ext}")),
@@ -443,6 +443,10 @@ pub enum RuntimeKind {
     Rust,
     Python,
     Node,
+    /// A `wasm32-wasip1` module run under wasmtime's WASI capability sandbox
+    /// (via the `riz __wasm-host` subprocess). The handler path points at a
+    /// `.wasm` file; like Rust, there is no module/export split.
+    Wasm,
 }
 
 impl RuntimeKind {
@@ -452,6 +456,7 @@ impl RuntimeKind {
             Self::Rust => "rust",
             Self::Python => "python",
             Self::Node => "node",
+            Self::Wasm => "wasm",
         }
     }
 }
