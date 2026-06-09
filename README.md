@@ -10,7 +10,7 @@
 > **Scope, up front:** riz runs **HTTP API Gateway v2 + WebSocket handlers**. It
 > is *not* a full AWS emulator — no SQS/SNS/S3/EventBridge, no IAM. By design.
 
-[Landing page](https://riz.dev) · [Releases](https://github.com/24X7/riz/releases) · MIT licensed
+[Landing page](https://riz.dev) · [Releases](https://github.com/24X7/riz/releases) · [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 
 ```bash
 cargo install --git https://github.com/24X7/riz   # from source (Rust toolchain)
@@ -293,4 +293,4 @@ system endpoint / CLI subcommand) and the before-PR checklist.
 
 ## License
 
-MIT.
+Licensed under the Apache License, Version 2.0 — see [`LICENSE`](./LICENSE).

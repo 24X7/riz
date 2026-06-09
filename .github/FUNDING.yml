@@ -1,0 +1,20 @@
+# GitHub funding configuration for riz (github.com/24X7/riz)
+# Renders the "Sponsor" button on the repo and surfaces these links in the UI.
+# Schema: https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
+#
+# ⚠️ REPLACE THE PLACEHOLDERS BELOW WITH YOUR REAL HANDLES/URLS BEFORE PUBLISHING.
+#   - github:        confirm the org/user is "24X7" and that GitHub Sponsors is enabled for it.
+#   - buy_me_a_coffee: confirm your real Buy Me a Coffee username.
+#   - custom:        the riz.dev #support anchor is correct; the crypto link points users to the
+#                    on-site click-to-copy wallet addresses (replace those addresses in the HTML).
+
+# GitHub Sponsors username/org (placeholder — confirm "24X7" and enable Sponsors on github.com)
+github: 24X7
+
+# Buy Me a Coffee username (placeholder — confirm real handle)
+buy_me_a_coffee: 24X7
+
+# Free-form links. Crypto wallets are not first-class in FUNDING.yml, so we point
+# users at the on-site #support section that has the click-to-copy ETH/BTC/SOL addresses.
+custom:
+  - https://riz.dev/#support

@@ -3,37 +3,37 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Riz — Self-hosted Lambda runtime</title>
-  <meta name="description" content="Self-hosted AWS Lambda runtime. Every function becomes a current-spec MCP tool (2025-11-25). Bun · Node.js · Python · Rust. HTTP API Gateway v2 + WebSocket. Single Rust binary, predictable cost."/>
-  <meta property="og:title" content="Riz — Self-hosted Lambda runtime with built-in MCP"/>
-  <meta property="og:description" content="Run AWS HTTP API v2 + WebSocket Lambdas on a single Rust binary — and every function becomes a current-spec MCP tool for Claude Code, Cursor, and any MCP client."/>
+  <title>riz — Lambda for the agent era. Your APIs become MCP tools.</title>
+  <meta name="description" content="Self-hosted AWS Lambda runtime in one Rust binary. Drop in your HTTP + WebSocket handlers — every function becomes a typed MCP tool an agent can call."/>
+  <meta property="og:title" content="riz — Lambda for the agent era. Your APIs become MCP tools."/>
+  <meta property="og:description" content="Run your Lambda handlers on your own box. The moment riz boots, every function is a tool any agent can call."/>
   <meta property="og:url" content="https://riz.dev"/>
   <meta property="og:type" content="website"/>
   <meta name="twitter:card" content="summary_large_image"/>
-  <meta name="twitter:title" content="Riz — Self-hosted Lambda runtime + MCP server"/>
-  <meta name="twitter:description" content="Your Lambdas. Your box. Agent-ready. Every function auto-registered as a current-spec MCP tool."/>
+  <meta name="twitter:title" content="riz — agent-native Lambda runtime · one Rust binary"/>
+  <meta name="twitter:description" content="Run your Lambda handlers on your own box. The moment riz boots, every function is a tool any agent can call."/>
   <link rel="canonical" href="https://riz.dev"/>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,700;0,9..144,900;1,9..144,300;1,9..144,700&family=Space+Mono:wght@400;700&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"/>
 
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
-    "name": "Riz",
-    "description": "Self-hosted AWS Lambda runtime. HTTP API Gateway v2 compatible. Single Rust binary. Bun, Node.js, Python, and Rust runtimes. Process isolation. Terminal dashboard.",
+    "name": "riz",
+    "description": "Self-hosted AWS Lambda runtime in one Rust binary. Drop in your HTTP API v2 + WebSocket handlers — every function becomes a typed MCP tool an agent can call. Five runtimes: Bun, Node.js, Python, Rust, and capability-sandboxed WASM. OpenAI-compatible LLM gateway built in.",
     "url": "https://riz.dev",
     "applicationCategory": "DeveloperApplication",
     "operatingSystem": "Linux, macOS",
-    "programmingLanguage": ["TypeScript","JavaScript"],
+    "programmingLanguage": ["TypeScript","JavaScript","Python","Rust","WebAssembly"],
     "author": {
       "@type": "Person",
       "name": "Chris Rizzuto",
       "email": "chris@riz.dev",
       "url": "https://linkedin.com/in/ship247"
     },
-    "license": "https://opensource.org/licenses/MIT",
+    "license": "https://www.apache.org/licenses/LICENSE-2.0",
     "codeRepository": "https://github.com/24X7/riz"
   }
   </script>
@@ -42,57 +42,90 @@
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
     html{scroll-behavior:smooth}
 
+    /* =================================================================
+       ELECTRIC OVERHAUL · theme tokens (drop-in :root).
+       Near-black navy base, cyan→violet primary gradient, magenta HOT/CTA.
+       Every legacy var name is preserved; --amber is now a legacy alias
+       for cyan, --serif → Space Grotesk display face. Zero markup churn.
+       ================================================================= */
     :root{
-      /* Dark navy + amber gold + ice blue. Single warm accent over layered
-         cool darks. Reads as serious enterprise infrastructure on the same
-         shelf as Linear/Vercel/Cursor, without the dark-mode-Vercel-clone
-         feel — the warm amber and serif h1/h2 keep it distinct. */
-      --bg:       #0E1220;   /* page — darkest navy */
-      --bg2:      #161C2E;   /* alternating section panel */
-      --bg3:      #1E2540;   /* raised card surface */
-      --border:   #1E2540;   /* card borders blend with raised surface */
-      --border2:  #2A3454;   /* hover/active border */
+      /* ── BASE SURFACES ── */
+      --bg:        #0A0E1A;   /* page — near-black navy */
+      --bg2:       #0E1426;   /* alternating section panel */
+      --bg3:       #141C33;   /* raised card surface */
+      --bg4:       #1B2542;   /* highest surface / chips */
 
-      /* Text scale on dark. Ice blue for body keeps the cool family without
-         the harshness of pure white; slate for muted; mid-slate for hints. */
-      --ink:      #FFFFFF;   /* headings, primary type */
-      --ink2:     #C8D8F0;   /* body — Ice Blue from palette */
-      --ink3:     #6E7D99;   /* muted — Slate from palette */
-      --ink4:     #4A5775;   /* hint */
+      --border:    #1B2542;   /* resting card border */
+      --border2:   #2C3A66;   /* hover/active border */
 
-      /* Single warm accent. Amber Gold replaces the previous 5-color
-         rainbow (cyan/violet/magenta/lime) — one accent means it actually
-         carries meaning when it appears. */
-      --amber:    #F0A500;
-      --amber-hi: #FFB833;   /* hover */
-      --amber-lo: #C98800;   /* pressed */
+      /* ── TEXT SCALE (AA-checked on --bg #0A0E1A) ── */
+      --ink:       #FFFFFF;   /* headings (21:1) */
+      --ink2:      #C5D2F0;   /* body — electric ice (~13:1) */
+      --ink3:      #8A9AC4;   /* muted (~7.4:1) */
+      --ink4:      #55668C;   /* hint */
 
-      --accent:   var(--amber);
+      /* ── ELECTRIC ACCENTS ── */
+      --cyan:      #00E5FF;   /* primary accent — pole A */
+      --cyan-hi:   #5CF0FF;   /* cyan hover / highlight */
+      --violet:    #7C3AED;   /* primary accent — pole B */
+      --violet-hi: #9D5CFF;   /* violet hover / highlight */
+      --magenta:   #FF3D81;   /* HOT — CTA, alerts */
+      --magenta-hi:#FF6AA0;
+      --magenta-lo:#D81E63;
+      --hot:       var(--magenta);   /* alias used by support section */
 
-      /* Chip backgrounds keyed off amber, on dark — translucent so they
-         pick up the panel underneath. */
-      --acc-bg:   rgba(240,165,0,0.10);
-      --acc-bd:   rgba(240,165,0,0.32);
-      --acc-t:    #0E1220;   /* dark text on solid amber pills */
+      /* LEGACY ALIAS: old markup paints with --amber → now cyan. */
+      --amber:     var(--cyan);
+      --amber-hi:  var(--cyan-hi);
+      --amber-lo:  #00B8CC;
+      --accent:    var(--cyan);
+      --accent2:   var(--violet);
+      --acc-t:     #04060D;   /* near-black text on solid cyan/magenta pills */
 
-      /* Subtle warmth gradient kept for the author badge — single hue
-         lighten so it reads as a metal finish, not a rainbow. */
-      --grad-1:   linear-gradient(135deg,var(--amber-hi) 0%,var(--amber) 60%,var(--amber-lo) 100%);
+      --acc-bg:    rgba(0,229,255,0.10);
+      --acc-bd:    rgba(0,229,255,0.34);
+      --hot-bg:    rgba(255,61,129,0.12);
+      --hot-bd:    rgba(255,61,129,0.40);
 
-      /* TUI window + code blocks stay dark — same family as the page now,
-         so they blend instead of contrasting. Darker than bg so they read
-         as inlaid screens. */
-      --t-bg:     #0A0F1C;
-      --t-bd:     #1E2540;
-      --t-acc:    var(--amber);
-      --t-acc2:   var(--amber-hi);
-      --ok:       #4F9758;     /* status-OK green — rarely used */
-      --err:      #E84A6F;     /* status-error red — rarely used */
-      --code:     #0A0F1C;
-      --nav:      rgba(14,18,32,0.88);
-      --serif:    'Fraunces',Georgia,serif;
-      --mono:     'Space Mono',monospace;
-      --sans:     'DM Sans',sans-serif;
+      /* ── GRADIENTS ── */
+      --grad-1:    linear-gradient(135deg,var(--cyan) 0%,var(--violet) 100%);
+      --grad-text: linear-gradient(100deg,#7CFBFF 0%,var(--cyan) 22%,#8B7CFF 70%,var(--violet) 100%);
+      --grad-hot:  linear-gradient(135deg,var(--magenta) 0%,var(--violet) 100%);
+      --grad-cyan: linear-gradient(135deg,var(--cyan-hi) 0%,var(--cyan) 60%,var(--amber-lo) 100%);
+      --grad-accent: var(--grad-1);   /* alias used by support section */
+
+      /* ── GLOW / NEON SHADOWS ── */
+      --glow-cyan-sm: 0 0 0 1px rgba(0,229,255,0.30), 0 4px 18px rgba(0,229,255,0.22);
+      --glow-cyan-md: 0 0 0 1px rgba(0,229,255,0.40), 0 10px 34px rgba(0,229,255,0.30);
+      --glow-cyan-lg: 0 0 0 1px rgba(0,229,255,0.55), 0 12px 44px rgba(0,229,255,0.42), 0 0 60px rgba(0,229,255,0.18);
+      --glow-violet:  0 0 0 1px rgba(124,58,237,0.45), 0 10px 36px rgba(124,58,237,0.34);
+      --glow-hot-sm:  0 0 0 1px rgba(255,61,129,0.40), 0 6px 22px rgba(255,61,129,0.32);
+      --glow-hot-lg:  0 0 0 1px rgba(255,61,129,0.55), 0 12px 40px rgba(255,61,129,0.45), 0 0 56px rgba(255,61,129,0.20);
+      --glow:         var(--glow-cyan-md);   /* alias used by support section */
+
+      /* Depth shadows for raised cards/windows. */
+      --shadow-card: 0 1px 0 rgba(255,255,255,0.05), 0 18px 50px rgba(0,0,0,0.60), 0 4px 16px rgba(0,0,0,0.40);
+      --shadow-code: 0 1px 0 rgba(255,255,255,0.04), 0 12px 36px rgba(0,0,0,0.50), 0 2px 8px rgba(0,0,0,0.34);
+
+      /* ── TERMINAL / CODE SURFACES ── */
+      --t-bg:      #070B16;
+      --t-bd:      #1B2542;
+      --t-acc:     var(--cyan);
+      --t-acc2:    var(--cyan-hi);
+      --code:      #070B16;
+
+      /* Status colors — electric. */
+      --ok:        #3DF5A0;   /* neon mint */
+      --err:       var(--magenta);
+      --warn:      #FFC857;
+
+      --nav:       rgba(10,14,26,0.80);
+
+      /* ── TYPE ── */
+      --display:   'Space Grotesk','DM Sans',system-ui,sans-serif;
+      --serif:     var(--display);   /* legacy alias → display face */
+      --sans:      'Inter','DM Sans',system-ui,sans-serif;
+      --mono:      'Space Mono',ui-monospace,monospace;
     }
 
     body{
@@ -1005,9 +1038,433 @@
       footer{flex-direction:column;gap:1rem;padding:2rem;text-align:center}
       .nav-r a:not(.nav-gh):not(:last-of-type){display:none}
     }
+
+    /* =================================================================
+       ELECTRIC OVERHAUL · components overlay.
+       Appended last so it wins on equal specificity / source order.
+       Reuses every existing class name — restyles in place.
+       ================================================================= */
+
+    /* ── 0 · BODY / FONT BASELINE ──
+       Body stays transparent so the fixed .aurora-bg (z-index:-2) shows
+       through; the page's solid --bg is provided by .aurora-bg itself. */
+    html{background:var(--bg);}
+    body{
+      background:transparent;
+      color:var(--ink2);
+      font-family:var(--sans);
+      -webkit-font-smoothing:antialiased;
+      text-rendering:optimizeLegibility;
+    }
+    body::before{opacity:0.35;}
+
+    /* ── 1 · ANIMATED HERO BACKGROUND (CSS-only aurora + grid) ── */
+    .aurora-bg{
+      position:fixed;inset:0;z-index:-2;pointer-events:none;
+      background:var(--bg);overflow:hidden;
+    }
+    .aurora-bg::before,
+    .aurora-bg::after{
+      content:'';position:absolute;border-radius:50%;
+      filter:blur(90px);opacity:0.55;mix-blend-mode:screen;
+    }
+    .aurora-bg::before{
+      width:60vw;height:60vw;top:-22vw;left:-12vw;
+      background:
+        radial-gradient(circle at 35% 35%,rgba(0,229,255,0.55) 0%,transparent 60%),
+        radial-gradient(circle at 70% 70%,rgba(124,58,237,0.50) 0%,transparent 62%);
+      animation:aurora-a 22s ease-in-out infinite alternate;
+    }
+    .aurora-bg::after{
+      width:55vw;height:55vw;bottom:-20vw;right:-10vw;
+      background:
+        radial-gradient(circle at 50% 50%,rgba(255,61,129,0.40) 0%,transparent 60%),
+        radial-gradient(circle at 30% 30%,rgba(124,58,237,0.45) 0%,transparent 62%);
+      animation:aurora-b 28s ease-in-out infinite alternate;
+    }
+    .aurora-grid{
+      position:fixed;inset:0;z-index:-1;pointer-events:none;
+      background-image:
+        linear-gradient(rgba(124,148,196,0.06) 1px,transparent 1px),
+        linear-gradient(90deg,rgba(124,148,196,0.06) 1px,transparent 1px);
+      background-size:46px 46px;
+      -webkit-mask-image:radial-gradient(ellipse 80% 60% at 50% 30%,#000 0%,transparent 75%);
+              mask-image:radial-gradient(ellipse 80% 60% at 50% 30%,#000 0%,transparent 75%);
+    }
+    @keyframes aurora-a{
+      0%  {transform:translate(0,0)        scale(1);}
+      50% {transform:translate(8vw,6vw)    scale(1.15);}
+      100%{transform:translate(-4vw,10vw)  scale(1.05);}
+    }
+    @keyframes aurora-b{
+      0%  {transform:translate(0,0)        scale(1.05);}
+      50% {transform:translate(-7vw,-5vw)  scale(0.9);}
+      100%{transform:translate(5vw,-9vw)   scale(1.1);}
+    }
+
+    /* hero-left top accent → glowing gradient rule */
+    .hero-l::before{
+      height:2px;
+      background:var(--grad-1);
+      box-shadow:0 0 18px rgba(0,229,255,0.55);
+    }
+    .hero-r{background:transparent;}
+    .hero-r::before{opacity:0.35;}
+    .hero-r::after{
+      width:620px;height:480px;
+      background:
+        radial-gradient(ellipse 58% 50% at 50% 45%,rgba(0,229,255,0.26) 0%,transparent 70%),
+        radial-gradient(ellipse 60% 55% at 60% 65%,rgba(124,58,237,0.22) 0%,transparent 72%);
+      filter:blur(50px);
+    }
+
+    /* ── 2 · GRADIENT-TEXT HEADLINES ── */
+    .grad-text,
+    h1 em,
+    h2 em,
+    .scene-ttl em{
+      font-style:normal;
+      font-weight:700;
+      background:var(--grad-text);
+      -webkit-background-clip:text;
+              background-clip:text;
+      -webkit-text-fill-color:transparent;
+              color:transparent;
+      filter:drop-shadow(0 0 18px rgba(0,229,255,0.25));
+    }
+    h1,h2{font-family:var(--display);letter-spacing:-0.035em;}
+    h1{font-weight:700;}
+    h2{font-weight:700;}
+
+    /* ── 3 · NAV WITH GLOW ── */
+    nav{
+      background:var(--nav);
+      -webkit-backdrop-filter:blur(22px) saturate(140%);
+              backdrop-filter:blur(22px) saturate(140%);
+      border-bottom:1px solid transparent;
+      border-image:linear-gradient(90deg,transparent,rgba(0,229,255,0.35),rgba(124,58,237,0.35),transparent) 1;
+    }
+    .nav-r a:hover{color:var(--cyan-hi);}
+    .nav-gh{
+      background:var(--grad-hot) !important;
+      color:#fff !important;
+      border-radius:6px;
+      box-shadow:var(--glow-hot-sm);
+      transition:box-shadow 0.18s,transform 0.18s !important;
+    }
+    .nav-gh:hover{
+      background:var(--grad-hot) !important;
+      transform:translateY(-1px);
+      box-shadow:var(--glow-hot-lg);
+    }
+
+    /* ── 4 · EYEBROW / BADGE PILLS ── */
+    .eyebrow,.lbl{
+      color:var(--cyan);
+      text-shadow:0 0 14px rgba(0,229,255,0.45);
+    }
+    .vtag,.pill{
+      color:var(--cyan-hi);
+      background:var(--acc-bg);
+      border:1px solid var(--acc-bd);
+      border-radius:6px;
+      box-shadow:inset 0 0 12px rgba(0,229,255,0.08);
+    }
+    .pill:hover{
+      background:rgba(0,229,255,0.16);
+      box-shadow:inset 0 0 12px rgba(0,229,255,0.10),0 0 16px rgba(0,229,255,0.22);
+      transform:translateY(-1px);
+    }
+
+    /* ── 5 · GLOWING PRIMARY BUTTON + INSTALL/COPY WIDGET ── */
+    .bp{
+      background:var(--grad-hot);
+      color:#fff;
+      border-radius:8px;
+      box-shadow:var(--glow-hot-sm);
+      transition:transform 0.18s,box-shadow 0.18s,filter 0.18s;
+    }
+    .bp:hover{
+      background:var(--grad-hot);
+      transform:translateY(-2px);
+      box-shadow:var(--glow-hot-lg);
+      filter:saturate(1.15) brightness(1.05);
+    }
+    .bs{
+      color:var(--cyan-hi);
+      border:1px solid var(--acc-bd);
+      border-radius:8px;
+      background:rgba(0,229,255,0.04);
+      transition:border-color 0.18s,color 0.18s,background 0.18s,box-shadow 0.18s,transform 0.18s;
+    }
+    .bs:hover{
+      color:var(--cyan-hi);
+      border-color:var(--cyan);
+      background:rgba(0,229,255,0.10);
+      box-shadow:var(--glow-cyan-sm);
+      transform:translateY(-1px);
+    }
+
+    .install{
+      border-radius:8px;overflow:hidden;
+      box-shadow:0 0 0 1px var(--border2),0 10px 30px rgba(0,0,0,0.45);
+    }
+    .install .pr{
+      background:var(--grad-1);
+      color:var(--acc-t);
+      border-radius:0;
+      box-shadow:inset 0 0 10px rgba(255,255,255,0.15);
+    }
+    .install .cm{
+      background:var(--bg3);
+      border-color:var(--border2);
+      color:var(--ink2);
+    }
+    .install .cp{
+      background:var(--bg3);
+      border-color:var(--border2);
+      color:var(--ink3);
+    }
+    .install .cp:hover{
+      background:var(--cyan);
+      color:var(--acc-t);
+      border-color:var(--cyan);
+      box-shadow:0 0 18px rgba(0,229,255,0.45);
+    }
+
+    .vcard p code,.bucket code{
+      color:var(--cyan-hi);
+      background:rgba(0,229,255,0.10);
+      border-radius:4px;
+    }
+
+    /* ── 6 · NEON CARDS ── */
+    .tui,.cc{
+      border:1px solid var(--t-bd);
+      box-shadow:var(--shadow-card);
+    }
+    .scene-body{
+      background:var(--t-bg);
+      border:1px solid var(--t-bd);
+      box-shadow:var(--shadow-card);
+    }
+    .vcard,.bucket{
+      background:var(--bg3);
+      border:1px solid var(--border);
+      border-radius:10px;
+      transition:transform 0.2s,border-color 0.2s,box-shadow 0.2s;
+    }
+    .vcard:hover,.bucket:hover{
+      transform:translateY(-3px);
+      border-color:rgba(0,229,255,0.45);
+      box-shadow:var(--glow-cyan-md),0 18px 44px rgba(0,0,0,0.55);
+    }
+    .vcard::before,
+    .status-col:nth-child(1) .bucket::before,
+    .status-col:nth-child(2) .bucket::before{
+      background:var(--grad-1);
+      height:2px;
+      box-shadow:0 0 14px rgba(0,229,255,0.5);
+    }
+
+    .sn{
+      color:var(--cyan);
+      text-shadow:0 0 14px rgba(0,229,255,0.4);
+    }
+    .si:hover{background:rgba(0,229,255,0.04);transform:translateY(-2px);}
+    .si::before{background:var(--grad-1);box-shadow:0 0 14px rgba(0,229,255,0.5);}
+
+    .status-col:nth-child(1) .bucket li::before{
+      background:var(--cyan);
+      box-shadow:0 0 0 3px rgba(0,229,255,0.18),0 0 10px rgba(0,229,255,0.55);
+    }
+    .status-col:nth-child(1) h3{
+      color:var(--cyan);
+      text-shadow:0 0 18px rgba(0,229,255,0.35);
+    }
+    .status-col:nth-child(1){border-top-color:var(--cyan);}
+
+    /* ── 7 · DIAGRAM HUBS / CHIPS ── */
+    .mcp-hub,.gw-hub,.pipe-step.handler{
+      background:var(--grad-1);
+      color:var(--acc-t);
+      box-shadow:var(--glow-cyan-md);
+    }
+    .chip,.pipe-step,.gw-node{
+      background:var(--bg4);
+      border:1px solid var(--border2);
+    }
+    .chip .rt,.gw-node.active,.pipe-step.guard{
+      color:var(--cyan-hi);
+      border-color:var(--cyan);
+    }
+    .flow-line{background:linear-gradient(to right,transparent,var(--cyan) 50%,transparent);opacity:0.7;}
+    .flow-lbl,.pipe-arr,.gw-arr{color:var(--cyan);}
+
+    .dots button.active{
+      background:var(--cyan);width:24px;border-radius:3px;
+      box-shadow:0 0 12px rgba(0,229,255,0.6);
+    }
+    .dots button:hover{background:var(--cyan-hi);}
+
+    /* ── 8 · SECTION DIVIDERS / WASHES ── */
+    .strip,.vision,.split,.status,.auth,.cta{
+      border-color:transparent;
+      border-image:linear-gradient(90deg,transparent,rgba(0,229,255,0.22),rgba(124,58,237,0.22),transparent) 1;
+    }
+    .divider{
+      height:1px;border:0;
+      background:linear-gradient(90deg,transparent,rgba(0,229,255,0.5),rgba(124,58,237,0.5),transparent);
+      box-shadow:0 0 18px rgba(0,229,255,0.25);
+    }
+    .vision::before{
+      background:radial-gradient(ellipse 50% 50% at 50% 50%,rgba(124,58,237,0.16) 0%,transparent 70%);
+    }
+    .cta::before{
+      background:radial-gradient(ellipse 55% 45% at 50% 50%,rgba(255,61,129,0.18) 0%,transparent 65%);
+    }
+    .badge{background:var(--grad-1);box-shadow:var(--glow-cyan-sm);}
+
+    /* ── 9 · MOTION BUDGET GUARD (aurora freeze) ── */
+    @media (prefers-reduced-motion: reduce){
+      *,*::before,*::after{
+        animation-duration:0.01ms !important;
+        animation-iteration-count:1 !important;
+        transition-duration:0.01ms !important;
+      }
+      .aurora-bg::before,.aurora-bg::after{animation:none !important;}
+    }
+
+    /* ── SUPPORT / BACK THE PROJECT SECTION (electric theme) ── */
+    .support{
+      padding:7rem 10vw;
+      border-bottom:1px solid var(--border);
+      position:relative;overflow:hidden;
+      background:transparent;
+    }
+    .support::before{
+      content:'';position:absolute;
+      top:-160px;left:8vw;
+      width:680px;height:480px;
+      background:radial-gradient(ellipse 55% 45% at 50% 50%,
+        rgba(0,229,255,0.14) 0%, rgba(124,58,237,0.12) 45%, transparent 70%);
+      pointer-events:none;filter:blur(30px);
+    }
+    .support-head{position:relative;max-width:760px;margin-bottom:3rem}
+    .support-lbl{
+      font-family:var(--mono);font-size:0.6rem;font-weight:700;
+      letter-spacing:0.18em;text-transform:uppercase;color:var(--cyan);
+      text-shadow:0 0 14px rgba(0,229,255,0.45);
+      display:block;margin-bottom:0.9rem;
+    }
+    .support h2{
+      font-size:clamp(2rem,3.4vw,3.25rem);
+      letter-spacing:-0.035em;line-height:1.1;color:var(--ink);margin:0;
+    }
+    .support-pitch{
+      margin-top:1.1rem;font-size:1.05rem;color:var(--ink2);line-height:1.65;
+    }
+    .support-foot{
+      position:relative;margin-top:1.6rem;
+      font-family:var(--mono);font-size:0.62rem;letter-spacing:0.06em;
+      text-transform:uppercase;color:var(--ink4);
+    }
+
+    .support-grid{
+      position:relative;display:grid;gap:1rem;
+      grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+      align-items:stretch;
+    }
+
+    .scard{
+      display:flex;flex-direction:column;gap:0.85rem;
+      padding:1.6rem 1.5rem;
+      background:var(--bg3);
+      border:1px solid var(--border);border-radius:10px;
+      text-decoration:none;color:var(--ink);
+      position:relative;overflow:hidden;
+      transition:transform 0.16s,border-color 0.16s,box-shadow 0.16s;
+    }
+    a.scard{cursor:pointer}
+    .scard::before{
+      content:'';position:absolute;top:0;left:0;right:0;height:2px;
+      background:var(--grad-1);
+      opacity:0.35;transition:opacity 0.16s;
+    }
+    a.scard:hover{
+      transform:translateY(-3px);
+      border-color:var(--cyan);
+      box-shadow:var(--glow-cyan-md);
+    }
+    a.scard:hover::before{opacity:1}
+
+    .scard-ico{
+      font-size:1.4rem;line-height:1;color:var(--cyan);
+      display:inline-flex;align-items:center;
+    }
+    .scard--gh .scard-ico{color:var(--magenta)}
+    .scard-body{display:flex;flex-direction:column;gap:0.4rem}
+    .scard-ttl{
+      font-family:var(--mono);font-size:0.86rem;font-weight:700;color:var(--ink);
+      display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;
+    }
+    .scard-chains{
+      font-size:0.58rem;letter-spacing:0.12em;color:var(--ink3);
+      border:1px solid var(--border);border-radius:999px;
+      padding:0.18rem 0.55rem;font-weight:700;
+    }
+    .scard-sub{font-size:0.82rem;color:var(--ink3);line-height:1.5}
+    .scard-go{
+      margin-top:auto;font-family:var(--mono);font-size:0.72rem;font-weight:700;
+      color:var(--cyan);
+    }
+    .scard--gh .scard-go{color:var(--magenta)}
+
+    .scard--gh:hover{
+      border-color:var(--magenta);
+      box-shadow:var(--glow-hot-sm);
+    }
+    .scard--gh::before{background:var(--grad-hot)}
+
+    .scard--crypto{cursor:default}
+    .cwallet{
+      display:flex;align-items:center;gap:0;
+      margin-top:0.55rem;
+      border:1px solid var(--border);border-radius:6px;overflow:hidden;
+      background:var(--bg);
+    }
+    .cw-tag{
+      font-family:var(--mono);font-size:0.58rem;font-weight:700;
+      letter-spacing:0.08em;color:var(--cyan);
+      padding:0.55rem 0.7rem;flex-shrink:0;
+      border-right:1px solid var(--border);
+    }
+    .cw-addr{
+      font-family:var(--mono);font-size:0.66rem;color:var(--ink2);
+      padding:0.55rem 0.7rem;flex:1;min-width:0;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    }
+    .cw-cp{
+      font-family:var(--mono);font-size:0.6rem;color:var(--ink3);
+      background:var(--bg3);border:none;border-left:1px solid var(--border);
+      padding:0.55rem 0.85rem;cursor:pointer;flex-shrink:0;
+      transition:background 0.15s,color 0.15s;
+    }
+    .cw-cp:hover{
+      background:var(--cyan);
+      color:var(--acc-t);
+    }
+
+    @media (max-width:720px){
+      .support{padding:5rem 2rem}
+    }
   </style>
 </head>
 <body>
+
+<!-- ANIMATED ELECTRIC BACKGROUND (behind everything via negative z-index) -->
+<div class="aurora-bg"></div>
+<div class="aurora-grid"></div>
 
 <!-- NAV -->
 <nav>
@@ -1018,6 +1475,7 @@
     <a href="#config">Config</a>
     <a href="/vs">vs.</a>
     <a href="#status">Status</a>
+    <a href="#support">Support</a>
     <a href="#author">About</a>
     <a href="https://github.com/24X7/riz" target="_blank">GitHub</a>
     <a href="https://github.com/24X7/riz" target="_blank" class="nav-gh">Star on GitHub ↗</a>
@@ -1027,12 +1485,11 @@
 <!-- HERO -->
 <section class="hero">
   <div class="hero-l">
-    <div class="eyebrow">// the runtime your agent codes against · mcp-native · v0.1 · spec 2025-11-25</div>
-    <h1>Lambda.<br/>Built for <em>agents.</em></h1>
+    <div class="eyebrow">// agent-native lambda runtime · mcp spec 2025-11-25 · single rust binary · v0.1</div>
+    <h1>Lambda for the<br/><em>agent era.</em></h1>
     <p class="sub">
-      <strong>Drop your AWS Lambda handlers in and every function becomes a typed MCP tool the moment <code style="font-family:var(--mono);font-size:.82em;color:var(--amber)">riz run</code> boots.</strong>
-      Bun · Node.js · Python · Rust. Real HTTP API v2 + WebSocket traffic on a single Rust binary you own.
-      The same surface keeps growing — <strong>WASM guards, an LLM gateway, recording &amp; replay</strong> — without changing the contract your handlers already follow.
+      <strong>Drop in your AWS Lambda handlers — and the moment <code style="font-family:var(--mono);font-size:.82em;color:var(--cyan)">riz run</code> boots, every function is a typed MCP tool an agent can call.</strong>
+      One ~10&nbsp;MB Rust binary you own runs real AWS HTTP API v2 + WebSocket traffic across five runtimes — Bun, Node.js, Python, Rust, and capability-sandboxed WASM — with an OpenAI-compatible LLM gateway on the same port.
     </p>
     <div class="install">
       <span class="pr">$</span>
@@ -1040,8 +1497,8 @@
       <button class="cp" onclick="doCopy(this)">copy</button>
     </div>
     <div class="hmeta">
-      Bun · Node.js · Python · Rust &nbsp;·&nbsp;
-      <span style="color:var(--amber)">91k req/s · p99 &lt; 1ms</span>
+      Bun · Node.js · Python · Rust · WASM &nbsp;·&nbsp;
+      <span style="color:var(--cyan)">91k req/s · p99 &lt; 1ms</span>
       <span style="color:var(--ink4)">(<a href="https://github.com/24X7/riz/blob/main/benches/README.md" target="_blank" style="color:var(--ink4)">how</a>)</span>
       &nbsp;·&nbsp;
       <a href="https://github.com/24X7/riz/releases" target="_blank">Download binary ↗</a>
@@ -1077,7 +1534,7 @@
             <div class="mcp-hub-sub">spec 2025-11-25 · streamable HTTP</div>
             <div class="mcp-hub-meta">
               <span><b>14</b> tools</span>
-              <span><b>3</b> runtimes</span>
+              <span><b>5</b> runtimes</span>
               <span><b>0</b> SDK lines</span>
             </div>
           </div>
@@ -1100,7 +1557,7 @@
 
       <!-- Scene 2 — WASM guard pipeline: real verdicts visible -->
       <div class="scene" data-scene="wasm">
-        <div class="scene-hd">WASM guards · safety layer <span class="tag">v0.2</span></div>
+        <div class="scene-hd">WASM sandbox · safety layer <span class="tag live">live · v0.1</span></div>
         <div class="scene-ttl">Untrusted code, <em>contained</em>.</div>
         <div class="scene-body">
           <div class="pipe">
@@ -1130,7 +1587,7 @@
 
       <!-- Scene 3 — LLM gateway: real budgets + active provider -->
       <div class="scene" data-scene="gateway">
-        <div class="scene-hd">LLM gateway · AI control plane <span class="tag">v0.2</span></div>
+        <div class="scene-hd">LLM gateway · AI control plane <span class="tag live">live · v0.1</span></div>
         <div class="scene-ttl">One config. <em>Every model.</em></div>
         <div class="scene-body">
           <div class="tier-lbl">your handler</div>
@@ -1239,7 +1696,7 @@
   </div>
   <div class="si">
     <span class="sn">03</span>
-    <div><h3>Untrusted code, contained</h3><p>Every spawned handler gets the on-box safety profile for free — <code style="font-family:var(--mono);font-size:.78em">RLIMIT_CORE=0</code>, no fork-bombs, no privilege escalation. Opt-in per-function memory + CPU caps and a Linux Landlock filesystem allowlist. WASM capability sandbox lands in v0.2.</p></div>
+    <div><h3>Untrusted code, contained</h3><p>Every spawned handler gets the on-box safety profile for free — <code style="font-family:var(--mono);font-size:.78em">RLIMIT_CORE=0</code>, no fork-bombs, no privilege escalation. Opt-in per-function memory + CPU caps and a Linux Landlock filesystem allowlist. Plus a capability-sandboxed WASM runtime — deny-by-default fs/net for code you didn't write.</p></div>
   </div>
   <div class="si">
     <span class="sn">04</span>
@@ -1251,20 +1708,20 @@
 <section class="vision" id="vision">
   <div class="vision-inner">
     <span class="lbl">// where riz is going</span>
-    <h2>From Lambda runtime <em>to AI substrate</em>.</h2>
+    <h2>From Lambda runtime <em>to agent substrate.</em></h2>
     <p class="vision-sub">
-      v0.1 ships the Lambda contract you already know, the MCP server agents already speak, and the safety primitives on-box compute makes cheap. Next we close the loop: WASM-sandboxed guards around every call, a single LLM gateway in front of every provider, and recording so agents can replay any request against any change.
+      riz started as the Lambda contract you already know — exact HTTP API v2 + WebSocket payloads, real Lambda context, your handlers unchanged. But the moment those functions are running, they're also tools: an MCP server agents speak natively, an OpenAI-compatible gateway routing every model call, and a WASI sandbox built to run code you didn't write. The runtime and the agent substrate are the same binary — that's the point.
     </p>
     <div class="vrow">
       <article class="vcard">
-        <span class="vtag">v0.2 · WASM</span>
-        <h3>Capability-sandboxed guards</h3>
-        <p>Pre- and post-invoke WebAssembly modules wrapped in WASI capabilities. Validate inputs, detect prompt injection, redact PII on the way out — one guard protects Bun, Python, and Rust handlers alike. Or run a guardless <code>runtime = "wasm"</code> handler for sub-ms cold starts on code you didn't write.</p>
+        <span class="vtag">live · WASM</span>
+        <h3>Capability-sandboxed runtime</h3>
+        <p>Run a <code>runtime = "wasm"</code> handler under wasmtime with deny-by-default filesystem and network — capabilities granted explicitly in <code>riz.toml</code>. Sub-ms cold starts on code you didn't write, parity-tested alongside Bun, Node.js, Python, and Rust.</p>
       </article>
       <article class="vcard">
-        <span class="vtag">v0.2 · gateway</span>
+        <span class="vtag">live · gateway</span>
         <h3>One LLM gateway, every model</h3>
-        <p>Handlers call <code>ctx.invokeModel(name, prompt)</code>. Riz routes to Anthropic, OpenAI, Bedrock, or local Ollama with budget caps, semantic cache, fallback chain, and per-function cost telemetry in <code>/_riz/health</code>. An OpenAI-compatible endpoint comes in the box so existing clients just work.</p>
+        <p>Handlers call <code>ctx.invokeModel(name, prompt)</code> — riz routes across OpenAI, Anthropic, and local Ollama by model prefix, with budget caps, fallback, SSE streaming, embeddings, and per-provider cost telemetry. An OpenAI-compatible endpoint at <code>/_riz/v1/*</code> means existing clients just work.</p>
       </article>
       <article class="vcard">
         <span class="vtag">v0.2 · replay</span>
@@ -1279,9 +1736,9 @@
 <section class="split" id="mcp">
   <div class="sp-t">
     <span class="lbl">// MCP server, built in · spec 2025-11-25</span>
-    <h2>Your APIs.<br/><em>An LLM's hands.</em></h2>
-    <p>Riz ships a current-spec <strong>MCP server</strong> at <code style="font-family:var(--mono);font-size:.82em;color:var(--accent)">/_riz/mcp</code>. Every function in your <code style="font-family:var(--mono);font-size:.82em;color:var(--accent)">riz.toml</code> auto-registers as a tool with a typed output schema, ready for Claude Code, Cursor, or any 2025-11-25 client.</p>
-    <p>Streamable HTTP transport, structured tool output, full lifecycle negotiation back to the 2024-11-05 baseline. No SDK, no wrappers — your existing Lambda handler IS the tool.</p>
+    <h2>Your APIs.<br/><em>An agent's hands.</em></h2>
+    <p>riz ships a spec-compliant <strong>MCP server</strong> at <code style="font-family:var(--mono);font-size:.82em;color:var(--accent)">/_riz/mcp</code> — always on, no extra config. Every function in your <code style="font-family:var(--mono);font-size:.82em;color:var(--accent)">riz.toml</code> auto-registers as an agent-callable tool the instant <code style="font-family:var(--mono);font-size:.82em;color:var(--accent)">riz run</code> boots. Point Claude Code, Cursor, or any 2025-11-25 client at the endpoint and your existing Lambdas are tools with zero SDK code.</p>
+    <p>JSON-RPC 2.0 over streamable HTTP, structured tool output, full lifecycle negotiation back to the 2024-11-05 baseline for older clients. No wrappers, no glue — your handler <em style="font-style:italic;-webkit-text-fill-color:initial;background:none;color:var(--ink);filter:none">is</em> the tool. Verify before you wire up a client: <code style="font-family:var(--mono);font-size:.82em;color:var(--accent)">riz mcp inspect</code>.</p>
     <div class="pills">
       <span class="pill">jsonrpc 2.0</span>
       <span class="pill">mcp 2025-11-25</span>
@@ -1316,15 +1773,16 @@ $ claude mcp add riz-local \
 <section class="split" id="config">
   <div class="sp-t">
     <span class="lbl">// configuration</span>
-    <h2>One file.<br/><em>All your functions.</em></h2>
-    <p>Define your entire function fleet in a single <code style="font-family:var(--mono);font-size:.82em;color:var(--accent)">riz.toml</code>. Routing, process management, and resource limits — automatic.</p>
-    <p>Point any HTTP client at Riz exactly as you would at API Gateway. Same format, different bill.</p>
+    <h2>One file.<br/><em>Five runtimes.</em></h2>
+    <p>Declare your entire function fleet in a single <code style="font-family:var(--mono);font-size:.82em;color:var(--accent)">riz.toml</code>. One <code style="font-family:var(--mono);font-size:.82em;color:var(--accent)">[function.&lt;name&gt;]</code> block is one process pool serving N routes — mirroring AWS exactly. Routing, process management, hot-reload, and resource limits are automatic.</p>
+    <p>Same wire format AWS sends, parity-tested across Bun, Node.js, Python, Rust, and a <code style="font-family:var(--mono);font-size:.82em;color:var(--accent)">wasm32-wasip1</code> module under wasmtime. Point any HTTP client at riz the way you would at API Gateway — same payloads, different bill.</p>
     <div class="pills runtimes">
       <span class="pill-group-label">runtimes</span>
       <span class="pill">bun</span>
       <span class="pill">node</span>
       <span class="pill">python</span>
       <span class="pill">rust</span>
+      <span class="pill">wasm</span>
     </div>
     <div class="pills protocols">
       <span class="pill-group-label">protocols</span>
@@ -1364,11 +1822,12 @@ $ claude mcp add riz-local \
 <section class="status" id="status">
   <div class="status-inner">
     <span class="lbl">// what's in the box</span>
-    <h2>Features.</h2>
+    <h2>Everything. <em>One binary.</em></h2>
     <p class="status-sub">
-      Run AWS HTTP API v2 + WebSocket Lambda handlers in TypeScript, Python, or
-      Rust on a single Rust binary. Hot-reload, hot-deploy, real percentiles,
-      and a built-in MCP server that makes every function a Claude Code tool.
+      Run AWS HTTP API v2 + WebSocket Lambda handlers across five runtimes on a
+      single ~10&nbsp;MB Rust binary. Agent-native MCP, an OpenAI-compatible LLM
+      gateway, capability-sandboxed WASM, hot-reload, real percentiles — no
+      Docker, no per-request container, no cloud bill.
     </p>
     <div class="status-grid">
 
@@ -1380,10 +1839,9 @@ $ claude mcp add riz-local \
           <article class="bucket">
             <h4>Function Runtimes</h4>
             <ul>
-              <li>Bun (TypeScript / JavaScript) handlers</li>
-              <li>Node.js runtime adapter</li>
-              <li>Python runtime adapter</li>
-              <li>Rust runtime adapter</li>
+              <li>Five runtimes — Bun, Node.js, Python, Rust, and capability-sandboxed WASM</li>
+              <li>Cross-runtime parity matrix — every HTTP capability tested on every runtime</li>
+              <li>WASI sandbox (<code>runtime = "wasm"</code>) — deny-by-default fs/net, sub-ms cold starts</li>
             </ul>
           </article>
 
@@ -1427,9 +1885,18 @@ $ claude mcp add riz-local \
           <article class="bucket">
             <h4>Agent &amp; AI Integration</h4>
             <ul>
-              <li>Claude Code &amp; Cursor: every function auto-registers as an MCP tool at <code>/_riz/mcp</code></li>
+              <li>MCP server at <code>/_riz/mcp</code> — every function is a tool, automatically, spec 2025-11-25</li>
               <li>Zero SDK code — point any MCP client at riz, your APIs become agent-callable</li>
               <li>Bearer-token gating on <code>/_riz/mcp</code> for shared-secret access control</li>
+            </ul>
+          </article>
+
+          <article class="bucket">
+            <h4>LLM Gateway</h4>
+            <ul>
+              <li>OpenAI-compatible gateway at <code>/_riz/v1/*</code> — provider routing, fallback, SSE streaming, embeddings</li>
+              <li>Route across OpenAI, Anthropic, and local Ollama by model prefix</li>
+              <li>Budget caps + per-provider cost telemetry — AI-FinOps where you already watch latency</li>
             </ul>
           </article>
 
@@ -1453,10 +1920,20 @@ $ claude mcp add riz-local \
           </article>
 
           <article class="bucket">
-            <h4>On-Box Safety</h4>
+            <h4>Security &amp; Isolation</h4>
             <ul>
-              <li>On-box safety profile — always-on <code>RLIMIT_CORE=0</code> + <code>RLIMIT_NOFILE=4096</code> + <code>RLIMIT_FSIZE=100MiB</code></li>
-              <li>Opt-in per-function caps — <code>memory_mb</code> (RLIMIT_AS), <code>cpu_time_secs</code> (RLIMIT_CPU), <code>allowed_paths</code> (Linux Landlock filesystem allowlist)</li>
+              <li>Always-on safety profile per child — <code>RLIMIT_CORE=0</code>, FD caps, fork-bomb caps, no privilege escalation</li>
+              <li>Opt-in per-function caps — <code>memory_mb</code>, <code>cpu_time_secs</code>, and Linux Landlock filesystem allowlists</li>
+              <li>WASI sandbox — deny-by-default filesystem and network, capabilities granted explicitly in <code>riz.toml</code></li>
+              <li>Lambda authorizers (REQUEST + JWT/JWKS), CORS auto-preflight, bearer-token admin gating</li>
+            </ul>
+          </article>
+
+          <article class="bucket">
+            <h4>Proof</h4>
+            <ul>
+              <li>778 tests (<code>cargo nextest run</code>) — cross-runtime parity matrix on every HTTP capability</li>
+              <li>All 20 production-readiness bug-tracker entries closed, each with a regression-gate test</li>
             </ul>
           </article>
 
@@ -1468,23 +1945,20 @@ $ claude mcp add riz-local \
         <p class="h3-sub">v0.2 — the AI-substrate pillars</p>
 
           <article class="bucket">
-            <h4>WASM Guards &amp; Standalone Runtime</h4>
+            <h4>WASM Guards</h4>
             <ul>
               <li>Pre-invoke guards (<code>guard_in</code>) — validate schemas, detect prompt injection, enforce rate limits before the handler runs</li>
               <li>Post-invoke guards (<code>guard_out</code>) — redact PII, scrub secrets, enforce response shape before bytes leave</li>
-              <li>One <code>.wasm</code> guard protects Bun + Python + Rust handlers alike — language-agnostic safety layer</li>
-              <li>Standalone <code>runtime = "wasm"</code> handlers — sub-ms cold start, WASI capability sandbox (no fs/net by default)</li>
+              <li>One <code>.wasm</code> guard protects every runtime alike — language-agnostic safety layer atop the shipped WASI sandbox</li>
             </ul>
           </article>
 
           <article class="bucket">
-            <h4>LLM Gateway</h4>
+            <h4>Gateway, deepened</h4>
             <ul>
-              <li>One config block, every provider — Anthropic · OpenAI · Bedrock · Vertex · Ollama with fallback chain</li>
-              <li>Per-function budget caps + cost telemetry surfaced in <code>/_riz/health</code></li>
+              <li>Add Bedrock · Vertex providers to the shipped OpenAI/Anthropic/Ollama routing</li>
               <li>Semantic-similarity cache — drops cost 30–70% on repetitive workloads</li>
-              <li>Streaming pass-through to MCP clients (token-level via WS upgrade)</li>
-              <li>OpenAI-compatible endpoint <code>POST /_riz/v1/chat/completions</code> — existing clients just work</li>
+              <li>Token-level streaming pass-through to MCP clients via WS upgrade</li>
             </ul>
           </article>
 
@@ -1545,9 +2019,10 @@ $ claude mcp add riz-local \
   <div class="auth-l">
     <span class="lbl">// why I built this</span>
     <blockquote>
-      Lambda's economics break at scale and the local dev experience is terrible.
-      I wanted a runtime I could own — one that runs anywhere, costs nothing to
-      operate, and actually shows you what's happening inside.
+      Lambda's economics break at scale and the local dev loop is miserable — and
+      now every team is trying to make the APIs they already have callable by an
+      agent. I wanted one binary that does both: runs your handlers unchanged, and
+      makes them tools the moment it boots.
     </blockquote>
     <div class="acard">
       <div class="badge">CR</div>
@@ -1585,15 +2060,94 @@ $ claude mcp add riz-local \
   </div>
 </section>
 
+<!-- SUPPORT / BACK THE PROJECT -->
+<section id="support" class="support">
+  <div class="support-head">
+    <span class="support-lbl">// back the project</span>
+    <h2>Free. Local-first. <em>Independent.</em></h2>
+    <p class="support-pitch">
+      riz is Apache-2.0 licensed and built to stay that way — one binary you own,
+      no telemetry, no cloud account, no upsell. If it earns a spot in your stack,
+      back it: sponsorships keep development independent and the whole thing free.
+    </p>
+  </div>
+
+  <div class="support-grid">
+
+    <!-- GitHub Sponsors -->
+    <a class="scard scard--gh"
+       href="https://github.com/sponsors/24X7"
+       target="_blank" rel="noopener">
+      <span class="scard-ico" aria-hidden="true">
+        <svg viewBox="0 0 16 16" width="22" height="22" fill="currentColor">
+          <path d="M8 14.25l-1.16-1.06C2.74 9.5.5 7.46.5 4.96.5 3.04 2.04 1.5 3.96 1.5c1.08 0 2.12.5 2.79 1.3.18.21.36.46.5.7.14-.24.32-.49.5-.7.67-.8 1.71-1.3 2.79-1.3 1.92 0 3.46 1.54 3.46 3.46 0 2.5-2.24 4.54-6.34 8.23L8 14.25z"></path>
+        </svg>
+      </span>
+      <span class="scard-body">
+        <span class="scard-ttl">GitHub Sponsors</span>
+        <span class="scard-sub">Recurring or one-time. Counts toward the repo Sponsor button.</span>
+      </span>
+      <span class="scard-go">Sponsor on GitHub ↗</span>
+    </a>
+
+    <!-- Buy Me a Coffee -->
+    <a class="scard scard--bmc"
+       href="https://www.buymeacoffee.com/24X7"
+       target="_blank" rel="noopener">
+      <span class="scard-ico" aria-hidden="true">☕</span>
+      <span class="scard-body">
+        <span class="scard-ttl">Buy Me a Coffee</span>
+        <span class="scard-sub">A quick one-off tip — no account required.</span>
+      </span>
+      <span class="scard-go">Buy me a coffee ↗</span>
+    </a>
+
+    <!-- Crypto -->
+    <div class="scard scard--crypto">
+      <span class="scard-ico" aria-hidden="true">⬡</span>
+      <span class="scard-body">
+        <span class="scard-ttl">Crypto <span class="scard-chains">ETH · BTC · SOL</span></span>
+        <span class="scard-sub">Click an address to copy.</span>
+
+        <span class="cwallet">
+          <span class="cw-tag">ETH</span>
+          <code class="cw-addr">0xYOUR_ETH_ADDRESS_HERE</code>
+          <button class="cp cw-cp" type="button"
+                  data-copy="0xYOUR_ETH_ADDRESS_HERE"
+                  onclick="copyAddr(this)">copy</button>
+        </span>
+
+        <span class="cwallet">
+          <span class="cw-tag">BTC</span>
+          <code class="cw-addr">bc1YOUR_BTC_ADDRESS_HERE</code>
+          <button class="cp cw-cp" type="button"
+                  data-copy="bc1YOUR_BTC_ADDRESS_HERE"
+                  onclick="copyAddr(this)">copy</button>
+        </span>
+
+        <span class="cwallet">
+          <span class="cw-tag">SOL</span>
+          <code class="cw-addr">YOUR_SOL_ADDRESS_HERE</code>
+          <button class="cp cw-cp" type="button"
+                  data-copy="YOUR_SOL_ADDRESS_HERE"
+                  onclick="copyAddr(this)">copy</button>
+        </span>
+      </span>
+    </div>
+
+  </div>
+  <p class="support-foot">Every contribution goes straight into runtime, not overhead.</p>
+</section>
+
 <!-- CTA -->
 <section class="cta">
   <div>
     <span class="lbl">// get started</span>
-    <h2>Ship Lambdas<br/><em>without AWS.</em></h2>
+    <h2>Boot it. <em>Call it.</em></h2>
   </div>
   <div class="cta-btns">
     <a href="https://github.com/24X7/riz" class="bp" target="_blank">View on GitHub ↗</a>
-    <a href="https://github.com/24X7/riz#quick-start" class="bs" target="_blank">Quick start guide</a>
+    <a href="https://github.com/24X7/riz#quick-start" class="bs" target="_blank">30-second quick start</a>
   </div>
 </section>
 
@@ -1603,8 +2157,10 @@ $ claude mcp add riz-local \
   <div class="flinks">
     <a href="https://github.com/24X7/riz" target="_blank">GitHub</a>
     <a href="https://github.com/24X7/riz/releases" target="_blank">Releases</a>
+    <a href="#support">Support</a>
     <a href="mailto:chris@riz.dev">chris@riz.dev</a>
     <a href="https://linkedin.com/in/ship247" target="_blank">LinkedIn</a>
+    <a href="https://github.com/24X7/riz/blob/main/LICENSE" target="_blank">Apache-2.0</a>
   </div>
 </footer>
 
@@ -1613,6 +2169,18 @@ $ claude mcp add riz-local \
     navigator.clipboard.writeText('curl -fsSL https://riz.dev/install | sh').then(() => {
       btn.textContent = 'copied!';
       setTimeout(() => btn.textContent = 'copy', 2000);
+    });
+  }
+
+  // Click-to-copy for crypto addresses in the #support section. Mirrors the
+  // doCopy UX (button text -> "copied!" -> reverts) but copies the address
+  // from the button's data-copy attribute. Named separately to avoid collision.
+  function copyAddr(btn) {
+    var text = btn.getAttribute('data-copy');
+    navigator.clipboard.writeText(text).then(function () {
+      var prev = btn.textContent;
+      btn.textContent = 'copied!';
+      setTimeout(function () { btn.textContent = prev || 'copy'; }, 2000);
     });
   }
 

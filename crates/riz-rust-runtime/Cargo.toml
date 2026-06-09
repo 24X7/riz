@@ -3,7 +3,7 @@ name = "riz-rust-runtime"
 version = "0.1.0"
 edition = "2021"
 description = "Rust runtime helper for AWS Lambda handlers on the riz host"
-license = "MIT"
+license = "Apache-2.0"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
