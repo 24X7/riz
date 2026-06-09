@@ -60,13 +60,23 @@ fi
 
 PAUSE=${PAUSE:-0}
 HAS_JQ=0; command -v jq >/dev/null 2>&1 && HAS_JQ=1
-JQ() { if [ "$HAS_JQ" = "1" ]; then jq "$@"; else cat; fi; }
 
+# ── Readable output primitives ──────────────────────────────────────
+# The whole point: each capability prints a short narration, the request as
+# METHOD /path, and a ONE-LINE result. No exploded JSON, no raw curl flags.
 banner() { printf '\n%s%s━━━ %s ━━━%s\n' "$BOLD" "$AMBER" "$1" "$RESET"; }
-sub()    { printf '%s%s%s\n' "$DIM" "$1" "$RESET"; }
-ok()     { printf '  %s✓ %s%s\n' "$GREEN" "$1" "$RESET"; }
-warn()   { printf '  %s! %s%s\n' "$AMBER" "$1" "$RESET"; }
-run()    { printf '%s$ %s%s\n' "$CYAN" "$1" "$RESET"; eval "$1"; printf '\n'; }
+sub()    { printf '%s%s%s\n' "$DIM" "$1" "$RESET"; }                 # narration
+req()    { printf '  %s%s%s\n' "$CYAN" "$1" "$RESET"; }              # the request line
+out()    { printf '      %s\n' "$1"; }                               # its result, indented
+kv()     { printf '  %s%-22s%s %s\n' "$CYAN" "$1" "$RESET" "$2"; }   # aligned label → value
+ok()     { printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$1"; }
+warn()   { printf '  %s!%s %s\n' "$AMBER" "$RESET" "$1"; }
+# jq helpers — extract a compact value; degrade to the (already-compact) body
+# when jq is absent. riz emits single-line JSON, so no-jq output stays readable.
+J()  { if [ "$HAS_JQ" = 1 ]; then jq -r "$1" 2>/dev/null; else cat; fi; }
+JC() { if [ "$HAS_JQ" = 1 ]; then jq -c "$1" 2>/dev/null; else cat; fi; }
+# indent any multi-line block by 6 spaces (for the few real tables we show)
+indent() { sed 's/^/      /'; }
 pause()  {
   [ "$PAUSE" = "1" ] || return 0
   printf '%s[press ENTER to continue]%s ' "$DIM" "$RESET"
@@ -214,270 +224,227 @@ else
   warn "(install: brew install --cask ollama-app — bundles the llama-server runner)"
 fi
 
+# Column-format a TAB-separated stream into an aligned table (jq present);
+# otherwise pass through. Used for the registry + final telemetry tables.
+table() { if [ "$HAS_JQ" = 1 ] && command -v column >/dev/null 2>&1; then column -t -s "$(printf '\t')"; else cat; fi; }
+
 # ── System surface ──────────────────────────────────────────────────
-banner "System surface — every riz instance exposes these without config"
+banner "System surface — exposed by every riz instance, zero config"
 
-sub "/ready — readiness probe; 200 once the runtime has accepted bindings."
-run "curl -s -w '  → HTTP %{http_code}\n' $BASE/ready"
+req "GET /ready"
+out "HTTP $(curl -s -o /dev/null -w '%{http_code}' "$BASE/ready")  $(curl -s "$BASE/ready")"
 
-sub "/_riz/registry — JSON manifest of every function (system + user)."
-if [ "$HAS_JQ" = "1" ]; then
-  run "curl -s $BASE/_riz/registry | jq -r '.functions[] | \"\\(.kind)  \\(.name)  [\\(.runtime // \"system\")]  → \\(.routes | join(\", \"))\"'"
-else
-  run "curl -s $BASE/_riz/registry"
-fi
+sub "/_riz/registry — every function (system + user), one row each:"
+curl -s "$BASE/_riz/registry" \
+  | J '.functions[] | "\(.runtime // "system")\t\(.name)\t\(.routes | join(", "))"' \
+  | table | indent
+
+H=$(curl -s "$BASE/_riz/health")
+req "GET /_riz/health"
+out "$(printf '%s\n' "$H" | J '[.functions[]|select(.healthy)]|length')/$(printf '%s\n' "$H" | J '.functions|length') functions healthy · uptime $(printf '%s\n' "$H" | J '.uptime_secs')s · riz $(printf '%s\n' "$H" | J '.version')"
+
+req "GET /_riz/metrics"
+out "Prometheus exposition · $(curl -s "$BASE/_riz/metrics" | grep -c '^riz_invocations_total') invocation counters + error & latency series"
 pause
 
-sub "/_riz/health — per-function invocation counts, healthy flag, latency."
-if [ "$HAS_JQ" = "1" ]; then
-  run "curl -s $BASE/_riz/health | jq '{status, version, uptime_secs, functions: [.functions[] | {name, invocations, healthy}]}'"
-else
-  run "curl -s $BASE/_riz/health"
-fi
-pause
-
-sub "/_riz/metrics — Prometheus-style counters (truncated)."
-run "curl -s $BASE/_riz/metrics | head -20"
-pause
-
-# ── Real MCP wire test ──────────────────────────────────────────────
-banner "MCP wire test — /_riz/mcp speaks JSON-RPC 2.0, spec 2025-11-25"
+# ── MCP ─────────────────────────────────────────────────────────────
+banner "MCP server — /_riz/mcp speaks JSON-RPC 2.0 (spec 2025-11-25)"
 sub "Raw JSON-RPC — exactly what Claude Code / Cursor / the MCP Inspector send."
+mcp() { curl -s -X POST -H 'content-type: application/json' -d "$1" "$BASE/_riz/mcp"; }
 
-sub "1) initialize — handshake; server returns capabilities + protocol version."
-run "curl -s -X POST -H 'content-type: application/json' \\
-  -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"demo\",\"version\":\"0.1.0\"}}}' \\
-  $BASE/_riz/mcp | JQ ."
+I=$(mcp '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"demo","version":"0.1.0"}}}')
+req "initialize"
+out "protocol $(printf '%s\n' "$I" | J '.result.protocolVersion') · server $(printf '%s\n' "$I" | J '.result.serverInfo.name') $(printf '%s\n' "$I" | J '.result.serverInfo.version')"
+
+T=$(mcp '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')
+req "tools/list"
+out "$(printf '%s\n' "$T" | J '.result.tools|length') tools, one per function (auto-exposed):"
+printf '%s\n' "$T" | J '.result.tools[].name' | paste -sd ' ' - | fold -s -w 64 | indent
+
+C=$(mcp '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"ping","arguments":{}}}')
+req "tools/call ping"
+out "statusCode $(printf '%s\n' "$C" | J '.result.structuredContent.statusCode') · body $(printf '%s\n' "$C" | J '.result.structuredContent.body')"
+
+sub "Built-in self-validating client (no external deps):"
+"$BIN" mcp inspect 2>&1 | sed -n '1,4p' | indent
 pause
 
-sub "2) tools/list — every user function becomes an MCP tool automatically."
-run "curl -s -X POST -H 'content-type: application/json' \\
-  -d '{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}' \\
-  $BASE/_riz/mcp | JQ '.result.tools[] | {name, description}'"
-pause
-
-sub "3) tools/call — invoke the ping tool over MCP."
-run "curl -s -X POST -H 'content-type: application/json' \\
-  -d '{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"ping\",\"arguments\":{}}}' \\
-  $BASE/_riz/mcp | JQ ."
-pause
-
-sub "4) Built-in self-validating client — no external deps."
-run "$BIN mcp inspect 2>&1 | head -20"
-pause
-
-# ── LLM gateway / OpenAI-compatible API ─────────────────────────────
+# ── LLM gateway ─────────────────────────────────────────────────────
 banner "LLM gateway — OpenAI-compatible API at /_riz/v1"
-sub "Point any OpenAI client at /_riz/v1. Two providers are wired here: 'mock'"
-sub "(deterministic, network-free) and 'ollama' (a REAL local model, no key)."
-sub "Route by model prefix — \"mock\" vs \"ollama/$OLLAMA_MODEL\" — with automatic"
-sub "fallback. openai/anthropic providers ship too (kind=openai/anthropic + key)."
+sub "Point any OpenAI client here. Two providers wired: 'mock' (deterministic)"
+sub "and 'ollama' (a REAL local model, no key). Route by model prefix + fallback."
+chat() { curl -s -X POST -H 'content-type: application/json' -d "$1" "$BASE/_riz/v1/chat/completions"; }
 
-sub "GET /_riz/v1/models — configured providers."
-run "curl -s $BASE/_riz/v1/models | JQ ."
+req "GET /v1/models"
+out "providers: $(curl -s "$BASE/_riz/v1/models" | J '[.data[].id]|join(", ")')"
 
-sub "POST /_riz/v1/chat/completions — the OpenAI chat-completions shape (mock)."
-run "curl -s -X POST -H 'content-type: application/json' \\
-  -d '{\"model\":\"mock\",\"messages\":[{\"role\":\"user\",\"content\":\"hello riz\"}],\"stream\":false}' \\
-  $BASE/_riz/v1/chat/completions | JQ '{model, message: .choices[0].message, usage}'"
+R=$(chat '{"model":"mock","messages":[{"role":"user","content":"hello riz"}],"stream":false}')
+req "POST /v1/chat/completions   (model = mock)"
+out "→ $(printf '%s\n' "$R" | J '.choices[0].message.content')   [$(printf '%s\n' "$R" | J '.usage.total_tokens') tok]"
 
 if [ "$OLLAMA_READY" = "1" ]; then
-  sub "Same endpoint, a REAL local model — model=\"ollama/$OLLAMA_MODEL\" routes to"
-  sub "the on-box Ollama provider (no API key, no cloud). This is a live inference:"
-  run "curl -s -X POST -H 'content-type: application/json' \\
-  -d '{\"model\":\"ollama/$OLLAMA_MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"In one short sentence, what is AWS Lambda?\"}],\"stream\":false}' \\
-  $BASE/_riz/v1/chat/completions | JQ '{model, reply: .choices[0].message.content, usage}'"
-  ok "real model · routed by model-prefix · cost+tokens attributed (see /_riz/v1/usage below)"
+  R=$(chat "{\"model\":\"ollama/$OLLAMA_MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"In one short sentence, what is AWS Lambda?\"}],\"stream\":false}")
+  req "POST /v1/chat/completions   (model = ollama/$OLLAMA_MODEL — REAL model)"
+  printf '%s\n' "$R" | J '.choices[0].message.content' | fold -s -w 64 | sed 's/^/      → /;2,$s/^      → /        /'
+  ok "live local inference · $(printf '%s\n' "$R" | J '.usage.prompt_tokens')→$(printf '%s\n' "$R" | J '.usage.completion_tokens') tokens attributed"
 else
-  sub "(A real local model via Ollama would appear here — ollama not ready, using mock.)"
+  warn "ollama not ready — gateway falls back to the mock provider"
 fi
 
-sub "stream=true — Server-Sent Events (chat.completion.chunk … then [DONE])."
-run "curl -sN -X POST -H 'content-type: application/json' \\
-  -d '{\"model\":\"mock\",\"messages\":[{\"role\":\"user\",\"content\":\"stream me\"}],\"stream\":true}' \\
-  $BASE/_riz/v1/chat/completions | head -7"
+SC=$(curl -sN -X POST -H 'content-type: application/json' \
+  -d '{"model":"mock","messages":[{"role":"user","content":"stream me"}],"stream":true}' \
+  "$BASE/_riz/v1/chat/completions" | grep -c '^data:')
+req "POST /v1/chat/completions   (stream = true)"
+out "$SC Server-Sent Events streamed (chat.completion.chunk … [DONE])"
 
-sub "POST /_riz/v1/embeddings — OpenAI embeddings shape (deterministic mock vectors)."
-run "curl -s -X POST -H 'content-type: application/json' \\
-  -d '{\"model\":\"mock\",\"input\":[\"the quick brown fox\",\"lorem ipsum\"]}' \\
-  $BASE/_riz/v1/embeddings | JQ '{object, model, count: (.data | length), dims: (.data[0].embedding | length), usage}'"
+E=$(curl -s -X POST -H 'content-type: application/json' -d '{"model":"mock","input":["the quick brown fox","lorem ipsum"]}' "$BASE/_riz/v1/embeddings")
+req "POST /v1/embeddings"
+out "$(printf '%s\n' "$E" | J '.data|length') vectors × $(printf '%s\n' "$E" | J '.data[0].embedding|length') dims"
 
-sub "GET /_riz/v1/usage — AI-FinOps: cumulative cost + tokens, per provider."
-run "curl -s $BASE/_riz/v1/usage | JQ ."
+req "GET /v1/usage   (AI-FinOps)"
+out "$(curl -s "$BASE/_riz/v1/usage" | J '[.providers | to_entries[] | "\(.key): \(.value.requests) req, $\(.value.cost_usd)"] | join("   ·   ")')"
 sub "Set [gateway] budget_usd to cap spend — over-budget requests return HTTP 412."
 
-sub "The OFFICIAL openai python client, pointed at riz via base_url:"
 if python3 -c 'import openai' >/dev/null 2>&1; then
-  printf '%s$ OpenAI(base_url="%s/_riz/v1").chat.completions.create(model="mock", ...)%s\n' "$CYAN" "$BASE" "$RESET"
-  RIZ_OPENAI_BASE="$BASE/_riz/v1" python3 - <<'PY'
+  req "OpenAI(base_url=\"$BASE/_riz/v1\").chat.completions.create(model=\"mock\", …)"
+  RIZ_OPENAI_BASE="$BASE/_riz/v1" python3 - <<'PY' | indent
 import os
 from openai import OpenAI
 c = OpenAI(base_url=os.environ["RIZ_OPENAI_BASE"], api_key="not-needed")
-r = c.chat.completions.create(
-    model="mock",
-    messages=[{"role": "user", "content": "hi from the openai client"}],
-    stream=False,
-)
-print("  ←", r.choices[0].message.content)
+r = c.chat.completions.create(model="mock",
+    messages=[{"role": "user", "content": "hi from the openai client"}], stream=False)
+print("→", r.choices[0].message.content)
 PY
 else
-  warn "openai python package not installed (pip install openai) — the curl above is the exact wire format it speaks."
+  sub "(official openai python client speaks this exact wire; pip install openai to see it)"
 fi
 pause
 
-# ── HTTP across all runtimes ────────────────────────────────────────
-banner "HTTP — five runtimes, one Lambda envelope"
-
-sub "ping (Bun) — simplest possible handler."
-run "curl -s $BASE/ping"
-
-sub "echo-node (Node.js) — the #1 production Lambda runtime."
-run "curl -s '$BASE/echo-node?name=alice' | JQ '{echo, method, functionName, awsRequestId}'"
-
-sub "echo-python (Python) — same envelope, Python adapter."
-run "curl -s -X POST -d '{\"hello\":\"world\"}' $BASE/echo-python | JQ '{echo, method, functionName}'"
-
-sub "echo-rust (Rust) — bare cargo binary, same envelope."
-run "curl -s '$BASE/echo-rust?name=alice' | JQ '{echo, method, functionName}'"
-
+# ── Five runtimes ───────────────────────────────────────────────────
+banner "Five runtimes — one Lambda envelope, identical responses"
+sub "The same GET hits five handlers in five languages; each returns the same shape."
+erow() { # label  path  [extra-jq]
+  r=$(curl -s "$BASE$2?name=alice")
+  v="method $(printf '%s\n' "$r" | J '.method') · fn $(printf '%s\n' "$r" | J '.functionName')"
+  [ -n "${3:-}" ] && v="$v · $(printf '%s\n' "$r" | J "$3")"
+  printf '  %s%-22s%s %s\n' "$CYAN" "$1" "$RESET" "$v"
+}
+erow "echo-bun (Bun)"       /echo-bun
+erow "echo-node (Node.js)"  /echo-node
+erow "echo-python (Python)" /echo-python
+erow "echo-rust (Rust)"     /echo-rust
 if [ "$HAS_WASM" = "1" ]; then
-  sub "echo-wasm (WASM) — a wasm32-wasip1 module under wasmtime's WASI sandbox,"
-  sub "speaking the identical envelope. stageVariables.sandbox proves it's the wasm path."
-  run "curl -s '$BASE/echo-wasm?name=alice' | JQ '{echo, method, functionName, sandbox: .stageVariables.sandbox}'"
+  erow "echo-wasm (WASM)"   /echo-wasm  '"sandbox=" + .stageVariables.sandbox'
 else
   warn "echo-wasm skipped (wasm module not built — see the build step above)"
 fi
 pause
 
 # ── HTTP request shapes ─────────────────────────────────────────────
-banner "HTTP request shapes (Bun)"
+banner "HTTP request shapes"
+req "GET /accounts/42?include=profile   (path param {id}=42 + query)"
+out "$(curl -s "$BASE/accounts/42?include=profile" | JC '.')"
 
-sub "accounts — GET /accounts/{id} with a path parameter + query string."
-run "curl -s '$BASE/accounts/42?include=profile' | JQ ."
+req "POST /events   (JSON body)"
+out "$(curl -s -X POST -H 'content-type: application/json' -d '{"event":"login","user":"alice"}' "$BASE/events" | JC '.')"
 
-sub "events — POST /events with a JSON body."
-run "curl -s -X POST -H 'content-type: application/json' -d '{\"event\":\"login\",\"user\":\"alice\"}' $BASE/events | JQ ."
-
-sub "crud-accounts — one handler, all five verbs (POST creates, GET reads, DELETE removes)."
-run "curl -s -X POST -H 'content-type: application/json' -d '{\"name\":\"alice\",\"plan\":\"pro\"}' $BASE/accounts | JQ '{id, name, plan}'"
-run "curl -s -w '  → HTTP %{http_code}\n' $BASE/crud/1 -o /dev/null"
-run "curl -s -w '  → HTTP %{http_code}\n' -X DELETE $BASE/crud/1 -o /dev/null"
+sub "crud-accounts — one handler, five verbs:"
+out "POST   /accounts → $(curl -s -X POST -H 'content-type: application/json' -d '{"name":"alice","plan":"pro"}' "$BASE/accounts" | JC '{id,name,plan}')"
+out "GET    /crud/1   → HTTP $(curl -s -o /dev/null -w '%{http_code}' "$BASE/crud/1")"
+out "DELETE /crud/1   → HTTP $(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$BASE/crud/1")"
 pause
 
 # ── Response caching ────────────────────────────────────────────────
-banner "Response caching — GET /accounts/{id} cached 30s, then invalidate"
-sub "The handler stamps a 'ts' into every response. A cache HIT replays the"
-sub "same ts (handler not re-run); POST /cache/invalidate evicts and the next"
-sub "request stamps a fresh ts."
-
-TS1=$(curl -s "$BASE/accounts/7" | JQ -r '.ts')
-TS2=$(curl -s "$BASE/accounts/7" | JQ -r '.ts')
-printf '  request 1 ts = %s\n  request 2 ts = %s  ' "$TS1" "$TS2"
-if [ "$TS1" = "$TS2" ]; then ok "identical → served from cache"; else warn "differ (jq missing?)"; fi
-
-run "curl -s -X POST -H 'content-type: application/json' -d '{\"prefix\":\"GET:/accounts/\"}' $BASE/cache/invalidate"
-TS3=$(curl -s "$BASE/accounts/7" | JQ -r '.ts')
-printf '  request 3 ts = %s  ' "$TS3"
+banner "Response caching — GET /accounts/{id} cached 30s, then invalidated"
+sub "Handler stamps a 'ts'. A cache HIT replays it; invalidate evicts → fresh ts."
+TS1=$(curl -s "$BASE/accounts/7" | J '.ts'); TS2=$(curl -s "$BASE/accounts/7" | J '.ts')
+out "ts #1 $TS1   ·   ts #2 $TS2"
+if [ "$TS1" = "$TS2" ]; then ok "identical → served from cache"; else warn "differ"; fi
+curl -s -o /dev/null -X POST -H 'content-type: application/json' -d '{"prefix":"GET:/accounts/"}' "$BASE/cache/invalidate"
+TS3=$(curl -s "$BASE/accounts/7" | J '.ts')
+out "ts #3 $TS3   (after POST /cache/invalidate)"
 if [ "$TS3" != "$TS1" ]; then ok "changed → cache evicted, handler re-ran"; else warn "unchanged"; fi
 pause
 
 # ── CORS ────────────────────────────────────────────────────────────
-banner "CORS — global [cors] policy (allow_origins = app.example.com)"
-
-sub "OPTIONS preflight from an allowed origin → 204 + Access-Control-* headers."
-run "curl -s -i -X OPTIONS -H 'Origin: https://app.example.com' -H 'Access-Control-Request-Method: GET' $BASE/ping | grep -iE '^HTTP|^access-control' | sed 's/^/  /'"
-
-sub "A real request echoes Access-Control-Allow-Origin for the allowed origin."
-run "curl -s -i -H 'Origin: https://app.example.com' $BASE/ping | grep -iE '^access-control-allow-origin' | sed 's/^/  /'"
+banner "CORS — global policy (allow_origins = app.example.com)"
+req "OPTIONS /ping   (preflight from allowed origin)"
+out "HTTP $(curl -s -o /dev/null -w '%{http_code}' -X OPTIONS -H 'Origin: https://app.example.com' -H 'Access-Control-Request-Method: GET' "$BASE/ping")  (+ Access-Control-* headers)"
+req "GET /ping   (with Origin header)"
+out "$(curl -s -i -H 'Origin: https://app.example.com' "$BASE/ping" | grep -i '^access-control-allow-origin' | tr -d '\r')"
 pause
 
 # ── Stage variables ─────────────────────────────────────────────────
-banner "Stage variables — per-function config on the event (echo-bun)"
-sub "[function.echo-bun.stage_variables] region/tier surface as event.stageVariables."
-run "curl -s '$BASE/echo-bun' | JQ '.stageVariables'"
+banner "Stage variables — per-function config surfaced on the event"
+req "GET /echo-bun"
+out "stageVariables = $(curl -s "$BASE/echo-bun" | JC '.stageVariables')"
 pause
 
 # ── On-box safety ───────────────────────────────────────────────────
 banner "On-box safety — per-function caps + an always-on profile"
-sub "echo-python declares opt-in caps; an always-on profile applies to EVERY handler."
-printf '%s' "$DIM"
-sed -n '/\[function.echo-python\]/,/routes\]\]/p' "$CFG" | grep -E '^(cpu_time_secs|allowed_paths)' | sed 's/^/  /'
-printf '%s' "$RESET"
-ok "cpu_time_secs → RLIMIT_CPU · allowed_paths → Landlock (Linux) · memory_mb → RLIMIT_AS (opt-in)"
+sub "echo-python opts into caps; an always-on profile wraps EVERY handler:"
+sed -n '/\[function.echo-python\]/,/routes\]\]/p' "$CFG" | grep -E '^(cpu_time_secs|allowed_paths)' | indent
+ok "cpu_time_secs → RLIMIT_CPU · allowed_paths → Landlock (Linux) · memory_mb → RLIMIT_AS"
 ok "always-on (every child): RLIMIT_CORE=0, fd/file-size caps, PDEATHSIG, NO_NEW_PRIVS"
 pause
 
 # ── Authorizers ─────────────────────────────────────────────────────
 banner "Lambda authorizers (REQUEST type)"
-sub "/protected — gated by auth-allow → HTTP 200."
-run "curl -s -w '  → HTTP %{http_code}\n' -X POST -d '{\"event\":\"hello\"}' $BASE/protected -o /dev/null"
-sub "/forbidden — gated by auth-deny → HTTP 401 (handler never runs)."
-run "curl -s -w '  → HTTP %{http_code}\n' $BASE/forbidden -o /dev/null"
-sub "JWT authorizers (RS256/ES256 against your IdP's JWKS — Auth0/Cognito/Okta/Keycloak)"
-sub "are configured with [function.X.authorizer] type=\"jwt\" + jwks_uri/issuer/audience;"
-sub "proven end-to-end in tests/wave_3_acceptance.rs. See examples/riz.jwt.toml."
+req "POST /protected   (gated by auth-allow)"
+out "HTTP $(curl -s -o /dev/null -w '%{http_code}' -X POST -d '{"event":"hello"}' "$BASE/protected")   → allowed"
+req "GET /forbidden    (gated by auth-deny)"
+out "HTTP $(curl -s -o /dev/null -w '%{http_code}' "$BASE/forbidden")   → denied, handler never ran"
+sub "JWT authorizers (RS256/ES256 vs your IdP's JWKS — Auth0/Cognito/Okta) ship too;"
+sub "see examples/riz.jwt.toml, proven in tests/wave_3_acceptance.rs."
 pause
 
 # ── WebSocket ───────────────────────────────────────────────────────
 banner "WebSocket — \$connect / \$default / \$disconnect across 3 runtimes"
-if ! command -v websocat >/dev/null 2>&1; then
-  warn "websocat not installed — skipping WS round-trips (install: brew install websocat)"
-else
-  WS() {
-    path=$1; msg=$2
-    printf '%s$ echo %s | websocat ws://127.0.0.1:3000%s%s\n' "$CYAN" "$msg" "$path" "$RESET"
-    reply=$(echo "$msg" | timeout 3 websocat "ws://127.0.0.1:3000$path" 2>/dev/null | head -1 || true)
-    printf '  ← %s%s%s\n\n' "$GREEN" "$reply" "$RESET"
+if command -v websocat >/dev/null 2>&1; then
+  ws() {
+    reply=$(printf '%s\n' "$2" | timeout 3 websocat "ws://127.0.0.1:3000$1" 2>/dev/null | head -1 || true)
+    printf '  %s%-14s%s send %-10s → %s%s%s\n' "$CYAN" "$1" "$RESET" "$2" "$GREEN" "$reply" "$RESET"
   }
-  sub "/chat        (Bun)"    ; WS /chat        hello-bun
-  sub "/chat-python (Python)" ; WS /chat-python hello-py
-  sub "/chat-rust   (Rust)"   ; WS /chat-rust   hello-rs
+  ws /chat        hello-bun
+  ws /chat-python hello-py
+  ws /chat-rust   hello-rs
+else
+  warn "websocat not installed — skipping WS round-trips (brew install websocat)"
 fi
 pause
 
 # ── Handler hot-reload ──────────────────────────────────────────────
-banner "Handler hot-reload — edit a handler, next request runs new code (no restart)"
+banner "Handler hot-reload — edit a handler, next request runs new code"
 PING_TS="$ROOT/examples/lambdas/ping/index.ts"
-PING_BAK="$(mktemp)"
-cp "$PING_TS" "$PING_BAK"
+PING_BAK="$(mktemp)"; cp "$PING_TS" "$PING_BAK"
 # cleanup() (set at boot) restores PING_TS from PING_BAK on any exit.
-
-sub "before:"
-run "curl -s $BASE/ping"
-sub "editing examples/lambdas/ping/index.ts:  status \"ok\" → \"hot-reloaded\""
+req "GET /ping   (before)"
+out "$(curl -s "$BASE/ping" | JC '.')"
+sub "editing ping/index.ts:  status \"ok\" → \"hot-reloaded\" …"
 sed -i.swp 's/status: "ok"/status: "hot-reloaded"/' "$PING_TS" && rm -f "$PING_TS.swp"
-printf '%swaiting for the source watcher to hot-swap the pool %s' "$DIM" "$RESET"
+printf '  %swaiting for hot-swap %s' "$DIM" "$RESET"
 for _ in $(seq 1 20); do
   if curl -s "$BASE/ping" | grep -q 'hot-reloaded'; then printf '%s✓%s\n' "$GREEN" "$RESET"; break; fi
   printf '.'; sleep 0.5
 done
-sub "after (no restart — same pid $RIZ_PID):"
-run "curl -s $BASE/ping"
+req "GET /ping   (after — same pid $RIZ_PID, no restart)"
+out "$(curl -s "$BASE/ping" | JC '.')"
 cp "$PING_BAK" "$PING_TS"; rm -f "$PING_BAK"
-ok "ping/index.ts restored to its original contents"
+ok "handler restored to original"
 pause
 
 # ── Scaffolding & diagnostics ───────────────────────────────────────
 banner "Scaffolding & diagnostics"
-sub "riz init --list — 7 built-in project templates, embedded in the binary."
-run "$BIN init --list"
-sub "riz doctor — preflight: validates config, checks runtimes on PATH, probes the port."
-run "$BIN --config $CFG doctor 2>&1 | tail -16"
+sub "riz init — built-in project templates, embedded in the binary:"
+"$BIN" init --list | grep -E 'TEMPLATE|-http|-websocket' | indent
+sub "riz doctor — preflight (config, runtimes on PATH, port):"
+out "$("$BIN" --config "$CFG" doctor 2>&1 | tail -1)"
 pause
 
-# ── Final telemetry sweep ───────────────────────────────────────────
-banner "Final telemetry — /_riz/health after the run"
-curl -s "$BASE/_riz/health" > /tmp/riz-health.json
-python3 <<'PY'
-import json
-with open("/tmp/riz-health.json") as f:
-    d = json.load(f)
-print(f'  uptime: {d.get("uptime_secs", "?")}s   |   {len(d["functions"])} user functions registered')
-print()
-print(f'  {"name":<15}  {"invocations":<12}  {"healthy":<7}')
-print(f'  {"-"*15}  {"-"*12}  {"-"*7}')
-for fn in d["functions"]:
-    print(f'  {fn["name"]:<15}  {fn["invocations"]:<12}  {fn["healthy"]}')
-PY
+# ── Final telemetry ─────────────────────────────────────────────────
+banner "Final telemetry — invocations after the run"
+H=$(curl -s "$BASE/_riz/health")
+printf '%s\n' "$H" | J '.functions[] | "\(.name)\t\(.invocations) calls\t\(if .healthy then "healthy" else "DOWN" end)"' | table | indent
+ok "uptime $(printf '%s\n' "$H" | J '.uptime_secs')s · $(printf '%s\n' "$H" | J '.functions|length') functions registered"
 
-printf '\n%s%s✓ demo complete.%s  Every capability exercised live.  Server log: %s\n' "$BOLD" "$GREEN" "$RESET" "$LOG"
+printf '\n%s%s✓ demo complete — every capability shown live.%s  Server log: %s\n' "$BOLD" "$GREEN" "$RESET" "$LOG"
