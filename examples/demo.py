@@ -46,6 +46,8 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
+import shutil
 import socket
 import struct
 import subprocess
@@ -67,6 +69,12 @@ PAUSE = os.environ.get("PAUSE") == "1"
 
 # ──────────────────────────── Pretty output ──────────────────────────────
 _color = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+
+# Wrap everything to the ACTUAL terminal width so nothing scatters across a
+# wide screen or wraps mid-row on a narrow/large-font one. Content wraps a few
+# columns short of the edge to leave room for the 6-space indent.
+TERM_W = shutil.get_terminal_size((80, 24)).columns
+WRAP = max(44, min(TERM_W - 4, 76))
 
 
 def _c(code: str) -> str:
@@ -111,8 +119,9 @@ def indent(block: str, n: int = 6) -> str:
     return "\n".join(pad + line for line in block.splitlines())
 
 
-def fold(text: str, width: int = 64) -> list[str]:
+def fold(text: str, width: int | None = None) -> list[str]:
     """Word-wrap a string to <=width-char lines (for model prose)."""
+    width = width or WRAP
     words, lines, cur = text.split(), [], ""
     for w in words:
         if cur and len(cur) + 1 + len(w) > width:
@@ -125,17 +134,41 @@ def fold(text: str, width: int = 64) -> list[str]:
     return lines or [""]
 
 
-def table(rows: list[list[str]]) -> str:
-    """Format rows into an aligned, space-padded table."""
-    if not rows:
-        return ""
-    cols = max(len(r) for r in rows)
-    widths = [max(len(r[i]) if i < len(r) else 0 for r in rows) for i in range(cols)]
-    lines = []
-    for r in rows:
-        cells = [(r[i] if i < len(r) else "").ljust(widths[i]) for i in range(cols)]
-        lines.append("  ".join(cells).rstrip())
-    return "\n".join(lines)
+def wrapped(items: list[str], indent_n: int = 6, sep: str = "  ") -> None:
+    """Print a list of short tokens wrapped to the terminal width, indented."""
+    pad = " " * indent_n
+    cur = ""
+    for it in items:
+        cand = it if not cur else cur + sep + it
+        if cur and indent_n + len(cand) > WRAP:
+            print(pad + cur)
+            cur = it
+        else:
+            cur = cand
+    if cur:
+        print(pad + cur)
+
+
+def labeled(label: str, items: list[str], label_w: int = 8, sep: str = "  ") -> None:
+    """Print 'label  tok  tok …' with the token list wrapped and hanging-indented."""
+    prefix = f"  {CYAN}{label:<{label_w}}{RESET}"
+    plain_len = 2 + label_w
+    hang = " " * plain_len
+    lines, cur = [], ""
+    for it in items:
+        cand = it if not cur else cur + sep + it
+        if cur and plain_len + len(cand) > WRAP:
+            lines.append(cur)
+            cur = it
+        else:
+            cur = cand
+    if cur:
+        lines.append(cur)
+    if not lines:
+        lines = [""]
+    print(prefix + lines[0])
+    for ln in lines[1:]:
+        print(hang + ln)
 
 
 def pause() -> None:
@@ -448,10 +481,15 @@ def system_surface() -> None:
     req("GET /ready")
     out(f"HTTP {status}  {body.strip()}")
 
-    sub("/_riz/registry — every function (system + user), one row each:")
     reg = getj("/_riz/registry")
-    rows = [[f.get("runtime") or "system", f["name"], ", ".join(f.get("routes", []))] for f in reg["functions"]]
-    print(indent(table(rows)))
+    sub(f"/_riz/registry — {len(reg['functions'])} functions, grouped by runtime:")
+    groups: dict[str, list[str]] = {}
+    for f in reg["functions"]:
+        groups.setdefault(f.get("runtime") or "system", []).append(f["name"])
+    order = ["system", "bun", "node", "python", "rust", "wasm"]
+    for rt in order + [k for k in groups if k not in order]:
+        if rt in groups:
+            labeled(rt, groups[rt], 8)
 
     h = getj("/_riz/health")
     healthy = sum(1 for f in h["functions"] if f["healthy"])
@@ -483,9 +521,7 @@ def mcp_section() -> None:
     tools = mcp({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})["result"]["tools"]
     req("tools/list")
     out(f"{len(tools)} tools, one per function (auto-exposed):")
-    names = " ".join(t["name"] for t in tools)
-    for line in fold(names, 64):
-        out(line)
+    wrapped([t["name"] for t in tools])
 
     call = mcp({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
                 "params": {"name": "ping", "arguments": {}}})["result"]["structuredContent"]
@@ -521,9 +557,9 @@ def gateway_section() -> None:
         })
         content = r["choices"][0]["message"]["content"].strip()
         req(f"POST /v1/chat/completions   (model = ollama/{OLLAMA_MODEL} — REAL model)")
-        wrapped = fold(content, 64)
-        out(f"→ {wrapped[0]}")
-        for line in wrapped[1:]:
+        prose = fold(content)
+        out(f"→ {prose[0]}")
+        for line in prose[1:]:
             out(f"  {line}")
         ok(f"live local inference · {r['usage']['prompt_tokens']}→{r['usage']['completion_tokens']} tokens attributed")
     else:
@@ -561,19 +597,19 @@ def runtimes_section() -> None:
     banner("Five runtimes — one Lambda envelope, identical responses")
     sub("The same GET hits five handlers in five languages; each returns the same shape.")
 
-    def erow(label: str, path: str, extra=None):
+    def erow(name: str, runtime: str, path: str, extra=None):
         r = getj(f"{path}?name=alice")
-        value = f"method {r['method']} · fn {r['functionName']}"
+        value = f"{runtime} · method {r['method']}"
         if extra:
             value += " · " + extra(r)
-        kv(label, value)
+        kv(name, value, 12)
 
-    erow("echo-bun (Bun)", "/echo-bun")
-    erow("echo-node (Node.js)", "/echo-node")
-    erow("echo-python (Python)", "/echo-python")
-    erow("echo-rust (Rust)", "/echo-rust")
+    erow("echo-bun", "Bun", "/echo-bun")
+    erow("echo-node", "Node.js", "/echo-node")
+    erow("echo-python", "Python", "/echo-python")
+    erow("echo-rust", "Rust", "/echo-rust")
     if ST.has_wasm:
-        erow("echo-wasm (WASM)", "/echo-wasm", lambda r: f"sandbox={r['stageVariables']['sandbox']}")
+        erow("echo-wasm", "WASM", "/echo-wasm", lambda r: f"sandbox={r['stageVariables']['sandbox']}")
     else:
         warn("echo-wasm skipped (wasm module not built — see the build step above)")
     pause()
@@ -603,6 +639,7 @@ def caching_section() -> None:
     out(f"ts #1 {ts1}   ·   ts #2 {ts2}")
     ok("identical → served from cache") if ts1 == ts2 else warn("differ")
     post_json("/cache/invalidate", {"prefix": "GET:/accounts/"})
+    time.sleep(0.05)  # let the ms clock tick so a re-run yields a distinct ts
     ts3 = getj("/accounts/7")["ts"]
     out(f"ts #3 {ts3}   (after POST /cache/invalidate)")
     ok("changed → cache evicted, handler re-ran") if ts3 != ts1 else warn("unchanged")
@@ -703,11 +740,16 @@ def hot_reload_section() -> None:
 
 def scaffolding_section() -> None:
     banner("Scaffolding & diagnostics")
-    sub("riz init — built-in project templates, embedded in the binary:")
     r = subprocess.run([str(BIN), "init", "--list"], capture_output=True, text=True)
-    tpl = [ln for ln in (r.stdout + r.stderr).splitlines()
-           if "TEMPLATE" in ln or "-http" in ln or "-websocket" in ln]
-    print(indent("\n".join(tpl)))
+    by_scenario: dict[str, list[str]] = {}
+    for ln in (r.stdout + r.stderr).splitlines():
+        cells = re.split(r"\s{2,}", ln.strip())
+        if len(cells) >= 2 and ("-http" in cells[0] or "-websocket" in cells[0]):
+            by_scenario.setdefault(cells[1], []).append(cells[0])
+    total = sum(len(v) for v in by_scenario.values())
+    sub(f"riz init — {total} project templates embedded in the binary:")
+    for scenario, names in by_scenario.items():
+        labeled(scenario, names, 11)
     sub("riz doctor — preflight (config, runtimes on PATH, port):")
     r = subprocess.run([str(BIN), "--config", str(CFG), "doctor"], capture_output=True, text=True)
     last = (r.stdout + r.stderr).rstrip().splitlines()
@@ -718,9 +760,13 @@ def scaffolding_section() -> None:
 def final_telemetry() -> None:
     banner("Final telemetry — invocations after the run")
     h = getj("/_riz/health")
-    rows = [[f["name"], f"{f['invocations']} calls", "healthy" if f["healthy"] else "DOWN"]
-            for f in h["functions"]]
-    print(indent(table(rows)))
+    down = [f["name"] for f in h["functions"] if not f["healthy"]]
+    if down:
+        warn("DOWN: " + ", ".join(down))
+    else:
+        ok(f"all {len(h['functions'])} functions healthy")
+    sub("invocations this run  (name×calls):")
+    wrapped([f"{f['name']}×{f['invocations']}" for f in h["functions"]])
     ok(f"uptime {h['uptime_secs']}s · {len(h['functions'])} functions registered")
     print(f"\n{BOLD}{GREEN}✓ demo complete — every capability shown live.{RESET}  Server log: {LOG}")
 
