@@ -26,9 +26,9 @@ Riz v0.1 is the Lambda runtime your agent can call. Riz v1 is the runtime your a
 | 5 | Node.js native runtime ✅ **SHIPPED** | Runtime breadth | S |
 | 6 | Go native runtime | Runtime breadth | S–M |
 | 7 | OpenTelemetry exporter (infra spans) | Observability — distributed tracing | M |
-| 8 | LLM gateway — provider routing | AI Gateway | M |
-| 9 | LLM gateway — budget caps + cost telemetry | AI FinOps | S after #8 |
-| 10 | LLM gateway — OpenAI-compatible endpoint | Industry standard interop | S after #8 |
+| 8 | LLM gateway — provider routing ✅ **SHIPPED** | AI Gateway | M |
+| 9 | LLM gateway — budget caps + cost telemetry ✅ **SHIPPED** | AI FinOps | S after #8 |
+| 10 | LLM gateway — OpenAI-compatible endpoint ✅ **SHIPPED** | Industry standard interop | S after #8 |
 | 11 | MCP Streamable HTTP — SSE streaming | MCP spec compliance | S |
 | 12 | MCP progress notifications during tool call | MCP spec compliance | S after #11 |
 | 13 | Per-route MCP tool schemas | MCP polish | S |
@@ -472,25 +472,28 @@ v1 ships here. v2 begins with replay / eval / semantic cache / OAuth / federatio
 
 ## Status & build order (live)
 
-**Shipped:** #5 Node.js runtime (2026-06-08) — full cross-runtime parity matrix vs Bun.
+**Shipped (2026-06-08/09):**
+- #5 Node.js runtime — full cross-runtime parity matrix vs Bun.
+- **WS process-pool hardening** — `invoke_generic` liveness/respawn parity,
+  `$connect` query-param parsing, `concurrency = 0` rejection (all TDD).
+- **#8 + #9 + #10 — the LLM gateway** (the whole AI-gateway slice): provider
+  routing + fallback, OpenAI-compatible `/_riz/v1/{chat/completions,embeddings,
+  models,usage}`, SSE streaming, mock + OpenAI + Ollama + Anthropic providers,
+  budget caps + cost telemetry. All TDD; demonstrated live in demo.sh.
 
-**Cut refined (2026-06-08):** #14 (auto-derived MCP schemas, L) deferred to v2 —
-it's the only item that breaks the atomic-shipment rule; #13 captures most of the
-value at S effort. v1 is now 13 items.
+**Cut refined:** #14 (auto-derived MCP schemas, L) deferred to v2 — the only item
+that breaks the atomic-shipment rule; #13 captures most of the value at S. v1 = 13.
 
-**Decided next build order** (re-ranked for production-readiness + mass appeal +
-single-binary; the LLM gateway is pulled earlier than the original Phase 3 because
-the OpenAI-compatible endpoint is the single biggest adoption multiplier):
+**Remaining v1 build order** (re-ranked for production-readiness + mass appeal +
+single-binary):
 
-1. **Codebase hardening first** — fix the WS `invoke_generic` liveness/respawn
-   asymmetry (`src/process/mod.rs`), parse WS `$connect` query params
-   (`src/ws/upgrade.rs`), reject `concurrency = 0` in `validate()`. Surgical,
-   high-ROW, all TDD. (Surfaced by the codebase-health assessment.)
-2. **#8 → #10** LLM gateway → OpenAI-compatible endpoint — biggest adoption multiplier.
-3. **#1** Event reporting (zero deps, production table-stakes; foundation for #7 + v2 replay).
-4. **#2 → #3 → #4** WASM runtime → guards — the category-defining differentiator.
-5. **#11 → #12** MCP Streamable HTTP / SSE → progress notifications (cheap spec wins).
-6. **#13** Per-route MCP tool schemas (~30% tool-calling accuracy lift, S effort).
+1. **#2 → #3 → #4** WASM runtime → guards — the category-defining differentiator
+   ("Lambda emulator with WASM" = category of one); self-contained (wasmtime in-binary).
+2. **#1** Event reporting (zero deps, production table-stakes; foundation for #7 + v2 replay).
+3. **#11 → #12** MCP Streamable HTTP / SSE → progress notifications (cheap spec wins).
+4. **#13** Per-route MCP tool schemas (~30% tool-calling accuracy lift, S effort).
+5. **#7** OpenTelemetry exporter (infra spans; table-stakes observability).
+6. **#6** Go native runtime (after the static-binary refactor).
 
 Each loop iteration: show the plan + what's next, build the lead item end-to-end
 with tests, keep slop out, and re-rank as reality changes.
