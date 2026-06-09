@@ -36,6 +36,9 @@ pub async fn chat_completions(gw: Arc<Gateway>, Json(req): Json<ChatRequest>) ->
         Err(e @ ProviderError::BadRequest(_)) => {
             openai_error(StatusCode::BAD_REQUEST, &e.to_string())
         }
+        Err(e @ ProviderError::BudgetExceeded) => {
+            openai_error(StatusCode::PRECONDITION_FAILED, &e.to_string())
+        }
         Err(e) => openai_error(StatusCode::BAD_GATEWAY, &e.to_string()),
     }
 }
@@ -107,8 +110,23 @@ pub async fn embeddings(gw: Arc<Gateway>, Json(req): Json<EmbeddingsRequest>) ->
         Err(e @ ProviderError::BadRequest(_)) => {
             openai_error(StatusCode::BAD_REQUEST, &e.to_string())
         }
+        Err(e @ ProviderError::BudgetExceeded) => {
+            openai_error(StatusCode::PRECONDITION_FAILED, &e.to_string())
+        }
         Err(e) => openai_error(StatusCode::BAD_GATEWAY, &e.to_string()),
     }
+}
+
+/// `GET /_riz/v1/usage` — cumulative cost + token telemetry (AI-FinOps).
+pub async fn usage(gw: Arc<Gateway>) -> Response {
+    let (budget, total, providers) = gw.usage_snapshot();
+    Json(json!({
+        "budget_usd": budget,
+        "total_cost_usd": total,
+        "budget_remaining_usd": budget.map(|b| (b - total).max(0.0)),
+        "providers": providers,
+    }))
+    .into_response()
 }
 
 /// `GET /_riz/v1/models` — lists configured providers as model ids. Use a

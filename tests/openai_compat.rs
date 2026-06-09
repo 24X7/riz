@@ -115,6 +115,68 @@ async fn models_lists_configured_providers() {
     assert!(ids.contains(&"mock"), "models must list the mock provider: {ids:?}");
 }
 
+const BUDGET_CFG: &str = r#"
+[server]
+port = 0
+host = "127.0.0.1"
+
+[gateway]
+default_provider = "mock"
+budget_usd = 0.0
+
+[gateway.providers.mock]
+kind = "mock"
+"#;
+
+#[tokio::test]
+async fn usage_endpoint_reports_cost_after_a_call() {
+    let addr = boot(GATEWAY_CFG).await;
+    let base = format!("http://{addr}");
+    wait_ready(&base).await;
+
+    let _ = reqwest::Client::new()
+        .post(format!("{base}/_riz/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": "mock",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": false
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    let usage: serde_json::Value = reqwest::get(format!("{base}/_riz/v1/usage"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        usage["total_cost_usd"].as_f64().unwrap() > 0.0,
+        "usage must report cost after a call: {usage}"
+    );
+    assert!(usage["providers"]["mock"]["requests"].as_u64().unwrap() >= 1);
+}
+
+#[tokio::test]
+async fn budget_zero_rejects_with_412() {
+    let addr = boot(BUDGET_CFG).await;
+    let base = format!("http://{addr}");
+    wait_ready(&base).await;
+
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/_riz/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": "mock",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": false
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 412, "budget_usd = 0 must reject with 412");
+}
+
 #[tokio::test]
 async fn embeddings_returns_openai_shape() {
     let addr = boot(GATEWAY_CFG).await;

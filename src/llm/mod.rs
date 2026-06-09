@@ -11,13 +11,16 @@
 //! enum dispatch keeps it dependency-free and dyn-compatible without async-trait.
 
 use std::collections::HashMap;
+use std::sync::Mutex;
 
+pub mod cost;
 pub mod mock;
 pub mod openai;
 pub mod types;
 
 pub use types::{ChatRequest, ChatResponse, EmbeddingsRequest, EmbeddingsResponse};
 
+use cost::ProviderUsage;
 use mock::MockProvider;
 use openai::OpenAiProvider;
 
@@ -36,6 +39,9 @@ pub enum ProviderError {
     /// The request itself is invalid (e.g. no messages) — NOT a fallback candidate.
     #[error("invalid request: {0}")]
     BadRequest(String),
+    /// Cumulative spend reached the configured `budget_usd` cap (→ HTTP 412).
+    #[error("budget exceeded: cumulative spend reached the configured budget_usd cap")]
+    BudgetExceeded,
 }
 
 /// A configured provider. One variant per supported backend; the real HTTP
@@ -82,6 +88,11 @@ pub struct Gateway {
     providers: HashMap<String, Provider>,
     default_provider: String,
     fallback_chain: Vec<String>,
+    /// Optional cumulative spend cap (USD). When set and reached, further
+    /// requests are rejected with [`ProviderError::BudgetExceeded`].
+    budget_usd: Option<f64>,
+    /// Cumulative per-provider usage ledger (requests, tokens, cost).
+    usage: Mutex<HashMap<String, ProviderUsage>>,
 }
 
 impl Gateway {
@@ -94,6 +105,45 @@ impl Gateway {
             providers,
             default_provider,
             fallback_chain,
+            budget_usd: None,
+            usage: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Set the cumulative spend cap.
+    pub fn with_budget(mut self, budget_usd: Option<f64>) -> Self {
+        self.budget_usd = budget_usd;
+        self
+    }
+
+    /// Total spend so far across all providers (USD).
+    pub fn total_cost_usd(&self) -> f64 {
+        self.usage
+            .lock()
+            .map(|u| u.values().map(|p| p.cost_usd).sum())
+            .unwrap_or(0.0)
+    }
+
+    /// Snapshot for `GET /_riz/v1/usage`: (budget, total cost, per-provider).
+    pub fn usage_snapshot(&self) -> (Option<f64>, f64, HashMap<String, ProviderUsage>) {
+        let map = self.usage.lock().map(|u| u.clone()).unwrap_or_default();
+        let total = map.values().map(|p| p.cost_usd).sum();
+        (self.budget_usd, total, map)
+    }
+
+    /// True when a budget is set and cumulative spend has reached it.
+    fn over_budget(&self) -> bool {
+        matches!(self.budget_usd, Some(cap) if self.total_cost_usd() >= cap)
+    }
+
+    /// Record a successful call's tokens + cost against a provider.
+    fn record_usage(&self, provider: &str, model: &str, tokens_in: u32, tokens_out: u32) {
+        if let Ok(mut ledger) = self.usage.lock() {
+            let entry = ledger.entry(provider.to_string()).or_default();
+            entry.requests += 1;
+            entry.tokens_in += tokens_in as u64;
+            entry.tokens_out += tokens_out as u64;
+            entry.cost_usd += cost::cost_usd(model, tokens_in, tokens_out);
         }
     }
 
@@ -137,11 +187,8 @@ impl Gateway {
                 names.first().map(|s| (*s).clone())
             })
             .unwrap_or_default();
-        Ok(Gateway::new(
-            providers,
-            default_provider,
-            cfg.fallback_chain.clone(),
-        ))
+        Ok(Gateway::new(providers, default_provider, cfg.fallback_chain.clone())
+            .with_budget(cfg.budget_usd))
     }
 
     /// Names of all configured providers (for `GET /_riz/v1/models`).
@@ -181,6 +228,9 @@ impl Gateway {
     /// order; returns the first success. A `BadRequest` short-circuits (no point
     /// falling back). If every provider fails, returns the last error.
     pub async fn chat(&self, req: &ChatRequest) -> Result<ChatResponse, ProviderError> {
+        if self.over_budget() {
+            return Err(ProviderError::BudgetExceeded);
+        }
         let order = self.attempt_order(&req.model);
         if order.is_empty() {
             return Err(ProviderError::Unavailable(
@@ -192,7 +242,15 @@ impl Gateway {
         for name in order {
             let provider = &self.providers[&name];
             match provider.chat(req).await {
-                Ok(resp) => return Ok(resp),
+                Ok(resp) => {
+                    self.record_usage(
+                        &name,
+                        &req.model,
+                        resp.usage.prompt_tokens,
+                        resp.usage.completion_tokens,
+                    );
+                    return Ok(resp);
+                }
                 Err(e @ ProviderError::BadRequest(_)) => return Err(e),
                 Err(e) => {
                     tracing::warn!("gateway: provider '{name}' failed: {e}; trying next");
@@ -206,6 +264,9 @@ impl Gateway {
     /// Route an embeddings request through the provider chain (same routing +
     /// fallback semantics as [`chat`](Self::chat)).
     pub async fn embed(&self, req: EmbeddingsRequest) -> Result<EmbeddingsResponse, ProviderError> {
+        if self.over_budget() {
+            return Err(ProviderError::BudgetExceeded);
+        }
         let model = req.model.clone();
         let inputs = req.input.into_vec();
         if inputs.is_empty() {
@@ -221,7 +282,10 @@ impl Gateway {
         let mut last_err = None;
         for name in order {
             match self.providers[&name].embed(&model, inputs.clone()).await {
-                Ok(resp) => return Ok(resp),
+                Ok(resp) => {
+                    self.record_usage(&name, &model, resp.usage.prompt_tokens, 0);
+                    return Ok(resp);
+                }
                 Err(e @ ProviderError::BadRequest(_)) => return Err(e),
                 Err(e) => {
                     tracing::warn!("gateway: provider '{name}' embed failed: {e}; trying next");
@@ -342,6 +406,20 @@ kind = "ollama"
             "fallback must reach the mock provider; got: {}",
             resp.choices[0].message.content
         );
+    }
+
+    #[tokio::test]
+    async fn records_usage_and_enforces_budget() {
+        let mut providers = HashMap::new();
+        providers.insert("mock".to_string(), Provider::Mock(MockProvider));
+        let gw = Gateway::new(providers, "mock".into(), vec!["mock".into()])
+            .with_budget(Some(0.000001));
+        // First call: budget checked before the call (cost starts at 0) → proceeds.
+        gw.chat(&user_req("mock", "hello world")).await.unwrap();
+        assert!(gw.total_cost_usd() > 0.0, "usage must record non-zero cost");
+        // Cumulative cost now exceeds the tiny cap → next call is rejected.
+        let err = gw.chat(&user_req("mock", "again")).await.unwrap_err();
+        assert!(matches!(err, ProviderError::BudgetExceeded), "got {err:?}");
     }
 
     #[tokio::test]

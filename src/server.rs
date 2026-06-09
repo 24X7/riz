@@ -111,6 +111,14 @@ pub fn build_app(state: Arc<AppState>) -> AxumRouter {
                             async move { crate::system::openai_compat::models(gw).await }
                         }),
                     );
+                    let gw_usage = gw.clone();
+                    app = app.route(
+                        "/_riz/v1/usage",
+                        get(move || {
+                            let gw = gw_usage.clone();
+                            async move { crate::system::openai_compat::usage(gw).await }
+                        }),
+                    );
                     info!("LLM gateway enabled — OpenAI-compatible endpoint at /_riz/v1");
                 }
                 Err(e) => error!("gateway disabled: failed to build from config: {e}"),

@@ -90,6 +90,9 @@ pub struct GatewayConfig {
     pub default_provider: Option<String>,
     pub fallback_chain: Vec<String>,
     pub providers: std::collections::HashMap<String, ProviderConfig>,
+    /// Optional cumulative spend cap (USD). Once reached, the gateway rejects
+    /// further requests with HTTP 412.
+    pub budget_usd: Option<f64>,
 }
 
 impl GatewayConfig {

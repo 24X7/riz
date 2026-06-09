@@ -167,6 +167,10 @@ run "curl -s -X POST -H 'content-type: application/json' \\
   -d '{\"model\":\"mock\",\"input\":[\"the quick brown fox\",\"lorem ipsum\"]}' \\
   $BASE/_riz/v1/embeddings | JQ '{object, model, count: (.data | length), dims: (.data[0].embedding | length), usage}'"
 
+sub "GET /_riz/v1/usage — AI-FinOps: cumulative cost + tokens, per provider."
+run "curl -s $BASE/_riz/v1/usage | JQ ."
+sub "Set [gateway] budget_usd to cap spend — over-budget requests return HTTP 412."
+
 sub "The OFFICIAL openai python client, pointed at riz via base_url:"
 if python3 -c 'import openai' >/dev/null 2>&1; then
   printf '%s$ OpenAI(base_url="%s/_riz/v1").chat.completions.create(model="mock", ...)%s\n' "$CYAN" "$BASE" "$RESET"
