@@ -120,10 +120,25 @@ pub async fn embeddings(gw: Arc<Gateway>, Json(req): Json<EmbeddingsRequest>) ->
 /// `GET /_riz/v1/usage` — cumulative cost + token telemetry (AI-FinOps).
 pub async fn usage(gw: Arc<Gateway>) -> Response {
     let (budget, total, providers) = gw.usage_snapshot();
+    let round6 = |x: f64| (x * 1e6).round() / 1e6;
+    let providers: serde_json::Map<String, serde_json::Value> = providers
+        .into_iter()
+        .map(|(name, u)| {
+            (
+                name,
+                json!({
+                    "requests": u.requests,
+                    "tokens_in": u.tokens_in,
+                    "tokens_out": u.tokens_out,
+                    "cost_usd": round6(u.cost_usd),
+                }),
+            )
+        })
+        .collect();
     Json(json!({
         "budget_usd": budget,
-        "total_cost_usd": total,
-        "budget_remaining_usd": budget.map(|b| (b - total).max(0.0)),
+        "total_cost_usd": round6(total),
+        "budget_remaining_usd": budget.map(|b| round6((b - total).max(0.0))),
         "providers": providers,
     }))
     .into_response()
