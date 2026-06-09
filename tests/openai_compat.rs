@@ -116,7 +116,7 @@ async fn models_lists_configured_providers() {
 }
 
 #[tokio::test]
-async fn streaming_request_is_rejected_until_supported() {
+async fn streaming_returns_openai_sse_chunks() {
     let addr = boot(GATEWAY_CFG).await;
     let base = format!("http://{addr}");
     wait_ready(&base).await;
@@ -124,12 +124,31 @@ async fn streaming_request_is_rejected_until_supported() {
     let resp = reqwest::Client::new()
         .post(format!("{base}/_riz/v1/chat/completions"))
         .json(&serde_json::json!({
-            "model": "gpt-4o",
-            "messages": [{"role": "user", "content": "hi"}],
+            "model": "mock",
+            "messages": [{"role": "user", "content": "hello stream"}],
             "stream": true
         }))
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 400);
+    assert_eq!(resp.status(), 200);
+    let ctype = resp.headers()["content-type"].to_str().unwrap().to_string();
+    assert!(
+        ctype.contains("text/event-stream"),
+        "streaming response must be SSE; got content-type {ctype}"
+    );
+    let body = resp.text().await.unwrap();
+    // OpenAI streaming wire format: chunk objects then a [DONE] sentinel.
+    assert!(
+        body.contains("chat.completion.chunk"),
+        "must emit chat.completion.chunk objects; got: {body}"
+    );
+    assert!(
+        body.contains("hello") && body.contains("stream"),
+        "streamed content must include the echoed prompt words; got: {body}"
+    );
+    // The role delta opens the stream and a stop finish_reason closes it.
+    assert!(body.contains("\"role\":\"assistant\""), "got: {body}");
+    assert!(body.contains("\"finish_reason\":\"stop\""), "got: {body}");
+    assert!(body.contains("[DONE]"), "must end with [DONE]; got: {body}");
 }
