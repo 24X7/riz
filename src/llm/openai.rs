@@ -3,7 +3,7 @@
 //! (against a local Ollama's `/v1` endpoint) — same wire format, different
 //! base URL and auth.
 
-use super::types::ChatRequest;
+use super::types::{ChatRequest, EmbeddingsResponse};
 use super::{ChatResponse, ProviderError};
 
 pub struct OpenAiProvider {
@@ -70,6 +70,35 @@ impl OpenAiProvider {
             ));
         }
         resp.json::<ChatResponse>().await.map_err(|e| {
+            ProviderError::Upstream(self.name.clone(), format!("malformed response: {e}"))
+        })
+    }
+
+    pub async fn embed(
+        &self,
+        model: &str,
+        inputs: Vec<String>,
+    ) -> Result<EmbeddingsResponse, ProviderError> {
+        let model = strip_prefix(model, &self.name);
+        let body = serde_json::json!({ "model": model, "input": inputs });
+        let url = format!("{}/embeddings", self.base_url.trim_end_matches('/'));
+        let mut rb = self.client.post(&url).json(&body);
+        if let Some(key) = &self.api_key {
+            rb = rb.bearer_auth(key);
+        }
+        let resp = rb
+            .send()
+            .await
+            .map_err(|e| ProviderError::Unavailable(self.name.clone(), e.to_string()))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let txt: String = resp.text().await.unwrap_or_default().chars().take(300).collect();
+            return Err(ProviderError::Upstream(
+                self.name.clone(),
+                format!("HTTP {status}: {txt}"),
+            ));
+        }
+        resp.json::<EmbeddingsResponse>().await.map_err(|e| {
             ProviderError::Upstream(self.name.clone(), format!("malformed response: {e}"))
         })
     }

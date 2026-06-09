@@ -162,6 +162,11 @@ run "curl -sN -X POST -H 'content-type: application/json' \\
   -d '{\"model\":\"mock\",\"messages\":[{\"role\":\"user\",\"content\":\"stream me\"}],\"stream\":true}' \\
   $BASE/_riz/v1/chat/completions | head -7"
 
+sub "POST /_riz/v1/embeddings — OpenAI embeddings shape (deterministic mock vectors)."
+run "curl -s -X POST -H 'content-type: application/json' \\
+  -d '{\"model\":\"mock\",\"input\":[\"the quick brown fox\",\"lorem ipsum\"]}' \\
+  $BASE/_riz/v1/embeddings | JQ '{object, model, count: (.data | length), dims: (.data[0].embedding | length), usage}'"
+
 sub "The OFFICIAL openai python client, pointed at riz via base_url:"
 if python3 -c 'import openai' >/dev/null 2>&1; then
   printf '%s$ OpenAI(base_url="%s/_riz/v1").chat.completions.create(model="mock", ...)%s\n' "$CYAN" "$BASE" "$RESET"

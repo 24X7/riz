@@ -95,6 +95,14 @@ pub fn build_app(state: Arc<AppState>) -> AxumRouter {
                             }
                         }),
                     );
+                    let gw_embed = gw.clone();
+                    app = app.route(
+                        "/_riz/v1/embeddings",
+                        post(move |body: Json<crate::llm::EmbeddingsRequest>| {
+                            let gw = gw_embed.clone();
+                            async move { crate::system::openai_compat::embeddings(gw, body).await }
+                        }),
+                    );
                     let gw_models = gw.clone();
                     app = app.route(
                         "/_riz/v1/models",

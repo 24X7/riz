@@ -2,7 +2,10 @@
 //! gateway and the OpenAI-compatible endpoint can be exercised in CI, demos,
 //! and offline development without any API key or upstream service.
 
-use super::types::{approx_tokens, ChatRequest, ChatResponse};
+use super::types::{
+    approx_tokens, mock_embedding, ChatRequest, ChatResponse, EmbeddingData, EmbeddingsResponse,
+    Usage,
+};
 use super::ProviderError;
 
 #[derive(Debug)]
@@ -34,5 +37,36 @@ impl MockProvider {
             prompt_tokens,
             completion_tokens,
         ))
+    }
+
+    pub async fn embed(
+        &self,
+        model: &str,
+        inputs: Vec<String>,
+    ) -> Result<EmbeddingsResponse, ProviderError> {
+        const DIMS: usize = 16;
+        let mut prompt_tokens = 0u32;
+        let data = inputs
+            .iter()
+            .enumerate()
+            .map(|(i, text)| {
+                prompt_tokens += approx_tokens(text);
+                EmbeddingData {
+                    object: "embedding".into(),
+                    embedding: mock_embedding(text, DIMS),
+                    index: i as u32,
+                }
+            })
+            .collect();
+        Ok(EmbeddingsResponse {
+            object: "list".into(),
+            data,
+            model: model.to_string(),
+            usage: Usage {
+                prompt_tokens,
+                completion_tokens: 0,
+                total_tokens: prompt_tokens,
+            },
+        })
     }
 }

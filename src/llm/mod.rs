@@ -16,7 +16,7 @@ pub mod mock;
 pub mod openai;
 pub mod types;
 
-pub use types::{ChatRequest, ChatResponse};
+pub use types::{ChatRequest, ChatResponse, EmbeddingsRequest, EmbeddingsResponse};
 
 use mock::MockProvider;
 use openai::OpenAiProvider;
@@ -61,6 +61,17 @@ impl Provider {
         match self {
             Provider::Mock(p) => p.chat(req).await,
             Provider::OpenAi(p) => p.chat(req).await,
+        }
+    }
+
+    pub async fn embed(
+        &self,
+        model: &str,
+        inputs: Vec<String>,
+    ) -> Result<EmbeddingsResponse, ProviderError> {
+        match self {
+            Provider::Mock(p) => p.embed(model, inputs).await,
+            Provider::OpenAi(p) => p.embed(model, inputs).await,
         }
     }
 }
@@ -185,6 +196,35 @@ impl Gateway {
                 Err(e @ ProviderError::BadRequest(_)) => return Err(e),
                 Err(e) => {
                     tracing::warn!("gateway: provider '{name}' failed: {e}; trying next");
+                    last_err = Some(e);
+                }
+            }
+        }
+        Err(last_err.unwrap())
+    }
+
+    /// Route an embeddings request through the provider chain (same routing +
+    /// fallback semantics as [`chat`](Self::chat)).
+    pub async fn embed(&self, req: EmbeddingsRequest) -> Result<EmbeddingsResponse, ProviderError> {
+        let model = req.model.clone();
+        let inputs = req.input.into_vec();
+        if inputs.is_empty() {
+            return Err(ProviderError::BadRequest("embeddings input is empty".into()));
+        }
+        let order = self.attempt_order(&model);
+        if order.is_empty() {
+            return Err(ProviderError::Unavailable(
+                model,
+                "no provider configured and no fallback available".into(),
+            ));
+        }
+        let mut last_err = None;
+        for name in order {
+            match self.providers[&name].embed(&model, inputs.clone()).await {
+                Ok(resp) => return Ok(resp),
+                Err(e @ ProviderError::BadRequest(_)) => return Err(e),
+                Err(e) => {
+                    tracing::warn!("gateway: provider '{name}' embed failed: {e}; trying next");
                     last_err = Some(e);
                 }
             }

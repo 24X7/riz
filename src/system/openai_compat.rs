@@ -23,7 +23,7 @@ use axum::{
 use futures_util::stream;
 use serde_json::json;
 
-use crate::llm::{ChatRequest, ChatResponse, Gateway, ProviderError};
+use crate::llm::{ChatRequest, ChatResponse, EmbeddingsRequest, Gateway, ProviderError};
 
 /// `POST /_riz/v1/chat/completions` — OpenAI chat-completions shape.
 /// `stream: true` returns an SSE stream of `chat.completion.chunk` events
@@ -98,6 +98,17 @@ fn chunk_event(
         "choices": [{ "index": 0, "delta": delta, "finish_reason": finish_reason }],
     });
     Event::default().data(chunk.to_string())
+}
+
+/// `POST /_riz/v1/embeddings` — OpenAI embeddings shape.
+pub async fn embeddings(gw: Arc<Gateway>, Json(req): Json<EmbeddingsRequest>) -> Response {
+    match gw.embed(req).await {
+        Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
+        Err(e @ ProviderError::BadRequest(_)) => {
+            openai_error(StatusCode::BAD_REQUEST, &e.to_string())
+        }
+        Err(e) => openai_error(StatusCode::BAD_GATEWAY, &e.to_string()),
+    }
 }
 
 /// `GET /_riz/v1/models` — lists configured providers as model ids. Use a

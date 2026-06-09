@@ -116,6 +116,43 @@ async fn models_lists_configured_providers() {
 }
 
 #[tokio::test]
+async fn embeddings_returns_openai_shape() {
+    let addr = boot(GATEWAY_CFG).await;
+    let base = format!("http://{addr}");
+    wait_ready(&base).await;
+
+    let body: serde_json::Value = reqwest::Client::new()
+        .post(format!("{base}/_riz/v1/embeddings"))
+        .json(&serde_json::json!({ "model": "mock", "input": ["alpha", "beta"] }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["object"], "list");
+    let data = body["data"].as_array().unwrap();
+    assert_eq!(data.len(), 2, "one embedding per input");
+    assert_eq!(data[0]["object"], "embedding");
+    assert_eq!(data[0]["index"], 0);
+    assert!(
+        data[0]["embedding"].as_array().unwrap().len() >= 8,
+        "embedding vector must be non-trivial"
+    );
+    // Deterministic: same input → same vector.
+    let again: serde_json::Value = reqwest::Client::new()
+        .post(format!("{base}/_riz/v1/embeddings"))
+        .json(&serde_json::json!({ "model": "mock", "input": "alpha" }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(again["data"][0]["embedding"], data[0]["embedding"]);
+}
+
+#[tokio::test]
 async fn streaming_returns_openai_sse_chunks() {
     let addr = boot(GATEWAY_CFG).await;
     let base = format!("http://{addr}");
