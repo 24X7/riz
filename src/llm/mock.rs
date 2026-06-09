@@ -5,6 +5,7 @@
 use super::types::{approx_tokens, ChatRequest, ChatResponse};
 use super::ProviderError;
 
+#[derive(Debug)]
 pub struct MockProvider;
 
 impl MockProvider {

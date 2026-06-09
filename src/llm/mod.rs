@@ -36,6 +36,7 @@ pub enum ProviderError {
 
 /// A configured provider. One variant per supported backend; the real HTTP
 /// providers (OpenAI/Anthropic/Ollama) land in follow-up commits.
+#[derive(Debug)]
 pub enum Provider {
     Mock(MockProvider),
 }
@@ -55,6 +56,7 @@ impl Provider {
 }
 
 /// The gateway: a named set of providers, a default, and a fallback chain.
+#[derive(Debug)]
 pub struct Gateway {
     providers: HashMap<String, Provider>,
     default_provider: String,
@@ -72,6 +74,38 @@ impl Gateway {
             default_provider,
             fallback_chain,
         }
+    }
+
+    /// Build a gateway from the parsed `[gateway]` config. Real HTTP providers
+    /// (openai/anthropic/ollama) are added in follow-up commits; until then an
+    /// unimplemented kind is a clear build error rather than a silent no-op.
+    pub fn from_config(cfg: &crate::config::GatewayConfig) -> Result<Self, String> {
+        let mut providers = HashMap::new();
+        for (name, pc) in &cfg.providers {
+            let provider = match pc.kind.as_str() {
+                "mock" => Provider::Mock(MockProvider),
+                other => {
+                    return Err(format!(
+                        "[gateway.providers.{name}] kind '{other}' is not yet implemented"
+                    ))
+                }
+            };
+            providers.insert(name.clone(), provider);
+        }
+        let default_provider = cfg
+            .default_provider
+            .clone()
+            .or_else(|| {
+                let mut names: Vec<&String> = providers.keys().collect();
+                names.sort();
+                names.first().map(|s| (*s).clone())
+            })
+            .unwrap_or_default();
+        Ok(Gateway::new(
+            providers,
+            default_provider,
+            cfg.fallback_chain.clone(),
+        ))
     }
 
     /// Names of all configured providers (for `GET /_riz/v1/models`).
@@ -189,6 +223,31 @@ mod tests {
         };
         let err = gw.chat(&req).await.unwrap_err();
         assert!(matches!(err, ProviderError::BadRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn from_config_builds_mock_and_routes() {
+        let toml_str = r#"
+default_provider = "mock"
+fallback_chain = ["mock"]
+[providers.mock]
+kind = "mock"
+"#;
+        let cfg: crate::config::GatewayConfig = toml::from_str(toml_str).unwrap();
+        let gw = Gateway::from_config(&cfg).expect("builds");
+        let resp = gw.chat(&user_req("anything", "hi")).await.unwrap();
+        assert!(resp.choices[0].message.content.contains("hi"));
+    }
+
+    #[test]
+    fn from_config_errors_on_unimplemented_kind() {
+        let toml_str = r#"
+[providers.openai]
+kind = "openai"
+"#;
+        let cfg: crate::config::GatewayConfig = toml::from_str(toml_str).unwrap();
+        let err = Gateway::from_config(&cfg).unwrap_err();
+        assert!(err.contains("not yet implemented"), "got: {err}");
     }
 
     #[tokio::test]

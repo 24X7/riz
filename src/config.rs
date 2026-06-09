@@ -69,6 +69,48 @@ pub struct CorsConfig {
     pub configured: bool,
 }
 
+/// LLM gateway configuration (`[gateway]`).
+///
+/// ```toml
+/// [gateway]
+/// default_provider = "mock"
+/// fallback_chain = ["mock"]
+///
+/// [gateway.providers.mock]
+/// kind = "mock"
+///
+/// [gateway.providers.openai]
+/// kind = "openai"
+/// api_key_env = "OPENAI_API_KEY"
+/// base_url = "https://api.openai.com/v1"
+/// ```
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct GatewayConfig {
+    pub default_provider: Option<String>,
+    pub fallback_chain: Vec<String>,
+    pub providers: std::collections::HashMap<String, ProviderConfig>,
+}
+
+impl GatewayConfig {
+    /// True when at least one provider is configured.
+    pub fn enabled(&self) -> bool {
+        !self.providers.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProviderConfig {
+    /// Backend kind: "mock" | "openai" | "anthropic" | "ollama".
+    pub kind: String,
+    /// Env var holding the API key (read at startup; never stored in config).
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+    /// Override the provider's base URL (e.g. a local Ollama or a proxy).
+    #[serde(default)]
+    pub base_url: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct Config {
     #[serde(default)]
@@ -87,6 +129,10 @@ pub struct Config {
     /// declares its own `[function.<name>.cors]` override.
     #[serde(default)]
     pub cors: CorsConfig,
+    /// LLM gateway: provider routing + fallback behind an OpenAI-compatible
+    /// endpoint. Absent/empty `[gateway]` → gateway disabled.
+    #[serde(default)]
+    pub gateway: GatewayConfig,
     /// Function-centric: one entry per function. Each function is a single
     /// process pool serving one or more routes (mirrors AWS Lambda + API GW v2
     /// — one Lambda, N route → function mappings, one execution environment).
@@ -568,6 +614,32 @@ impl Config {
                 }
             }
         }
+        // Gateway: validate provider kinds + that default/fallback names exist.
+        if self.gateway.enabled() {
+            const KNOWN_KINDS: [&str; 4] = ["mock", "openai", "anthropic", "ollama"];
+            for (pname, pcfg) in &self.gateway.providers {
+                if !KNOWN_KINDS.contains(&pcfg.kind.as_str()) {
+                    return Err(format!(
+                        "[gateway.providers.{pname}] kind = \"{}\" is not one of {KNOWN_KINDS:?}",
+                        pcfg.kind
+                    ));
+                }
+            }
+            if let Some(def) = &self.gateway.default_provider {
+                if !self.gateway.providers.contains_key(def) {
+                    return Err(format!(
+                        "[gateway] default_provider = \"{def}\" is not a configured provider"
+                    ));
+                }
+            }
+            for fb in &self.gateway.fallback_chain {
+                if !self.gateway.providers.contains_key(fb) {
+                    return Err(format!(
+                        "[gateway] fallback_chain entry \"{fb}\" is not a configured provider"
+                    ));
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -629,6 +701,61 @@ concurrency = 0
         assert!(
             err.contains("concurrency"),
             "error must mention concurrency; got: {err}"
+        );
+    }
+
+    #[test]
+    fn parses_and_validates_gateway_block() {
+        let toml_str = r#"
+[server]
+port = 3000
+
+[gateway]
+default_provider = "mock"
+fallback_chain = ["mock"]
+
+[gateway.providers.mock]
+kind = "mock"
+
+[function.api]
+runtime = "bun"
+handler = "./api.ts"
+"#;
+        let config: Config = toml::from_str(toml_str).expect("parses");
+        config.validate().expect("validates");
+        assert!(config.gateway.enabled());
+        assert_eq!(config.gateway.default_provider.as_deref(), Some("mock"));
+        assert_eq!(config.gateway.providers["mock"].kind, "mock");
+    }
+
+    #[test]
+    fn validate_rejects_unknown_provider_kind() {
+        let toml_str = r#"
+[server]
+port = 3000
+[gateway.providers.foo]
+kind = "bogus"
+"#;
+        let config: Config = toml::from_str(toml_str).expect("parses");
+        let err = config.validate().unwrap_err();
+        assert!(err.contains("kind"), "error must mention kind; got: {err}");
+    }
+
+    #[test]
+    fn validate_rejects_default_provider_not_configured() {
+        let toml_str = r#"
+[server]
+port = 3000
+[gateway]
+default_provider = "ghost"
+[gateway.providers.mock]
+kind = "mock"
+"#;
+        let config: Config = toml::from_str(toml_str).expect("parses");
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.contains("default_provider"),
+            "error must mention default_provider; got: {err}"
         );
     }
 
