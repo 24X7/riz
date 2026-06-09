@@ -143,6 +143,38 @@ sub "4) Built-in self-validating client — no external deps."
 run "$BIN mcp inspect 2>&1 | head -20"
 pause
 
+# ── LLM gateway / OpenAI-compatible API ─────────────────────────────
+banner "LLM gateway — OpenAI-compatible API at /_riz/v1"
+sub "Point any OpenAI client at /_riz/v1. The 'mock' provider is deterministic"
+sub "and network-free, so this runs with no API key."
+
+sub "GET /_riz/v1/models — configured providers."
+run "curl -s $BASE/_riz/v1/models | JQ ."
+
+sub "POST /_riz/v1/chat/completions — the OpenAI chat-completions shape."
+run "curl -s -X POST -H 'content-type: application/json' \\
+  -d '{\"model\":\"mock\",\"messages\":[{\"role\":\"user\",\"content\":\"hello riz\"}],\"stream\":false}' \\
+  $BASE/_riz/v1/chat/completions | JQ '{model, message: .choices[0].message, usage}'"
+
+sub "The OFFICIAL openai python client, pointed at riz via base_url:"
+if python3 -c 'import openai' >/dev/null 2>&1; then
+  printf '%s$ OpenAI(base_url="%s/_riz/v1").chat.completions.create(model="mock", ...)%s\n' "$CYAN" "$BASE" "$RESET"
+  RIZ_OPENAI_BASE="$BASE/_riz/v1" python3 - <<'PY'
+import os
+from openai import OpenAI
+c = OpenAI(base_url=os.environ["RIZ_OPENAI_BASE"], api_key="not-needed")
+r = c.chat.completions.create(
+    model="mock",
+    messages=[{"role": "user", "content": "hi from the openai client"}],
+    stream=False,
+)
+print("  ←", r.choices[0].message.content)
+PY
+else
+  warn "openai python package not installed (pip install openai) — the curl above is the exact wire format it speaks."
+fi
+pause
+
 # ── HTTP across all four runtimes ───────────────────────────────────
 banner "HTTP — four runtimes, one Lambda envelope"
 

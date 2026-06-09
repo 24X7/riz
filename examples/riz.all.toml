@@ -43,6 +43,19 @@ allow_headers = ["content-type", "authorization"]
 allow_credentials = true
 max_age_secs = 600
 
+# LLM gateway — exposes an OpenAI-compatible endpoint at /_riz/v1. The 'mock'
+# provider is deterministic + network-free so the demo needs no API key. To use
+# real models, add providers and a fallback_chain, e.g.:
+#   [gateway.providers.openai]
+#   kind = "openai"
+#   api_key_env = "OPENAI_API_KEY"
+[gateway]
+default_provider = "mock"
+fallback_chain = ["mock"]
+
+[gateway.providers.mock]
+kind = "mock"
+
 # ─────────────── Bun HTTP ───────────────
 
 [function.ping]
