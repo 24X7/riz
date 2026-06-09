@@ -15,6 +15,7 @@
 #   ANY  /echo-node             → echo-node (Node.js)
 #   ANY  /echo-python           → echo-python (Python)
 #   ANY  /echo-rust             → echo-rust (Rust)
+#   ANY  /echo-wasm             → echo-wasm (WASM / wasm32-wasip1, wasmtime sandbox)
 #   ANY  /protected             → events (Bun) gated by auth-allow-bun authorizer (allows)
 #   ANY  /forbidden             → events (Bun) gated by auth-deny-bun  authorizer (denies)
 #   WS   /chat                  → chat (Bun)
@@ -62,6 +63,13 @@ fallback_chain = ["mock"]
 
 [gateway.providers.mock]
 kind = "mock"
+
+# Local Ollama — a REAL model, no API key, fully on-box. The demo sends
+# model = "ollama/llama3.2:1b" to route here explicitly; the OpenAI-compatible
+# upstream defaults to http://localhost:11434/v1. If Ollama isn't running the
+# request transparently falls back to the mock provider (fallback_chain above).
+[gateway.providers.ollama]
+kind = "ollama"
 
 # ─────────────── Bun HTTP ───────────────
 
@@ -160,6 +168,25 @@ timeout_ms = 5000
 concurrency = 2
 [[function.echo-rust.routes]]
 path = "/echo-rust"
+method = "ANY"
+
+# ─────────────── WASM (wasm32-wasip1 under wasmtime) ───────────────
+# A capability-sandboxed .wasm handler — same Lambda envelope as every other
+# runtime, run by `riz __wasm-host` inside wasmtime's WASI sandbox. Deny-by-
+# default: stdio only. allowed_paths below become WASI preopens (host==guest);
+# stage_variables become the guest's environment. No filesystem/network beyond
+# what's granted here. Build: cd examples/lambdas/echo-wasm &&
+# cargo build --release --target wasm32-wasip1
+[function.echo-wasm]
+runtime = "wasm"
+handler = "./examples/lambdas/echo-wasm/target/wasm32-wasip1/release/echo-wasm.wasm"
+timeout_ms = 5000
+concurrency = 2
+allowed_paths = ["/tmp"]
+[function.echo-wasm.stage_variables]
+sandbox = "wasi"
+[[function.echo-wasm.routes]]
+path = "/echo-wasm"
 method = "ANY"
 
 # ─────────────── Authorizers ───────────────

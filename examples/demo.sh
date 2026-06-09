@@ -6,7 +6,10 @@
 # Boots one riz instance from examples/riz.all.toml and demonstrates, live:
 #   • System surface          /ready, /_riz/registry, /_riz/health, /_riz/metrics
 #   • MCP server (2025-11-25)  raw JSON-RPC wire test + built-in inspector
-#   • All FOUR runtimes        Bun, Node.js, Python, Rust — same Lambda envelope
+#   • LLM gateway (live)       OpenAI-compatible /_riz/v1 → a REAL local model
+#                              via Ollama (llama3.2:1b), plus the mock provider
+#   • All FIVE runtimes        Bun, Node.js, Python, Rust, WASM — one envelope
+#   • Capability-sandboxed WASM  a wasm32-wasip1 handler run under wasmtime
 #   • HTTP shapes              path params, query string, JSON body, all verbs (CRUD)
 #   • Response caching         cache HIT replays response; POST /cache/invalidate evicts
 #   • CORS                     OPTIONS preflight + Access-Control-Allow-Origin
@@ -22,7 +25,11 @@
 #
 # Prereqs:
 #   - cargo build --release   (produces target/release/{riz,echo-rust,chat-rust})
+#   - the WASM echo handler    (this script builds it; needs the wasm target:
+#                               rustup target add wasm32-wasip1 — soft-skipped)
 #   - bun, node, python3 on PATH   (TS / JS / Python handlers)
+#   - ollama     (live local-model gateway demo; soft-skipped if missing —
+#                 install: brew install ollama)
 #   - websocat   (WS round-trips; soft-skipped if missing)
 #   - jq         (pretty-print; soft-skipped if missing)
 #
@@ -66,17 +73,69 @@ pause()  {
   read -r _
 }
 
+# ── Build the WASM handler ──────────────────────────────────────────
+# echo-wasm is an independent crate built for wasm32-wasip1 (not part of the
+# host workspace). Build it here so the wasm runtime has a module to run.
+WASM_DIR="$ROOT/examples/lambdas/echo-wasm"
+WASM_OUT="$WASM_DIR/target/wasm32-wasip1/release/echo-wasm.wasm"
+HAS_WASM=0
+banner "Building the WASM handler (wasm32-wasip1)"
+if [ -f "$WASM_OUT" ]; then
+  HAS_WASM=1
+  ok "already built: ${WASM_OUT#"$ROOT/"}"
+elif command -v rustup >/dev/null 2>&1 && rustup target list --installed 2>/dev/null | grep -q wasm32-wasip1; then
+  sub "cargo build --release --target wasm32-wasip1  (in examples/lambdas/echo-wasm)"
+  if (cd "$WASM_DIR" && cargo build --release --target wasm32-wasip1 >/tmp/riz-wasm-build.log 2>&1); then
+    HAS_WASM=1; ok "built ${WASM_OUT#"$ROOT/"}"
+  else
+    warn "wasm build failed (see /tmp/riz-wasm-build.log) — /echo-wasm will be skipped"
+  fi
+else
+  warn "wasm32-wasip1 target not installed — run: rustup target add wasm32-wasip1"
+  warn "the /echo-wasm runtime will be skipped (every other runtime still runs)"
+fi
+# If the module is missing, drop the echo-wasm function from the config we boot
+# so riz doctor/boot stays clean; otherwise use the full config as-is.
+CFG_RUN="$CFG"
+if [ "$HAS_WASM" = "0" ]; then
+  CFG_RUN="$(mktemp)"   # riz reads any path as TOML; extension is irrelevant
+  awk 'BEGIN{skip=0}
+       /^\[function\.echo-wasm\]/{skip=1}
+       /^\[function\.auth-allow\]/{skip=0}
+       skip==0{print}' "$CFG" > "$CFG_RUN"
+fi
+
 # ── Boot ────────────────────────────────────────────────────────────
 banner "Booting riz"
-sub "config: examples/riz.all.toml  (15 functions across Bun · Node.js · Python · Rust)"
+if [ "$HAS_WASM" = "1" ]; then
+  sub "config: examples/riz.all.toml  (16 functions across Bun · Node.js · Python · Rust · WASM)"
+else
+  sub "config: examples/riz.all.toml  (15 functions across Bun · Node.js · Python · Rust)"
+fi
 
 lsof -ti :3000 2>/dev/null | xargs -r kill -TERM 2>/dev/null || true
 sleep 1
 
 LOG=/tmp/riz-demo.log
-"$BIN" --log-level warn --config "$CFG" run >"$LOG" 2>&1 &
+"$BIN" --log-level warn --config "$CFG_RUN" run >"$LOG" 2>&1 &
 RIZ_PID=$!
-trap 'kill -TERM $RIZ_PID 2>/dev/null || true; wait $RIZ_PID 2>/dev/null || true' EXIT INT TERM
+
+# Single cleanup path for every exit. Vars are pre-initialised so `set -u`
+# is happy if we exit before they're assigned. Handles: the riz server, an
+# ollama server we started (not a pre-existing one), the hot-reload handler
+# restore, and the temp no-wasm config.
+OLLAMA_PID=""; PING_BAK=""; PING_TS=""
+cleanup() {
+  kill -TERM "$RIZ_PID" 2>/dev/null || true
+  wait "$RIZ_PID" 2>/dev/null || true
+  [ -n "$OLLAMA_PID" ] && kill -TERM "$OLLAMA_PID" 2>/dev/null || true
+  if [ -n "$PING_BAK" ] && [ -f "$PING_BAK" ]; then
+    cp "$PING_BAK" "$PING_TS" 2>/dev/null || true
+    rm -f "$PING_BAK"
+  fi
+  [ "$CFG_RUN" != "$CFG" ] && rm -f "$CFG_RUN" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
 
 printf '%swaiting for /ready %s' "$DIM" "$RESET"
 for _ in $(seq 1 30); do
@@ -87,9 +146,73 @@ for _ in $(seq 1 30); do
   printf '.'
   sleep 1
 done
-sleep 2  # let bun/node/python/rust workers finish spawning
+sleep 2  # let bun/node/python/rust/wasm workers finish spawning
 sub "logs streaming to $LOG  (pid $RIZ_PID)"
 pause
+
+# ── Ollama warm-up (live LLM gateway) ───────────────────────────────
+# Kick this off early so the model is loaded by the time we hit the gateway
+# section. Entirely soft: if anything is missing the gateway demo uses mock.
+OLLAMA_MODEL="llama3.2:1b"
+OLLAMA_READY=0
+# Resolve a WORKING ollama binary. The Homebrew *formula* (brew install ollama)
+# has historically shipped without its `llama-server` inference runner, so
+# `ollama serve` starts but every inference 500s. The official prebuilt app
+# (brew install --cask ollama-app → /Applications/Ollama.app) bundles the
+# runner, so prefer it when present; otherwise fall back to ollama on PATH
+# (correct on Linux via the official install).
+OLLAMA_BIN=""
+if [ -x "/Applications/Ollama.app/Contents/Resources/ollama" ]; then
+  OLLAMA_BIN="/Applications/Ollama.app/Contents/Resources/ollama"
+elif command -v ollama >/dev/null 2>&1; then
+  OLLAMA_BIN="$(command -v ollama)"
+fi
+if [ -n "$OLLAMA_BIN" ]; then
+  banner "Warming up Ollama (live local model: $OLLAMA_MODEL)"
+  sub "ollama binary: $OLLAMA_BIN"
+  # Start the server if nothing is listening on :11434.
+  if ! curl -fs http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+    sub "starting 'ollama serve' (background)…"
+    "$OLLAMA_BIN" serve >/tmp/riz-ollama.log 2>&1 &
+    OLLAMA_PID=$!
+    for _ in $(seq 1 30); do
+      curl -fs http://127.0.0.1:11434/api/tags >/dev/null 2>&1 && break
+      sleep 1
+    done
+  else
+    ok "ollama already serving on :11434"
+  fi
+  if curl -fs http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+    # Ensure the model is present (pull is idempotent; first run downloads ~1.3GB).
+    if "$OLLAMA_BIN" list 2>/dev/null | grep -q "$OLLAMA_MODEL"; then
+      ok "model $OLLAMA_MODEL present"
+    else
+      sub "pulling $OLLAMA_MODEL (first run only)…"
+      "$OLLAMA_BIN" pull "$OLLAMA_MODEL" >/tmp/riz-ollama-pull.log 2>&1 \
+        && ok "pulled $OLLAMA_MODEL" || warn "pull failed (see /tmp/riz-ollama-pull.log)"
+    fi
+    # Verify a REAL inference works (the formula-without-runner case 500s here).
+    if "$OLLAMA_BIN" list 2>/dev/null | grep -q "$OLLAMA_MODEL" && \
+       curl -fs http://127.0.0.1:11434/v1/chat/completions \
+         -H 'content-type: application/json' \
+         -d "{\"model\":\"$OLLAMA_MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stream\":false}" \
+         >/dev/null 2>&1; then
+      OLLAMA_READY=1
+      ok "live inference verified — gateway will route ollama/$OLLAMA_MODEL to a real model"
+    else
+      warn "ollama is up but inference failed (often a brew *formula* missing its llama-server"
+      warn "runner — install the prebuilt app: brew install --cask ollama-app). Using mock."
+    fi
+  else
+    warn "ollama did not come up — gateway demo will use the mock provider"
+  fi
+  # An ollama server we started is torn down by cleanup() on exit; a
+  # pre-existing one (OLLAMA_PID empty) is left running.
+  pause
+else
+  warn "ollama not found — live-model gateway demo falls back to mock"
+  warn "(install: brew install --cask ollama-app — bundles the llama-server runner)"
+fi
 
 # ── System surface ──────────────────────────────────────────────────
 banner "System surface — every riz instance exposes these without config"
@@ -145,18 +268,29 @@ pause
 
 # ── LLM gateway / OpenAI-compatible API ─────────────────────────────
 banner "LLM gateway — OpenAI-compatible API at /_riz/v1"
-sub "Point any OpenAI client at /_riz/v1. The 'mock' provider is deterministic"
-sub "and network-free, so this runs with no API key. Real providers ship too —"
-sub "add [gateway.providers.*] kind=openai/anthropic/ollama; route by model"
-sub "prefix (e.g. anthropic/claude-opus-4-8) + automatic fallback."
+sub "Point any OpenAI client at /_riz/v1. Two providers are wired here: 'mock'"
+sub "(deterministic, network-free) and 'ollama' (a REAL local model, no key)."
+sub "Route by model prefix — \"mock\" vs \"ollama/$OLLAMA_MODEL\" — with automatic"
+sub "fallback. openai/anthropic providers ship too (kind=openai/anthropic + key)."
 
 sub "GET /_riz/v1/models — configured providers."
 run "curl -s $BASE/_riz/v1/models | JQ ."
 
-sub "POST /_riz/v1/chat/completions — the OpenAI chat-completions shape."
+sub "POST /_riz/v1/chat/completions — the OpenAI chat-completions shape (mock)."
 run "curl -s -X POST -H 'content-type: application/json' \\
   -d '{\"model\":\"mock\",\"messages\":[{\"role\":\"user\",\"content\":\"hello riz\"}],\"stream\":false}' \\
   $BASE/_riz/v1/chat/completions | JQ '{model, message: .choices[0].message, usage}'"
+
+if [ "$OLLAMA_READY" = "1" ]; then
+  sub "Same endpoint, a REAL local model — model=\"ollama/$OLLAMA_MODEL\" routes to"
+  sub "the on-box Ollama provider (no API key, no cloud). This is a live inference:"
+  run "curl -s -X POST -H 'content-type: application/json' \\
+  -d '{\"model\":\"ollama/$OLLAMA_MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"In one short sentence, what is AWS Lambda?\"}],\"stream\":false}' \\
+  $BASE/_riz/v1/chat/completions | JQ '{model, reply: .choices[0].message.content, usage}'"
+  ok "real model · routed by model-prefix · cost+tokens attributed (see /_riz/v1/usage below)"
+else
+  sub "(A real local model via Ollama would appear here — ollama not ready, using mock.)"
+fi
 
 sub "stream=true — Server-Sent Events (chat.completion.chunk … then [DONE])."
 run "curl -sN -X POST -H 'content-type: application/json' \\
@@ -191,8 +325,8 @@ else
 fi
 pause
 
-# ── HTTP across all four runtimes ───────────────────────────────────
-banner "HTTP — four runtimes, one Lambda envelope"
+# ── HTTP across all runtimes ────────────────────────────────────────
+banner "HTTP — five runtimes, one Lambda envelope"
 
 sub "ping (Bun) — simplest possible handler."
 run "curl -s $BASE/ping"
@@ -205,6 +339,14 @@ run "curl -s -X POST -d '{\"hello\":\"world\"}' $BASE/echo-python | JQ '{echo, m
 
 sub "echo-rust (Rust) — bare cargo binary, same envelope."
 run "curl -s '$BASE/echo-rust?name=alice' | JQ '{echo, method, functionName}'"
+
+if [ "$HAS_WASM" = "1" ]; then
+  sub "echo-wasm (WASM) — a wasm32-wasip1 module under wasmtime's WASI sandbox,"
+  sub "speaking the identical envelope. stageVariables.sandbox proves it's the wasm path."
+  run "curl -s '$BASE/echo-wasm?name=alice' | JQ '{echo, method, functionName, sandbox: .stageVariables.sandbox}'"
+else
+  warn "echo-wasm skipped (wasm module not built — see the build step above)"
+fi
 pause
 
 # ── HTTP request shapes ─────────────────────────────────────────────
@@ -298,8 +440,7 @@ banner "Handler hot-reload — edit a handler, next request runs new code (no re
 PING_TS="$ROOT/examples/lambdas/ping/index.ts"
 PING_BAK="$(mktemp)"
 cp "$PING_TS" "$PING_BAK"
-# Ensure the original is restored no matter how the script exits.
-trap 'kill -TERM $RIZ_PID 2>/dev/null || true; wait $RIZ_PID 2>/dev/null || true; cp "$PING_BAK" "$PING_TS" 2>/dev/null || true; rm -f "$PING_BAK"' EXIT INT TERM
+# cleanup() (set at boot) restores PING_TS from PING_BAK on any exit.
 
 sub "before:"
 run "curl -s $BASE/ping"
