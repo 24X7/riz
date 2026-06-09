@@ -111,7 +111,7 @@ by-default: stdio only; `allowed_paths` → WASI preopens, `stage_variables` →
 guest env. Parity-tested in `tests/runtime_parity_request_shape.rs`
 (`wasm_echo_passes_path_and_query`, green next to bun/node/python/rust), example
 crate `examples/lambdas/echo-wasm/` (Rust→wasm), and demoed live in
-`examples/demo.sh`. Deferred to follow-ups: the `wasm-http` `riz init` template,
+`examples/demo.py`. Deferred to follow-ups: the `wasm-http` `riz init` template,
 the `allowed_hosts`/`clock_access` capability knobs, WASI Preview 2 / component
 model (we ship Preview 1 today), and the cold-start bench.
 
@@ -489,7 +489,7 @@ v1 ships here. v2 begins with replay / eval / semantic cache / OAuth / federatio
 - **#8 + #9 + #10 — the LLM gateway** (the whole AI-gateway slice): provider
   routing + fallback, OpenAI-compatible `/_riz/v1/{chat/completions,embeddings,
   models,usage}`, SSE streaming, mock + OpenAI + Ollama + Anthropic providers,
-  budget caps + cost telemetry. All TDD; demonstrated live in demo.sh.
+  budget caps + cost telemetry. All TDD; demonstrated live in demo.py.
 
 **Cut refined:** #14 (auto-derived MCP schemas, L) deferred to v2 — the only item
 that breaks the atomic-shipment rule; #13 captures most of the value at S. v1 = 13.

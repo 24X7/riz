@@ -31,7 +31,7 @@ emulator ships an MCP server or an LLM gateway; no AI gateway runs your Lambda c
 | 🤖 **An MCP server** | Every function in `riz.toml` becomes an agent-callable tool at `/_riz/mcp` (spec **2025-11-25**). Point Claude / Cursor at it — your existing APIs are agent-callable with **zero SDK code**. |
 | 💸 **An LLM gateway** | An OpenAI-compatible endpoint at `/_riz/v1/*`. Point any OpenAI client at it; route across **OpenAI / Anthropic / Ollama** with fallback, stream over SSE, and cap spend with budgets + per-provider cost telemetry. |
 
-**See it all, live:** clone the repo and run `./examples/demo.sh` — it boots one
+**See it all, live:** clone the repo and run `python3 examples/demo.py` — it boots one
 riz instance and exercises every capability (all 5 runtimes including WASM, MCP
 wire protocol, the LLM gateway against a **real local model via Ollama**, caching,
 CORS, auth, WebSocket, hot-reload, on-box safety, telemetry) with real output.
@@ -274,7 +274,7 @@ emulator ships. `runtime = "wasm"`: drop in a `wasm32-wasip1` `.wasm` and it run
 under wasmtime's WASI sandbox, deny-by-default for filesystem and network, with
 capabilities granted explicitly via `riz.toml` (`allowed_paths` → preopens,
 `stage_variables` → guest env). It's parity-tested against the bun/node/python/
-rust echo handlers and demoed live in `examples/demo.sh`.
+rust echo handlers and demoed live in `examples/demo.py`.
 
 **Next:** WASM pre/post guards (redact PII from *any* handler with one `.wasm`),
 event reporting, OpenTelemetry, per-route MCP schemas, and Go support.
