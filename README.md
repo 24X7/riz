@@ -1,10 +1,14 @@
 # Riz
 
-> **The self-hosted AWS Lambda runtime for the agent era.** Run your Lambda
-> handlers on your own box — unmodified — in **Bun, Node.js, Python, or Rust**.
-> Every function is automatically an **MCP tool**. Every LLM call routes through a
-> built-in **OpenAI-compatible gateway**. One ~10 MB Rust binary. No Docker, no
-> AWS bill.
+> **Make the HTTP APIs you already have agent-callable — without a rewrite.**
+> Riz runs your AWS Lambda HTTP/WebSocket handlers on your own box, *unmodified*
+> (Bun · Node.js · Python · Rust), and turns every one of them into an
+> **MCP tool** an agent can call. A built-in **OpenAI-compatible LLM gateway**
+> sits on the same binary, so the model calls your handlers make are routed,
+> governed, and costed too. One ~10 MB Rust binary. No Docker, no AWS bill.
+>
+> **Scope, up front:** riz runs **HTTP API Gateway v2 + WebSocket handlers**. It
+> is *not* a full AWS emulator — no SQS/SNS/S3/EventBridge, no IAM. By design.
 
 [Landing page](https://riz.dev) · [Releases](https://github.com/24X7/riz/releases) · MIT licensed
 
@@ -23,14 +27,33 @@ emulator ships an MCP server or an LLM gateway; no AI gateway runs your Lambda c
 
 | | What it gives you |
 |---|---|
-| ⚡ **A Lambda runtime** | Drop in AWS HTTP API v2 + WebSocket handlers **unchanged** — Bun, Node.js, Python, Rust. One process pool per function, sub-millisecond p99, no container per request, no cloud bill. |
+| ⚡ **A Lambda runtime** | Drop in AWS HTTP API v2 + WebSocket handlers **unchanged** — Bun, Node.js, Python, Rust. One warm process pool per function, no container per request, predictable GC-free latency, no cloud bill. |
 | 🤖 **An MCP server** | Every function in `riz.toml` becomes an agent-callable tool at `/_riz/mcp` (spec **2025-11-25**). Point Claude / Cursor at it — your existing APIs are agent-callable with **zero SDK code**. |
 | 💸 **An LLM gateway** | An OpenAI-compatible endpoint at `/_riz/v1/*`. Point any OpenAI client at it; route across **OpenAI / Anthropic / Ollama** with fallback, stream over SSE, and cap spend with budgets + per-provider cost telemetry. |
 
 **See it all, live:** clone the repo and run `./examples/demo.sh` — it boots one
 riz instance and exercises every capability (all 4 runtimes, MCP wire protocol,
 the LLM gateway, caching, CORS, auth, WebSocket, hot-reload, on-box safety,
-telemetry) with real output. No mocks, no API keys required.
+telemetry) with real output.
+
+## What riz is *not*
+
+Honest scope beats a leaky promise. Riz is deliberately narrow:
+
+- **Not a full AWS emulator.** HTTP/WS Lambda only — no SQS/SNS/S3/EventBridge/
+  DynamoDB-stream triggers, no Step Functions. Use real AWS (or LocalStack) for those.
+- **Not an IAM / credential emulator.** Riz doesn't inject AWS creds or assume
+  roles. A handler that calls the AWS SDK needs its own credentials in the
+  environment, same as anywhere.
+- **Not an edge/CDN platform.** It's a runtime you self-host, not a global network.
+- **Not yet a sandbox for untrusted code.** Today's isolation is process-level +
+  rlimits + (Linux) Landlock. The capability-sandboxed WASM runtime — the thing
+  that makes running LLM-generated code safe — is the next item on the roadmap,
+  not shipped yet.
+
+If you need the full AWS surface, reach for LocalStack. If you need an edge
+runtime, reach for Workers. Riz is the sharp tool for *HTTP/WS Lambda handlers
+that you want agents to call and govern.*
 
 ---
 
@@ -114,7 +137,7 @@ riz mcp inspect        # initialize + tools/list, one-screen report with schemas
 
 ---
 
-## 3 · An LLM gateway — the AI control plane, built in
+## 3 · An LLM gateway — route, govern, and cost every model call
 
 Configure a `[gateway]` block and riz exposes an **OpenAI-compatible** API at
 `/_riz/v1/*`. Every OpenAI client — the `openai` SDK, LangChain, LlamaIndex,
@@ -206,16 +229,15 @@ overhead, make them agent-callable, and route LLM traffic — all from one binar
 
 ## Performance
 
-A single host with a Bun ping handler at `concurrency = 20` (M-series, localhost):
+The honest story is qualitative: **no per-request container, no GC pauses,
+predictable latency.** Riz routes and dispatches in native Rust; your handler
+runs in a warm pooled process, so you pay one spawn at startup, not per request.
 
-| | |
-|---|---|
-| Throughput | **91,419 req/s** |
-| p50 latency | 152 µs |
-| p99 latency | **845 µs** (sub-millisecond) |
-
-Reproducible — see [`benches/README.md`](./benches/README.md). (Localhost
-loopback synthetic, not a stand-in for real handler workloads.)
+For the curious, a *router* microbenchmark — Bun `ping` over localhost at
+`concurrency = 20` (M-series) — sustains **91,419 req/s, p99 845 µs**. But that
+measures riz's dispatch path, not your handler: real throughput is bounded by
+your handler code and the stdin/stdout bridge to it. Methodology + caveats in
+[`benches/README.md`](./benches/README.md).
 
 ---
 
