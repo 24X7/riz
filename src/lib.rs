@@ -5,6 +5,7 @@ pub mod cors;
 pub mod deploy;
 pub mod gateway;
 pub mod hotreload;
+pub mod llm;
 pub mod metrics;
 pub mod process;
 pub mod router;
