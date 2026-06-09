@@ -147,7 +147,8 @@ pause
 banner "LLM gateway — OpenAI-compatible API at /_riz/v1"
 sub "Point any OpenAI client at /_riz/v1. The 'mock' provider is deterministic"
 sub "and network-free, so this runs with no API key. Real providers ship too —"
-sub "add [gateway.providers.*] kind=openai/ollama; requests route + fall back."
+sub "add [gateway.providers.*] kind=openai/anthropic/ollama; route by model"
+sub "prefix (e.g. anthropic/claude-opus-4-8) + automatic fallback."
 
 sub "GET /_riz/v1/models — configured providers."
 run "curl -s $BASE/_riz/v1/models | JQ ."

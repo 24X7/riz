@@ -45,10 +45,17 @@ max_age_secs = 600
 
 # LLM gateway — exposes an OpenAI-compatible endpoint at /_riz/v1. The 'mock'
 # provider is deterministic + network-free so the demo needs no API key. To use
-# real models, add providers and a fallback_chain, e.g.:
+# real models, add providers (kind = mock | openai | anthropic | ollama) and a
+# fallback_chain, e.g.:
 #   [gateway.providers.openai]
 #   kind = "openai"
 #   api_key_env = "OPENAI_API_KEY"
+#   [gateway.providers.anthropic]
+#   kind = "anthropic"
+#   api_key_env = "ANTHROPIC_API_KEY"
+#   [gateway.providers.ollama]      # local; no key
+#   kind = "ollama"
+# Then route by model prefix (e.g. "anthropic/claude-opus-4-8") or default_provider.
 [gateway]
 default_provider = "mock"
 fallback_chain = ["mock"]
