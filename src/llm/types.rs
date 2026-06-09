@@ -28,27 +28,40 @@ pub struct ChatMessage {
     pub content: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+// Deserialize is derived so the real providers can parse upstream OpenAI-shape
+// responses directly into these types (unknown upstream fields are ignored).
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatResponse {
     pub id: String,
-    pub object: &'static str,
+    #[serde(default = "default_object")]
+    pub object: String,
     pub created: i64,
     pub model: String,
     pub choices: Vec<ChatChoice>,
+    #[serde(default)]
     pub usage: Usage,
 }
 
-#[derive(Debug, Clone, Serialize)]
+fn default_object() -> String {
+    "chat.completion".into()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatChoice {
+    #[serde(default)]
     pub index: u32,
     pub message: ChatMessage,
+    #[serde(default)]
     pub finish_reason: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Usage {
+    #[serde(default)]
     pub prompt_tokens: u32,
+    #[serde(default)]
     pub completion_tokens: u32,
+    #[serde(default)]
     pub total_tokens: u32,
 }
 
@@ -62,7 +75,7 @@ impl ChatResponse {
             .unwrap_or(0);
         ChatResponse {
             id: format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()),
-            object: "chat.completion",
+            object: "chat.completion".into(),
             created,
             model: model.to_string(),
             choices: vec![ChatChoice {

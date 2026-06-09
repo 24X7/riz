@@ -13,11 +13,13 @@
 use std::collections::HashMap;
 
 pub mod mock;
+pub mod openai;
 pub mod types;
 
 pub use types::{ChatRequest, ChatResponse};
 
 use mock::MockProvider;
+use openai::OpenAiProvider;
 
 /// A provider error, tagged with the provider name so the gateway can log which
 /// hop failed and decide whether to fall back.
@@ -41,6 +43,8 @@ pub enum ProviderError {
 #[derive(Debug)]
 pub enum Provider {
     Mock(MockProvider),
+    /// OpenAI-compatible upstream (serves both `openai` and `ollama` kinds).
+    OpenAi(OpenAiProvider),
 }
 
 impl Provider {
@@ -49,12 +53,14 @@ impl Provider {
     pub fn kind(&self) -> &'static str {
         match self {
             Provider::Mock(_) => "mock",
+            Provider::OpenAi(_) => "openai-compatible",
         }
     }
 
     pub async fn chat(&self, req: &ChatRequest) -> Result<ChatResponse, ProviderError> {
         match self {
             Provider::Mock(p) => p.chat(req).await,
+            Provider::OpenAi(p) => p.chat(req).await,
         }
     }
 }
@@ -88,6 +94,21 @@ impl Gateway {
         for (name, pc) in &cfg.providers {
             let provider = match pc.kind.as_str() {
                 "mock" => Provider::Mock(MockProvider),
+                "openai" => {
+                    let base_url = pc
+                        .base_url
+                        .clone()
+                        .unwrap_or_else(|| "https://api.openai.com/v1".into());
+                    let api_key = pc.api_key_env.as_ref().and_then(|v| std::env::var(v).ok());
+                    Provider::OpenAi(OpenAiProvider::new(name.clone(), base_url, api_key))
+                }
+                "ollama" => {
+                    let base_url = pc
+                        .base_url
+                        .clone()
+                        .unwrap_or_else(|| "http://localhost:11434/v1".into());
+                    Provider::OpenAi(OpenAiProvider::new(name.clone(), base_url, None))
+                }
                 other => {
                     return Err(format!(
                         "[gateway.providers.{name}] kind '{other}' is not yet implemented"
@@ -245,14 +266,18 @@ kind = "mock"
     }
 
     #[test]
-    fn from_config_errors_on_unimplemented_kind() {
+    fn from_config_builds_openai_compatible_providers() {
         let toml_str = r#"
 [providers.openai]
 kind = "openai"
+[providers.ollama]
+kind = "ollama"
 "#;
         let cfg: crate::config::GatewayConfig = toml::from_str(toml_str).unwrap();
-        let err = Gateway::from_config(&cfg).unwrap_err();
-        assert!(err.contains("not yet implemented"), "got: {err}");
+        let gw = Gateway::from_config(&cfg).expect("builds openai + ollama");
+        let mut names = gw.provider_names();
+        names.sort();
+        assert_eq!(names, vec!["ollama".to_string(), "openai".to_string()]);
     }
 
     #[tokio::test]
