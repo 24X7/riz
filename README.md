@@ -2,7 +2,7 @@
 
 > **Self-hosted AWS Lambda runtime.** HTTP API Gateway v2 + WebSocket APIs compatible. Single Rust binary. Bun, Node.js, Python, and Rust handlers. No Docker, no AWS bill.
 
-[Landing page](https://riz.dev) · [Releases](https://github.com/crizzuto/riz/releases) · MIT licensed
+[Landing page](https://riz.dev) · [Releases](https://github.com/24X7/riz/releases) · MIT licensed
 
 ## 30-second start
 
@@ -10,7 +10,7 @@
 
 ```bash
 # Install from source (requires Rust toolchain)
-cargo install --git https://github.com/crizzuto/riz
+cargo install --git https://github.com/24X7/riz
 
 # Binary install (macOS / Linux) — works once release binaries are published
 # curl -fsSL https://riz.dev/install | sh

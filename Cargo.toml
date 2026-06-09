@@ -10,7 +10,7 @@ members = [
 name = "riz"
 version = "0.1.0"
 edition = "2021"
-repository = "https://github.com/crizzuto/riz"
+repository = "https://github.com/24X7/riz"
 description = "Self-hosted AWS Lambda runtime — HTTP API v2 + WebSocket handlers in Bun, Python, Rust. MCP server built in."
 license = "MIT"
 

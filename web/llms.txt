@@ -12,8 +12,8 @@ Function-centric config matches AWS exactly: one `[function.<name>]` block per f
 
 ## Project
 
-- [GitHub repository](https://github.com/crizzuto/riz): source, issues, releases
-- [Releases](https://github.com/crizzuto/riz/releases): prebuilt binaries for Linux and macOS (x86_64 + aarch64)
+- [GitHub repository](https://github.com/24X7/riz): source, issues, releases
+- [Releases](https://github.com/24X7/riz/releases): prebuilt binaries for Linux and macOS (x86_64 + aarch64)
 - [Install script](https://riz.dev/install): one-line install — `curl -fsSL https://riz.dev/install | sh`
 
 ## What works today (v0.1)

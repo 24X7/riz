@@ -4,16 +4,16 @@
 # Usage:    curl -fsSL https://riz.dev/install | sh
 # Or:       curl -fsSL https://riz.dev/install | sh -s -- --version v0.1.0
 #
-# Source:   https://github.com/crizzuto/riz/blob/main/web/install
+# Source:   https://github.com/24X7/riz/blob/main/web/install
 # License:  MIT (same as riz)
 #
 # Release process: docs/release.md. Trigger is `git tag v0.X.Y && git push --tags`;
 # cargo-dist + GitHub Actions builds + uploads tarballs for all 4 targets. Until
 # a release tag exists with uploaded assets, this script exits with a 404 from
-# GitHub — fall back to: `cargo install --git https://github.com/crizzuto/riz`.
+# GitHub — fall back to: `cargo install --git https://github.com/24X7/riz`.
 set -eu
 
-REPO="crizzuto/riz"
+REPO="24X7/riz"
 VERSION="${RIZ_VERSION:-latest}"
 INSTALL_DIR="${RIZ_INSTALL_DIR:-${HOME}/.local/bin}"
 

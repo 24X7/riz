@@ -33,7 +33,7 @@ Pushing the `v0.1.0` tag triggers `.github/workflows/release.yml`. cargo-dist wi
 5. Upload the install shell installer (used by `https://riz.dev/install`)
 
 Once the workflow completes (~5-10 min), the artifacts are live at:
-`https://github.com/crizzuto/riz/releases/latest/download/riz-<target>.tar.xz`
+`https://github.com/24X7/riz/releases/latest/download/riz-<target>.tar.xz`
 
 The install script at `web/install` resolves these URLs and works automatically.
 
