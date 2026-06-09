@@ -23,8 +23,10 @@ Everything is REAL: every line below makes an actual HTTP/JSON-RPC/WebSocket cal
 to the running server. No mocked output, no canned strings. This is the SHOWCASE
 script; examples/smoke-all.sh is the terse assertion-style CI companion.
 
-stdlib only — no pip installs needed (urllib, subprocess, socket). The WebSocket
-round-trip is implemented natively here, so websocat is no longer required.
+Tables render with `rich` (pip install rich) — width-aware, no scattered columns;
+the demo degrades to plain text if rich is absent. Everything else is stdlib
+(urllib, subprocess, socket). The WebSocket round-trip is implemented natively
+here, so websocat is no longer required.
 
 Prereqs:
   - cargo build --release   (produces target/release/{riz,echo-rust,chat-rust})
@@ -57,6 +59,39 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+try:
+    import termios  # unix only — used to restore the TTY if a child mangles it
+except ImportError:  # pragma: no cover — non-unix
+    termios = None
+
+# Subprocesses must never touch our controlling terminal. `ollama serve` (and
+# friends) inherit stdin and flip the TTY to raw mode (ONLCR off → every print
+# stair-steps to the right and never returns to column 0). Detach stdin so no
+# child sees a TTY; DEFAULT keyword threaded into every spawn below.
+DEVNULL = subprocess.DEVNULL
+
+_TTY_FD = None
+_TTY_SAVED = None
+
+
+def save_tty() -> None:
+    global _TTY_FD, _TTY_SAVED
+    if termios is None or not sys.stdout.isatty():
+        return
+    try:
+        _TTY_FD = sys.stdin.fileno()
+        _TTY_SAVED = termios.tcgetattr(_TTY_FD)
+    except Exception:  # noqa: BLE001
+        _TTY_SAVED = None
+
+
+def restore_tty() -> None:
+    if termios is not None and _TTY_SAVED is not None:
+        try:
+            termios.tcsetattr(_TTY_FD, termios.TCSANOW, _TTY_SAVED)
+        except Exception:  # noqa: BLE001
+            pass
+
 # ─────────────────────────── Paths & constants ───────────────────────────
 ROOT = Path(__file__).resolve().parent.parent
 BIN = ROOT / "target" / "release" / "riz"
@@ -84,6 +119,43 @@ def _c(code: str) -> str:
 BOLD, DIM = _c("1"), _c("2")
 CYAN, AMBER, GREEN, RED = _c("36"), _c("33"), _c("32"), _c("31")
 RESET = _c("0")
+
+# Tabular sections render with `rich` (pip install rich) — width-aware, wraps
+# cells instead of scattering columns. Degrades to a plain aligned table if
+# rich isn't installed, so the demo still runs anywhere.
+try:
+    from rich import box
+    from rich.console import Console
+    from rich.table import Table
+
+    _console: "Console | None" = Console()
+except ImportError:  # pragma: no cover
+    _console = None
+
+
+def render_table(columns: list[str], rows: list[list[str]], indent_n: int = 2) -> None:
+    """Print a tidy table. Uses rich when available; falls back to aligned text."""
+    if _console is not None:
+        t = Table(box=box.SIMPLE_HEAD, show_edge=False, pad_edge=False,
+                  padding=(0, 2, 0, 0), header_style="bold cyan")
+        for col in columns:
+            t.add_column(col, overflow="fold", no_wrap=False)
+        for r in rows:
+            t.add_row(*r)
+        with _console.capture() as cap:
+            _console.print(t)
+        pad = " " * indent_n
+        print("\n".join(pad + ln for ln in cap.get().rstrip("\n").splitlines()))
+        return
+    # Fallback: aligned plain-text table.
+    head = [columns] + rows
+    widths = [max(len(r[i]) for r in head) for i in range(len(columns))]
+    pad = " " * indent_n
+    for i, r in enumerate(head):
+        line = "  ".join(c.ljust(widths[j]) for j, c in enumerate(r)).rstrip()
+        print(pad + line)
+        if i == 0:
+            print(pad + "  ".join("─" * w for w in widths))
 
 
 def banner(title: str) -> None:
@@ -147,28 +219,6 @@ def wrapped(items: list[str], indent_n: int = 6, sep: str = "  ") -> None:
             cur = cand
     if cur:
         print(pad + cur)
-
-
-def labeled(label: str, items: list[str], label_w: int = 8, sep: str = "  ") -> None:
-    """Print 'label  tok  tok …' with the token list wrapped and hanging-indented."""
-    prefix = f"  {CYAN}{label:<{label_w}}{RESET}"
-    plain_len = 2 + label_w
-    hang = " " * plain_len
-    lines, cur = [], ""
-    for it in items:
-        cand = it if not cur else cur + sep + it
-        if cur and plain_len + len(cand) > WRAP:
-            lines.append(cur)
-            cur = it
-        else:
-            cur = cand
-    if cur:
-        lines.append(cur)
-    if not lines:
-        lines = [""]
-    print(prefix + lines[0])
-    for ln in lines[1:]:
-        print(hang + ln)
 
 
 def pause() -> None:
@@ -326,6 +376,7 @@ def cleanup() -> None:
             Path(ST.cfg_run).unlink()
         except OSError:
             pass
+    restore_tty()  # safety net in case a child still mangled the terminal
 
 
 # ════════════════════════════ Demo sections ═════════════════════════════
@@ -340,7 +391,7 @@ def build_wasm() -> None:
         sub("cargo build --release --target wasm32-wasip1  (in examples/lambdas/echo-wasm)")
         r = subprocess.run(
             ["cargo", "build", "--release", "--target", "wasm32-wasip1"],
-            cwd=wasm_dir, capture_output=True, text=True,
+            cwd=wasm_dir, capture_output=True, text=True, stdin=DEVNULL,
         )
         if r.returncode == 0 and wasm_out.exists():
             ST.has_wasm = True
@@ -370,7 +421,7 @@ def build_wasm() -> None:
 
 def _wasm_target_installed() -> bool:
     try:
-        r = subprocess.run(["rustup", "target", "list", "--installed"], capture_output=True, text=True)
+        r = subprocess.run(["rustup", "target", "list", "--installed"], capture_output=True, text=True, stdin=DEVNULL)
         return "wasm32-wasip1" in r.stdout
     except FileNotFoundError:
         return False
@@ -385,14 +436,14 @@ def boot() -> None:
     # Free port 3000 if a stale instance is lingering.
     subprocess.run(
         "lsof -ti :3000 2>/dev/null | xargs -r kill -TERM 2>/dev/null || true",
-        shell=True,
+        shell=True, stdin=DEVNULL,
     )
     time.sleep(1)
 
     logf = LOG.open("wb")
     ST.riz = subprocess.Popen(
         [str(BIN), "--log-level", "warn", "--config", str(ST.cfg_run), "run"],
-        stdout=logf, stderr=subprocess.STDOUT,
+        stdout=logf, stderr=subprocess.STDOUT, stdin=DEVNULL,
     )
     sys.stdout.write(f"{DIM}waiting for /ready {RESET}")
     sys.stdout.flush()
@@ -434,7 +485,7 @@ def warm_ollama() -> None:
         sub("starting 'ollama serve' (background)…")
         ST.ollama = subprocess.Popen(
             [ST.ollama_bin, "serve"],
-            stdout=open("/tmp/riz-ollama.log", "wb"), stderr=subprocess.STDOUT,
+            stdout=open("/tmp/riz-ollama.log", "wb"), stderr=subprocess.STDOUT, stdin=DEVNULL,
         )
         for _ in range(30):
             if reachable(tags):
@@ -448,12 +499,12 @@ def warm_ollama() -> None:
         pause()
         return
 
-    have = subprocess.run([ST.ollama_bin, "list"], capture_output=True, text=True).stdout
+    have = subprocess.run([ST.ollama_bin, "list"], capture_output=True, text=True, stdin=DEVNULL).stdout
     if OLLAMA_MODEL in have:
         ok(f"model {OLLAMA_MODEL} present")
     else:
         sub(f"pulling {OLLAMA_MODEL} (first run only)…")
-        r = subprocess.run([ST.ollama_bin, "pull", OLLAMA_MODEL], capture_output=True, text=True)
+        r = subprocess.run([ST.ollama_bin, "pull", OLLAMA_MODEL], capture_output=True, text=True, stdin=DEVNULL)
         if r.returncode == 0:
             ok(f"pulled {OLLAMA_MODEL}")
         else:
@@ -482,14 +533,10 @@ def system_surface() -> None:
     out(f"HTTP {status}  {body.strip()}")
 
     reg = getj("/_riz/registry")
-    sub(f"/_riz/registry — {len(reg['functions'])} functions, grouped by runtime:")
-    groups: dict[str, list[str]] = {}
-    for f in reg["functions"]:
-        groups.setdefault(f.get("runtime") or "system", []).append(f["name"])
-    order = ["system", "bun", "node", "python", "rust", "wasm"]
-    for rt in order + [k for k in groups if k not in order]:
-        if rt in groups:
-            labeled(rt, groups[rt], 8)
+    sub(f"/_riz/registry — every function (system + user), {len(reg['functions'])} total:")
+    rows = [[f.get("runtime") or "system", f["name"], ", ".join(f.get("routes", []))]
+            for f in reg["functions"]]
+    render_table(["Runtime", "Function", "Routes"], rows)
 
     h = getj("/_riz/health")
     healthy = sum(1 for f in h["functions"] if f["healthy"])
@@ -529,7 +576,7 @@ def mcp_section() -> None:
     out(f"statusCode {call['statusCode']} · body {call['body']}")
 
     sub("Built-in self-validating client (no external deps):")
-    r = subprocess.run([str(BIN), "mcp", "inspect"], capture_output=True, text=True)
+    r = subprocess.run([str(BIN), "mcp", "inspect"], capture_output=True, text=True, stdin=DEVNULL)
     inspect_lines = (r.stdout + r.stderr).splitlines()[:4]
     print(indent("\n".join(inspect_lines)))
     pause()
@@ -740,18 +787,16 @@ def hot_reload_section() -> None:
 
 def scaffolding_section() -> None:
     banner("Scaffolding & diagnostics")
-    r = subprocess.run([str(BIN), "init", "--list"], capture_output=True, text=True)
-    by_scenario: dict[str, list[str]] = {}
+    r = subprocess.run([str(BIN), "init", "--list"], capture_output=True, text=True, stdin=DEVNULL)
+    tpl_rows = []
     for ln in (r.stdout + r.stderr).splitlines():
         cells = re.split(r"\s{2,}", ln.strip())
-        if len(cells) >= 2 and ("-http" in cells[0] or "-websocket" in cells[0]):
-            by_scenario.setdefault(cells[1], []).append(cells[0])
-    total = sum(len(v) for v in by_scenario.values())
-    sub(f"riz init — {total} project templates embedded in the binary:")
-    for scenario, names in by_scenario.items():
-        labeled(scenario, names, 11)
+        if len(cells) >= 3 and ("-http" in cells[0] or "-websocket" in cells[0]):
+            tpl_rows.append(cells[:3])
+    sub(f"riz init — {len(tpl_rows)} project templates embedded in the binary:")
+    render_table(["Template", "Scenario", "Language"], tpl_rows)
     sub("riz doctor — preflight (config, runtimes on PATH, port):")
-    r = subprocess.run([str(BIN), "--config", str(CFG), "doctor"], capture_output=True, text=True)
+    r = subprocess.run([str(BIN), "--config", str(CFG), "doctor"], capture_output=True, text=True, stdin=DEVNULL)
     last = (r.stdout + r.stderr).rstrip().splitlines()
     out(last[-1] if last else "(no output)")
     pause()
@@ -760,13 +805,9 @@ def scaffolding_section() -> None:
 def final_telemetry() -> None:
     banner("Final telemetry — invocations after the run")
     h = getj("/_riz/health")
-    down = [f["name"] for f in h["functions"] if not f["healthy"]]
-    if down:
-        warn("DOWN: " + ", ".join(down))
-    else:
-        ok(f"all {len(h['functions'])} functions healthy")
-    sub("invocations this run  (name×calls):")
-    wrapped([f"{f['name']}×{f['invocations']}" for f in h["functions"]])
+    rows = [[f["name"], str(f["invocations"]), "healthy" if f["healthy"] else "DOWN"]
+            for f in h["functions"]]
+    render_table(["Function", "Calls", "Status"], rows)
     ok(f"uptime {h['uptime_secs']}s · {len(h['functions'])} functions registered")
     print(f"\n{BOLD}{GREEN}✓ demo complete — every capability shown live.{RESET}  Server log: {LOG}")
 
@@ -778,6 +819,7 @@ def main() -> None:
     if not CFG.is_file():
         die(f"missing {CFG}")
 
+    save_tty()
     try:
         build_wasm()
         boot()
