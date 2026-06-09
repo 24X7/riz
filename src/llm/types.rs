@@ -13,8 +13,11 @@ pub struct ChatRequest {
     pub messages: Vec<ChatMessage>,
     #[serde(default)]
     pub stream: bool,
+    // Wire-contract fields forwarded to the real providers (follow-up commits).
+    #[allow(dead_code)]
     #[serde(default)]
     pub temperature: Option<f32>,
+    #[allow(dead_code)]
     #[serde(default)]
     pub max_tokens: Option<u32>,
 }

@@ -15,7 +15,7 @@ use std::collections::HashMap;
 pub mod mock;
 pub mod types;
 
-pub use types::{ChatChoice, ChatMessage, ChatRequest, ChatResponse, Usage};
+pub use types::{ChatRequest, ChatResponse};
 
 use mock::MockProvider;
 
@@ -27,6 +27,8 @@ pub enum ProviderError {
     #[error("provider '{0}' unavailable: {1}")]
     Unavailable(String, String),
     /// Upstream returned an error response — also a fallback candidate.
+    /// Constructed by the real HTTP providers (follow-up commits).
+    #[allow(dead_code)]
     #[error("provider '{0}' returned an error: {1}")]
     Upstream(String, String),
     /// The request itself is invalid (e.g. no messages) — NOT a fallback candidate.
@@ -42,6 +44,8 @@ pub enum Provider {
 }
 
 impl Provider {
+    // Used for log/introspection once multiple provider kinds ship.
+    #[allow(dead_code)]
     pub fn kind(&self) -> &'static str {
         match self {
             Provider::Mock(_) => "mock",
@@ -170,6 +174,7 @@ impl Gateway {
 
 #[cfg(test)]
 mod tests {
+    use super::types::ChatMessage;
     use super::*;
 
     fn user_req(model: &str, content: &str) -> ChatRequest {

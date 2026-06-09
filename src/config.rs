@@ -104,9 +104,12 @@ pub struct ProviderConfig {
     /// Backend kind: "mock" | "openai" | "anthropic" | "ollama".
     pub kind: String,
     /// Env var holding the API key (read at startup; never stored in config).
+    /// Consumed by the real HTTP providers (follow-up commits).
+    #[allow(dead_code)]
     #[serde(default)]
     pub api_key_env: Option<String>,
     /// Override the provider's base URL (e.g. a local Ollama or a proxy).
+    #[allow(dead_code)]
     #[serde(default)]
     pub base_url: Option<String>,
 }

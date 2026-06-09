@@ -4,6 +4,7 @@
 pub mod health;
 pub mod mcp;
 pub mod metrics;
+pub mod openai_compat;
 pub mod registry;
 
 /// Derive a stable, MCP-compatible tool name from a route_key like "GET /api/users/:id".

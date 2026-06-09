@@ -5,6 +5,7 @@ mod cors;
 mod deploy;
 mod gateway;
 mod hotreload;
+mod llm;
 mod metrics;
 mod process;
 mod router;

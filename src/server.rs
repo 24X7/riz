@@ -79,6 +79,37 @@ pub fn build_app(state: Arc<AppState>) -> AxumRouter {
         }
     }
 
+    // Mount the OpenAI-compatible endpoint (/_riz/v1/*) when [gateway] is set.
+    if let Ok(cfg) = state.config.try_read() {
+        if cfg.gateway.enabled() {
+            match crate::llm::Gateway::from_config(&cfg.gateway) {
+                Ok(gw) => {
+                    let gw = Arc::new(gw);
+                    let gw_chat = gw.clone();
+                    app = app.route(
+                        "/_riz/v1/chat/completions",
+                        post(move |body: Json<crate::llm::ChatRequest>| {
+                            let gw = gw_chat.clone();
+                            async move {
+                                crate::system::openai_compat::chat_completions(gw, body).await
+                            }
+                        }),
+                    );
+                    let gw_models = gw.clone();
+                    app = app.route(
+                        "/_riz/v1/models",
+                        get(move || {
+                            let gw = gw_models.clone();
+                            async move { crate::system::openai_compat::models(gw).await }
+                        }),
+                    );
+                    info!("LLM gateway enabled — OpenAI-compatible endpoint at /_riz/v1");
+                }
+                Err(e) => error!("gateway disabled: failed to build from config: {e}"),
+            }
+        }
+    }
+
     app.fallback(any(dispatch_lambda)).with_state(state)
 }
 
