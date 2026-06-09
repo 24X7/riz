@@ -156,6 +156,11 @@ run "curl -s -X POST -H 'content-type: application/json' \\
   -d '{\"model\":\"mock\",\"messages\":[{\"role\":\"user\",\"content\":\"hello riz\"}],\"stream\":false}' \\
   $BASE/_riz/v1/chat/completions | JQ '{model, message: .choices[0].message, usage}'"
 
+sub "stream=true — Server-Sent Events (chat.completion.chunk … then [DONE])."
+run "curl -sN -X POST -H 'content-type: application/json' \\
+  -d '{\"model\":\"mock\",\"messages\":[{\"role\":\"user\",\"content\":\"stream me\"}],\"stream\":true}' \\
+  $BASE/_riz/v1/chat/completions | head -7"
+
 sub "The OFFICIAL openai python client, pointed at riz via base_url:"
 if python3 -c 'import openai' >/dev/null 2>&1; then
   printf '%s$ OpenAI(base_url="%s/_riz/v1").chat.completions.create(model="mock", ...)%s\n' "$CYAN" "$BASE" "$RESET"
