@@ -13,6 +13,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+pub mod anthropic;
 pub mod cost;
 pub mod mock;
 pub mod openai;
@@ -20,6 +21,7 @@ pub mod types;
 
 pub use types::{ChatRequest, ChatResponse, EmbeddingsRequest, EmbeddingsResponse};
 
+use anthropic::AnthropicProvider;
 use cost::ProviderUsage;
 use mock::MockProvider;
 use openai::OpenAiProvider;
@@ -51,6 +53,8 @@ pub enum Provider {
     Mock(MockProvider),
     /// OpenAI-compatible upstream (serves both `openai` and `ollama` kinds).
     OpenAi(OpenAiProvider),
+    /// Anthropic Messages API (maps to/from the OpenAI shape).
+    Anthropic(AnthropicProvider),
 }
 
 impl Provider {
@@ -60,6 +64,7 @@ impl Provider {
         match self {
             Provider::Mock(_) => "mock",
             Provider::OpenAi(_) => "openai-compatible",
+            Provider::Anthropic(_) => "anthropic",
         }
     }
 
@@ -67,6 +72,7 @@ impl Provider {
         match self {
             Provider::Mock(p) => p.chat(req).await,
             Provider::OpenAi(p) => p.chat(req).await,
+            Provider::Anthropic(p) => p.chat(req).await,
         }
     }
 
@@ -78,6 +84,7 @@ impl Provider {
         match self {
             Provider::Mock(p) => p.embed(model, inputs).await,
             Provider::OpenAi(p) => p.embed(model, inputs).await,
+            Provider::Anthropic(p) => p.embed(model, inputs).await,
         }
     }
 }
@@ -169,6 +176,14 @@ impl Gateway {
                         .clone()
                         .unwrap_or_else(|| "http://localhost:11434/v1".into());
                     Provider::OpenAi(OpenAiProvider::new(name.clone(), base_url, None))
+                }
+                "anthropic" => {
+                    let base_url = pc
+                        .base_url
+                        .clone()
+                        .unwrap_or_else(|| "https://api.anthropic.com".into());
+                    let api_key = pc.api_key_env.as_ref().and_then(|v| std::env::var(v).ok());
+                    Provider::Anthropic(AnthropicProvider::new(name.clone(), base_url, api_key))
                 }
                 other => {
                     return Err(format!(
