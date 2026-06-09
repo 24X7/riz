@@ -2,7 +2,7 @@
 
 > **Make the HTTP APIs you already have agent-callable — without a rewrite.**
 > Riz runs your AWS Lambda HTTP/WebSocket handlers on your own box, *unmodified*
-> (Bun · Node.js · Python · Rust), and turns every one of them into an
+> (Bun · Node.js · Python · Rust · capability-sandboxed WASM), and turns every one of them into an
 > **MCP tool** an agent can call. A built-in **OpenAI-compatible LLM gateway**
 > sits on the same binary, so the model calls your handlers make are routed,
 > governed, and costed too. One ~10 MB Rust binary. No Docker, no AWS bill.
@@ -27,14 +27,14 @@ emulator ships an MCP server or an LLM gateway; no AI gateway runs your Lambda c
 
 | | What it gives you |
 |---|---|
-| ⚡ **A Lambda runtime** | Drop in AWS HTTP API v2 + WebSocket handlers **unchanged** — Bun, Node.js, Python, Rust. One warm process pool per function, no container per request, predictable GC-free latency, no cloud bill. |
+| ⚡ **A Lambda runtime** | Drop in AWS HTTP API v2 + WebSocket handlers **unchanged** — Bun, Node.js, Python, Rust, **and capability-sandboxed WASM**. One warm process pool per function, no container per request, predictable GC-free latency, no cloud bill. |
 | 🤖 **An MCP server** | Every function in `riz.toml` becomes an agent-callable tool at `/_riz/mcp` (spec **2025-11-25**). Point Claude / Cursor at it — your existing APIs are agent-callable with **zero SDK code**. |
 | 💸 **An LLM gateway** | An OpenAI-compatible endpoint at `/_riz/v1/*`. Point any OpenAI client at it; route across **OpenAI / Anthropic / Ollama** with fallback, stream over SSE, and cap spend with budgets + per-provider cost telemetry. |
 
 **See it all, live:** clone the repo and run `./examples/demo.sh` — it boots one
-riz instance and exercises every capability (all 4 runtimes, MCP wire protocol,
-the LLM gateway, caching, CORS, auth, WebSocket, hot-reload, on-box safety,
-telemetry) with real output.
+riz instance and exercises every capability (all 5 runtimes including WASM, MCP
+wire protocol, the LLM gateway against a **real local model via Ollama**, caching,
+CORS, auth, WebSocket, hot-reload, on-box safety, telemetry) with real output.
 
 ## What riz is *not*
 
@@ -46,10 +46,13 @@ Honest scope beats a leaky promise. Riz is deliberately narrow:
   roles. A handler that calls the AWS SDK needs its own credentials in the
   environment, same as anywhere.
 - **Not an edge/CDN platform.** It's a runtime you self-host, not a global network.
-- **Not yet a sandbox for untrusted code.** Today's isolation is process-level +
-  rlimits + (Linux) Landlock. The capability-sandboxed WASM runtime — the thing
-  that makes running LLM-generated code safe — is the next item on the roadmap,
-  not shipped yet.
+- **Sandboxing is real but young.** Every handler runs process-isolated with
+  rlimits + (Linux) Landlock. The **capability-sandboxed WASM runtime now ships**
+  (`runtime = "wasm"`): a `wasm32-wasip1` module runs under wasmtime's WASI
+  sandbox, deny-by-default for filesystem and network, inside an OS process
+  boundary — the foundation for safely running LLM-generated code. What's *not*
+  shipped yet is the composition on top of it (WASM pre/post guards that wrap
+  *any* handler); that's the next roadmap item.
 
 If you need the full AWS surface, reach for LocalStack. If you need an edge
 runtime, reach for Workers. Riz is the sharp tool for *HTTP/WS Lambda handlers
@@ -98,15 +101,16 @@ between AWS and riz **unchanged** — same `index.handler` resolution, same
 ```toml
 # riz.toml
 [function.api]
-runtime = "node"                 # bun | node | python | rust
+runtime = "node"                 # bun | node | python | rust | wasm
 handler = "index.handler"
 [[function.api.routes]]
 path = "/accounts/{id}"
 method = "GET"
 ```
 
-Four runtimes, one wire protocol — **parity-tested** so the same request gets an
-identical response from Bun, Node.js, Python, and Rust. WebSocket handlers get
+Five runtimes, one wire protocol — **parity-tested** so the same request gets an
+identical response from Bun, Node.js, Python, Rust, and a `wasm32-wasip1` module
+under wasmtime's WASI sandbox. WebSocket handlers get
 the AWS `$connect`/`$default`/`$disconnect` lifecycle plus a local `@connections`
 management API to push messages back to clients.
 
@@ -187,7 +191,7 @@ clean `412`; cost surfaces next to latency in the same operator view.
 **Runtimes & protocols**
 - AWS **HTTP API Gateway v2** — full request/response shape, all 7 verbs, `{id}` / `{proxy+}` paths, `$default` catch-all, stage variables, real Lambda context
 - AWS **WebSocket APIs** — `$connect`/`$default`/`$disconnect` + `@connections` management API (GET/POST/DELETE/LIST) for server→client push
-- **Four runtimes** — Bun (TS/JS), Node.js, Python, Rust — cross-runtime parity-tested
+- **Five runtimes** — Bun (TS/JS), Node.js, Python, Rust, and capability-sandboxed **WASM** (`wasm32-wasip1` under wasmtime/WASI) — cross-runtime parity-tested
 
 **Agent + AI surface**
 - **MCP server** at `/_riz/mcp` (JSON-RPC 2.0, spec 2025-11-25) — every function is a tool, automatically
@@ -243,11 +247,11 @@ your handler code and the stdin/stdout bridge to it. Methodology + caveats in
 
 ## Reliability
 
-- **775 tests** (`cargo nextest run`, ~60s). Cross-runtime parity matrix exercises
+- **778 tests** (`cargo nextest run`, ~60s). Cross-runtime parity matrix exercises
   every HTTP capability — verbs, path/query params, body, headers, cookies, stage
   variables, binary bodies, error pass-through — identically across Bun, Node.js,
-  Python, and Rust; the LLM gateway and providers are tested against local mock
-  servers (self-contained, no network).
+  Python, Rust, and WASM; the LLM gateway and providers are tested against local
+  mock servers (self-contained, no network).
 - **All 20 production-readiness bug-tracker entries closed** — see
   `docs/production-bugs.md` (each carries the fix lines + its regression-gate test).
 
@@ -265,12 +269,15 @@ your handler code and the stdin/stdout bridge to it. Methodology + caveats in
 
 ## Roadmap
 
-**Next:** **capability-sandboxed WASM (WASI)** — the differentiator no Lambda
-emulator ships. `runtime = "wasm"`: drop in a `.wasm`, grant filesystem / network
-/ clock capabilities explicitly via `riz.toml`, get sub-millisecond cold start and
-safe execution of untrusted (LLM-generated) code with no container. Then WASM
-pre/post guards (redact PII from *any* handler with one `.wasm`), event reporting,
-OpenTelemetry, per-route MCP schemas, and Go support.
+**Shipped:** **capability-sandboxed WASM (WASI)** — the differentiator no Lambda
+emulator ships. `runtime = "wasm"`: drop in a `wasm32-wasip1` `.wasm` and it runs
+under wasmtime's WASI sandbox, deny-by-default for filesystem and network, with
+capabilities granted explicitly via `riz.toml` (`allowed_paths` → preopens,
+`stage_variables` → guest env). It's parity-tested against the bun/node/python/
+rust echo handlers and demoed live in `examples/demo.sh`.
+
+**Next:** WASM pre/post guards (redact PII from *any* handler with one `.wasm`),
+event reporting, OpenTelemetry, per-route MCP schemas, and Go support.
 
 **Out of scope:** non-HTTP AWS event sources (SQS/SNS/S3/EventBridge), Lambda
 Layers/Extensions, TLS termination, custom domains — riz is the HTTP/WS Lambda +

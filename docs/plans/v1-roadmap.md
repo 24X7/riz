@@ -15,12 +15,12 @@ Riz v0.1 is the Lambda runtime your agent can call. Riz v1 is the runtime your a
 
 ---
 
-## In v1 (13 items — #14 deferred to v2; #5 shipped)
+## In v1 (13 items — #14 deferred to v2; #2/#5/#8/#9/#10 shipped)
 
 | # | Item | Category | Effort |
 |---|---|---|---|
 | 1 | Event reporting / observability emission | Observability — business events | M |
-| 2 | WASM standalone runtime (`runtime = "wasm"`) | Sandboxing | M |
+| 2 | WASM standalone runtime (`runtime = "wasm"`) ✅ **SHIPPED** | Sandboxing | M |
 | 3 | WASM pre-invoke guards (`guard_in`) | Sandboxing — middleware | S after #2 |
 | 4 | WASM post-invoke guards (`guard_out`) | Sandboxing — middleware | S after #2 |
 | 5 | Node.js native runtime ✅ **SHIPPED** | Runtime breadth | S |
@@ -103,7 +103,17 @@ Each entry: **Industry context** · **Why we care** · **Why you care** · **Acc
 
 ---
 
-### 2. WASM standalone runtime (`runtime = "wasm"`)
+### 2. WASM standalone runtime (`runtime = "wasm"`) ✅ SHIPPED
+
+**Shipped.** `runtime = "wasm"` runs a `wasm32-wasip1` module under wasmtime 45's
+WASI sandbox via the `riz __wasm-host` subprocess (`src/process/wasm.rs`). Deny-
+by-default: stdio only; `allowed_paths` → WASI preopens, `stage_variables` →
+guest env. Parity-tested in `tests/runtime_parity_request_shape.rs`
+(`wasm_echo_passes_path_and_query`, green next to bun/node/python/rust), example
+crate `examples/lambdas/echo-wasm/` (Rust→wasm), and demoed live in
+`examples/demo.sh`. Deferred to follow-ups: the `wasm-http` `riz init` template,
+the `allowed_hosts`/`clock_access` capability knobs, WASI Preview 2 / component
+model (we ship Preview 1 today), and the cold-start bench.
 
 **Industry context.**
 - OSS runtime: **wasmtime** (Bytecode Alliance reference impl, what we'd use)
