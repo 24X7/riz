@@ -92,6 +92,34 @@ def restore_tty() -> None:
         except Exception:  # noqa: BLE001
             pass
 
+
+class _CRWriter:
+    """Force every newline to also carriage-return.
+
+    Detaching child stdin isn't enough: a child can open /dev/tty directly and
+    flip the shared terminal to raw mode (ONLCR off) for the whole run, so a bare
+    '\\n' drops a line without returning to column 0 and every line stair-steps
+    right. Emitting '\\r\\n' ourselves returns to column 0 regardless of terminal
+    mode (a redundant '\\r' in cooked mode is harmless). Bulletproof, no matter
+    what any subprocess does to the TTY mid-demo.
+    """
+
+    def __init__(self, raw):
+        self._raw = raw
+
+    def write(self, s: str) -> int:
+        return self._raw.write(s.replace("\n", "\r\n"))
+
+    def flush(self) -> None:
+        self._raw.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._raw, name)
+
+
+if sys.stdout.isatty():
+    sys.stdout = _CRWriter(sys.stdout)  # type: ignore[assignment]
+
 # ─────────────────────────── Paths & constants ───────────────────────────
 ROOT = Path(__file__).resolve().parent.parent
 BIN = ROOT / "target" / "release" / "riz"
