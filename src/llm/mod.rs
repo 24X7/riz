@@ -281,6 +281,30 @@ kind = "ollama"
     }
 
     #[tokio::test]
+    async fn falls_back_to_mock_when_primary_provider_errors() {
+        // Primary 'openai' points at an unroutable port → Unavailable; the
+        // gateway must fall through the chain to 'mock' and succeed.
+        let mut providers = HashMap::new();
+        providers.insert(
+            "openai".to_string(),
+            Provider::OpenAi(OpenAiProvider::new(
+                "openai".into(),
+                "http://127.0.0.1:1/v1".into(),
+                None,
+            )),
+        );
+        providers.insert("mock".to_string(), Provider::Mock(MockProvider));
+        let gw = Gateway::new(providers, "openai".into(), vec!["mock".into()]);
+
+        let resp = gw.chat(&user_req("openai/gpt-4o", "hi")).await.unwrap();
+        assert!(
+            resp.choices[0].message.content.contains("[mock:"),
+            "fallback must reach the mock provider; got: {}",
+            resp.choices[0].message.content
+        );
+    }
+
+    #[tokio::test]
     async fn no_providers_returns_unavailable() {
         let gw = Gateway::new(HashMap::new(), "mock".into(), vec![]);
         let err = gw.chat(&user_req("gpt-4o", "x")).await.unwrap_err();
