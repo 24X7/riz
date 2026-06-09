@@ -57,7 +57,8 @@ pub fn build_app(state: Arc<AppState>) -> AxumRouter {
                         axum::routing::any(
                             move |ws: axum::extract::WebSocketUpgrade,
                                   headers: axum::http::HeaderMap,
-                                  ci: axum::extract::ConnectInfo<std::net::SocketAddr>| {
+                                  ci: axum::extract::ConnectInfo<std::net::SocketAddr>,
+                                  raw_query: axum::extract::RawQuery| {
                                 let s = state_clone.clone();
                                 let n = name_owned.clone();
                                 async move {
@@ -66,6 +67,7 @@ pub fn build_app(state: Arc<AppState>) -> AxumRouter {
                                         ci,
                                         ws,
                                         headers,
+                                        raw_query,
                                     )
                                     .await
                                 }

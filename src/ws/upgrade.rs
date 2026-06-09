@@ -3,7 +3,7 @@
 //! the connection and spawns the per-connection reader + writer tasks.
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{ConnectInfo, State};
+use axum::extract::{ConnectInfo, RawQuery, State};
 use axum::response::Response;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -26,9 +26,13 @@ pub async fn ws_upgrade_handler(
     ConnectInfo(_peer): ConnectInfo<SocketAddr>,
     ws: WebSocketUpgrade,
     headers: axum::http::HeaderMap,
+    RawQuery(raw_query): RawQuery,
 ) -> Response {
     let stage = state.config.read().await.server.stage.clone();
-    let query: HashMap<String, String> = HashMap::new(); // TODO: pull from URI
+    // Parse queryStringParameters from the upgrade request URI so $connect
+    // events carry them, matching the AWS WebSocket event shape + the HTTP path.
+    let query: HashMap<String, String> =
+        raw_query.as_deref().map(parse_query_string).unwrap_or_default();
 
     ws.on_upgrade(move |socket| async move {
         handle_socket(state, function_name, stage, headers, query, socket).await;
@@ -343,4 +347,40 @@ async fn handle_socket(
     }
 
     info!("ws disconnected: {} (function {})", read_id, function_name);
+}
+
+/// Parse a raw query string ("a=1&b=hello%20world&flag") into single-value,
+/// percent-decoded params. Mirrors the HTTP path's parsing (src/server.rs) so
+/// WebSocket `$connect` events carry queryStringParameters the same way.
+fn parse_query_string(raw: &str) -> HashMap<String, String> {
+    let mut acc = HashMap::new();
+    for pair in raw.split('&').filter(|p| !p.is_empty()) {
+        if let Some((k, v)) = pair.split_once('=') {
+            acc.insert(
+                crate::router::percent_decode(k),
+                crate::router::percent_decode(v),
+            );
+        } else {
+            acc.insert(crate::router::percent_decode(pair), String::new());
+        }
+    }
+    acc
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_query_string;
+
+    #[test]
+    fn parse_query_string_decodes_pairs() {
+        let q = parse_query_string("a=1&b=hello%20world&flag");
+        assert_eq!(q.get("a").map(String::as_str), Some("1"));
+        assert_eq!(q.get("b").map(String::as_str), Some("hello world"));
+        assert_eq!(q.get("flag").map(String::as_str), Some(""));
+    }
+
+    #[test]
+    fn parse_query_string_empty_is_empty() {
+        assert!(parse_query_string("").is_empty());
+    }
 }
