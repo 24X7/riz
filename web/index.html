@@ -891,6 +891,78 @@
       padding:0.1em 0.35em;border-radius:2px;
     }
 
+    /* "coming soon" roadmap cards — dimmed/greyed state + corner ribbon.
+       Uses the existing electric tokens; no new palette. */
+    .bucket.coming-soon{
+      opacity:0.62;
+      background:var(--bg2);
+      border-style:dashed;
+    }
+    .bucket.coming-soon:hover{opacity:0.82}
+    .bucket.coming-soon h4{color:var(--ink2)}
+    .ribbon{
+      display:inline-block;
+      font-family:var(--mono);font-size:0.55rem;font-weight:700;
+      letter-spacing:0.12em;text-transform:uppercase;
+      color:var(--ink3);
+      background:var(--acc-bg);
+      border:1px solid var(--border2);border-radius:999px;
+      padding:0.18em 0.6em;margin-top:0.9rem;
+    }
+
+    /* ── #compare — folded-in /vs comparison, intentionally de-emphasized.
+       Reads as a supporting reference, not a hero. Muted, smaller, narrow. */
+    .compare{
+      padding:3.5rem 10vw;
+      border-top:1px solid var(--border);
+      background:var(--bg2);
+      opacity:0.9;
+    }
+    .compare-inner{max-width:880px;margin:0 auto}
+    .compare .lbl{
+      font-family:var(--mono);font-size:0.6rem;color:var(--ink4);
+      letter-spacing:0.16em;text-transform:uppercase;
+    }
+    .compare h2{
+      font-family:var(--sans);font-size:1.35rem;font-weight:700;
+      color:var(--ink2);letter-spacing:-0.01em;
+      margin:0.5rem 0 0.4rem;
+    }
+    .compare-intro{
+      font-size:0.92rem;color:var(--ink3);line-height:1.6;
+      max-width:680px;margin-bottom:1.8rem;
+    }
+    .compare-wrap{overflow-x:auto;border-radius:6px;border:1px solid var(--border)}
+    .compare table{
+      width:100%;border-collapse:collapse;
+      background:var(--bg3);font-size:0.82rem;
+    }
+    .compare th,.compare td{
+      padding:0.7rem 0.9rem;text-align:left;
+      border-bottom:1px solid var(--border);vertical-align:top;color:var(--ink3);
+    }
+    .compare thead th{
+      font-family:var(--mono);font-size:0.62rem;font-weight:700;
+      text-transform:uppercase;letter-spacing:0.07em;color:var(--ink2);
+      background:rgba(0,229,255,0.04);
+    }
+    .compare tbody tr:last-child td{border-bottom:none}
+    .compare td:first-child{
+      font-family:var(--mono);font-size:0.68rem;color:var(--ink4);
+      white-space:nowrap;width:22%;
+    }
+    .compare td.riz{color:var(--ink2);background:rgba(0,229,255,0.03)}
+    .compare .y{color:var(--amber);font-weight:700}
+    .compare .n{color:var(--ink4)}
+    .compare-foot{
+      margin-top:1rem;font-size:0.8rem;color:var(--ink4);
+    }
+    .compare-foot a{color:var(--ink3);text-decoration:underline}
+    .compare-foot a:hover{color:var(--amber)}
+    @media(max-width:960px){
+      .compare{padding-left:1.8rem;padding-right:1.8rem}
+    }
+
     @media(max-width:960px){
       .status{padding:4rem 2rem}
       .status-grid{gap:3.5rem}
@@ -1473,7 +1545,7 @@
     <a href="#vision">Vision</a>
     <a href="#mcp">MCP</a>
     <a href="#config">Config</a>
-    <a href="/vs">vs.</a>
+    <a href="#compare">vs.</a>
     <a href="#status">Status</a>
     <a href="#support">Support</a>
     <a href="#author">About</a>
@@ -1837,6 +1909,24 @@ $ claude mcp add riz-local \
         <p class="h3-sub">v0.1 · in production</p>
 
           <article class="bucket">
+            <h4>Agent &amp; AI Integration</h4>
+            <ul>
+              <li>MCP server at <code>/_riz/mcp</code> — every function is a tool, automatically, spec 2025-11-25</li>
+              <li>Zero SDK code — point any MCP client at riz, your APIs become agent-callable</li>
+              <li>Bearer-token gating on <code>/_riz/mcp</code> for shared-secret access control</li>
+            </ul>
+          </article>
+
+          <article class="bucket">
+            <h4>LLM Gateway</h4>
+            <ul>
+              <li>OpenAI-compatible gateway at <code>/_riz/v1/*</code> — provider routing, fallback, SSE streaming, embeddings</li>
+              <li>Route across OpenAI, Anthropic, and local Ollama by model prefix</li>
+              <li>Budget caps + per-provider cost telemetry — AI-FinOps where you already watch latency</li>
+            </ul>
+          </article>
+
+          <article class="bucket">
             <h4>Function Runtimes</h4>
             <ul>
               <li>Five runtimes — Bun, Node.js, Python, Rust, and capability-sandboxed WASM</li>
@@ -1879,24 +1969,6 @@ $ claude mcp add riz-local \
               <li>Terminal dashboard: P50/P75/P90/P95/P99 over 5-min window</li>
               <li>Datadog metrics emitter</li>
               <li>MCP server — spec 2025-11-25 (also negotiates 2024-11-05 / 2025-03-26 / 2025-06-18). JSON-RPC 2.0, full lifecycle.</li>
-            </ul>
-          </article>
-
-          <article class="bucket">
-            <h4>Agent &amp; AI Integration</h4>
-            <ul>
-              <li>MCP server at <code>/_riz/mcp</code> — every function is a tool, automatically, spec 2025-11-25</li>
-              <li>Zero SDK code — point any MCP client at riz, your APIs become agent-callable</li>
-              <li>Bearer-token gating on <code>/_riz/mcp</code> for shared-secret access control</li>
-            </ul>
-          </article>
-
-          <article class="bucket">
-            <h4>LLM Gateway</h4>
-            <ul>
-              <li>OpenAI-compatible gateway at <code>/_riz/v1/*</code> — provider routing, fallback, SSE streaming, embeddings</li>
-              <li>Route across OpenAI, Anthropic, and local Ollama by model prefix</li>
-              <li>Budget caps + per-provider cost telemetry — AI-FinOps where you already watch latency</li>
             </ul>
           </article>
 
@@ -1944,25 +2016,27 @@ $ claude mcp add riz-local \
         <h3>Roadmap</h3>
         <p class="h3-sub">v0.2 — the AI-substrate pillars</p>
 
-          <article class="bucket">
+          <article class="bucket coming-soon" data-claim="roadmap-wasm-guards">
             <h4>WASM Guards</h4>
             <ul>
               <li>Pre-invoke guards (<code>guard_in</code>) — validate schemas, detect prompt injection, enforce rate limits before the handler runs</li>
               <li>Post-invoke guards (<code>guard_out</code>) — redact PII, scrub secrets, enforce response shape before bytes leave</li>
               <li>One <code>.wasm</code> guard protects every runtime alike — language-agnostic safety layer atop the shipped WASI sandbox</li>
             </ul>
+            <span class="ribbon">coming soon</span>
           </article>
 
-          <article class="bucket">
+          <article class="bucket coming-soon" data-claim="roadmap-gateway-deepened">
             <h4>Gateway, deepened</h4>
             <ul>
               <li>Add Bedrock · Vertex providers to the shipped OpenAI/Anthropic/Ollama routing</li>
               <li>Semantic-similarity cache — drops cost 30–70% on repetitive workloads</li>
               <li>Token-level streaming pass-through to MCP clients via WS upgrade</li>
             </ul>
+            <span class="ribbon">coming soon</span>
           </article>
 
-          <article class="bucket">
+          <article class="bucket coming-soon" data-claim="roadmap-record-replay">
             <h4>Record &amp; Replay</h4>
             <ul>
               <li>Every request captured with input, output, timings, downstream calls</li>
@@ -1970,18 +2044,20 @@ $ claude mcp add riz-local \
               <li>Dataset export ready for OpenAI / Anthropic fine-tune APIs</li>
               <li>The agentic test loop: ship a change, replay last N events, see if anything regressed</li>
             </ul>
+            <span class="ribbon">coming soon</span>
           </article>
 
-          <article class="bucket">
+          <article class="bucket coming-soon" data-claim="roadmap-eval-harness">
             <h4>Eval Harness + Prompt Versioning</h4>
             <ul>
               <li>Versioned prompts as first-class config — hot-reload without redeploy</li>
               <li><code>riz eval &lt;function&gt;</code> ranks prompt × model × guard combos on quality / cost / latency</li>
               <li>A/B win rate visible in <code>/_riz/health</code> per prompt version</li>
             </ul>
+            <span class="ribbon">coming soon</span>
           </article>
 
-          <article class="bucket">
+          <article class="bucket coming-soon" data-claim="roadmap-smarter-mcp">
             <h4>Smarter MCP</h4>
             <ul>
               <li>Per-route MCP tool schemas — typed input shapes from path + query parameters</li>
@@ -1990,23 +2066,26 @@ $ claude mcp add riz-local \
               <li>OAuth 2.1 + RFC 8707 Resource Indicators (bearer-token path remains default)</li>
               <li>MCP federation — child riz instances auto-advertise to a parent; agents see all tools</li>
             </ul>
+            <span class="ribbon">coming soon</span>
           </article>
 
-          <article class="bucket">
+          <article class="bucket coming-soon" data-claim="roadmap-additional-runtimes">
             <h4>Additional Runtimes</h4>
             <ul>
               <li>Go support via the existing static-binary protocol (thin <code>riz-go-runtime</code> module + templates)</li>
               <li>Java / JVM runtime adapter</li>
             </ul>
+            <span class="ribbon">coming soon</span>
           </article>
 
-          <article class="bucket">
+          <article class="bucket coming-soon" data-claim="roadmap-otel-tracing">
             <h4>Event Sources &amp; Tracing</h4>
             <ul>
               <li>Non-HTTP event sources (SQS, SNS, S3, EventBridge)</li>
               <li>OpenTelemetry exporter with W3C Trace Context propagation (X-Ray headers come free)</li>
               <li>Stateful agent memory — <code>/_riz/memory/{agent_id}</code> KV + vector blob store</li>
             </ul>
+            <span class="ribbon">coming soon</span>
           </article>
 
       </div>
@@ -2019,10 +2098,12 @@ $ claude mcp add riz-local \
   <div class="auth-l">
     <span class="lbl">// why I built this</span>
     <blockquote>
-      Lambda's economics break at scale and the local dev loop is miserable — and
-      now every team is trying to make the APIs they already have callable by an
-      agent. I wanted one binary that does both: runs your handlers unchanged, and
-      makes them tools the moment it boots.
+      I spent twenty years watching teams pour their logic into APIs — then
+      watched all of it become invisible to the agents that now do the work. riz
+      flips that: the functions you already have become an agent's hands the
+      moment the binary boots, no rewrite, no cloud account. The API layer
+      everyone already built is the substrate the agent era runs on. I wanted to
+      own that substrate, locally, end to end — so I built it.
     </blockquote>
     <div class="acard">
       <div class="badge">CR</div>
@@ -2057,6 +2138,99 @@ $ claude mcp add riz-local \
       <div class="ty">—</div>
       <div><div class="tc2">Oracle</div><div class="tr">Cloud infrastructure leadership</div></div>
     </div>
+  </div>
+</section>
+
+<!-- COMPARE — folded-in /vs reference, de-emphasized -->
+<section id="compare" class="compare">
+  <div class="compare-inner">
+    <span class="lbl">// for reference</span>
+    <h2>How riz compares</h2>
+    <p class="compare-intro">
+      If you're weighing riz against the usual local-Lambda options, here's the
+      short version. riz is the only one that's a single Rust binary, the only
+      one with a current-spec MCP server built into the runtime, and the only one
+      with OS-level handler sandboxing — while running your existing Lambda code
+      unchanged.
+    </p>
+    <div class="compare-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Capability</th>
+            <th>riz</th>
+            <th>LocalStack</th>
+            <th>SAM Local</th>
+            <th>Cloudflare Workers</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Surface</td>
+            <td class="riz">HTTP API v2 + WebSocket Lambda</td>
+            <td>Full AWS emulation</td>
+            <td>Lambda + API Gateway</td>
+            <td>Workers runtime (different model)</td>
+          </tr>
+          <tr>
+            <td>Per-request cost</td>
+            <td class="riz">None — process pool</td>
+            <td>Docker container</td>
+            <td>Docker container</td>
+            <td>Edge compute</td>
+          </tr>
+          <tr>
+            <td>Cold start</td>
+            <td class="riz">~50&nbsp;ms (process spawn)</td>
+            <td>Seconds (Docker)</td>
+            <td>Seconds (Docker)</td>
+            <td>~5&nbsp;ms (V8 isolate)</td>
+          </tr>
+          <tr>
+            <td>Built-in MCP server</td>
+            <td class="riz"><span class="y">Spec 2025-11-25</span></td>
+            <td class="n">No</td>
+            <td class="n">No</td>
+            <td class="n">No</td>
+          </tr>
+          <tr>
+            <td>Existing Lambda code unchanged</td>
+            <td class="riz"><span class="y">Yes</span> (exact API GW v2 payload)</td>
+            <td>Yes</td>
+            <td>Yes</td>
+            <td class="n">No (different model)</td>
+          </tr>
+          <tr>
+            <td>Single binary</td>
+            <td class="riz"><span class="y">Yes</span> (~10&nbsp;MB Rust)</td>
+            <td class="n">No</td>
+            <td class="n">No</td>
+            <td class="n">No (managed service)</td>
+          </tr>
+          <tr>
+            <td>OS-level handler sandbox</td>
+            <td class="riz"><span class="y">Yes</span> (Landlock + rlimits)</td>
+            <td class="n">No</td>
+            <td class="n">No</td>
+            <td>Via V8 isolate</td>
+          </tr>
+          <tr>
+            <td>Self-host in prod</td>
+            <td class="riz"><span class="y">Yes</span> — primary use case</td>
+            <td>Possible (overkill)</td>
+            <td class="n">No</td>
+            <td class="n">No (it IS the cloud)</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="compare-foot">
+      Short version: <strong>LocalStack</strong> is all of AWS on your laptop,
+      slowly; <strong>SAM Local</strong> is AWS's emulator for CloudFormation
+      users; <strong>Workers</strong> is the cloud. riz is just the Lambda
+      runtime — on your box, fast, MCP-native. Questions about a specific
+      head-to-head? <a href="mailto:chris@riz.dev">chris@riz.dev</a>.
+    </p>
   </div>
 </section>
 
