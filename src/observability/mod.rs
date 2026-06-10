@@ -84,6 +84,9 @@ impl TelemetryHandle {
     }
 
     /// Total number of events dropped (overflow or closed channel).
+    // Exercised by tests/telemetry_process_isolation.rs; the lib's dead-code
+    // lint can't see the integration-test crate from the bin target.
+    #[allow(dead_code)]
     pub fn dropped(&self) -> u64 {
         self.inner.dropped.load(Ordering::Relaxed)
     }
@@ -91,6 +94,7 @@ impl TelemetryHandle {
     /// Test seam: a handle whose bounded channel has the given capacity and NO
     /// drain running, so it saturates immediately. Proves `emit` never blocks.
     #[doc(hidden)]
+    #[allow(dead_code)] // integration-test seam (see dropped() above)
     pub fn for_test_stalled(capacity: usize) -> Self {
         let (tx, rx) = mpsc::channel(capacity);
         // Keep the receiver alive but never drain it: the channel is "stalled".
@@ -115,6 +119,10 @@ fn resolve_exe() -> PathBuf {
 
 /// Owns the isolated telemetry child: spawns it, drains the bounded channel to
 /// its stdin, and respawns with bounded backoff if it exits.
+// child_pid/task back child_pid()/shutdown(), which are reserved for graceful-
+// shutdown wiring + health introspection and exercised by integration tests;
+// dead-code lint can't see those from the bin target.
+#[allow(dead_code)]
 pub struct TelemetrySupervisor {
     handle: TelemetryHandle,
     /// Shared slot holding the current child's PID (for tests / health).
@@ -137,6 +145,7 @@ pub struct ExportTarget {
 
 impl ExportTarget {
     /// No endpoint: the child appends JSON lines to its sink file.
+    #[allow(dead_code)] // used by integration tests + the disabled-telemetry path
     pub fn sink_only() -> Self {
         Self {
             endpoint: None,
@@ -181,6 +190,7 @@ impl TelemetrySupervisor {
     /// The current child's OS PID, if a child is running. Safe to call from an
     /// async context: uses a non-blocking lock and reports `None` if the slot is
     /// momentarily contended (e.g. mid-respawn).
+    #[allow(dead_code)] // health introspection; exercised by integration tests
     pub fn child_pid(&self) -> Option<u32> {
         self.child_pid.try_lock().ok().and_then(|g| *g)
     }
@@ -188,6 +198,7 @@ impl TelemetrySupervisor {
     /// Stop the supervisor and its child. Aborting the task drops the child's
     /// stdin and the `Child` handle, which closes the pipe and lets the worker
     /// exit on EOF.
+    #[allow(dead_code)] // reserved for graceful-shutdown wiring; tested directly
     pub async fn shutdown(self) {
         self.task.abort();
         let _ = self.task.await;
