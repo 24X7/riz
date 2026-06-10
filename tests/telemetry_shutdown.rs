@@ -73,6 +73,17 @@ async fn shutdown_flushes_all_pending_events_no_loss() {
         .expect("spawn supervisor");
     let handle = sup.handle();
 
+    // Wait until the telemetry child is actually spawned before emitting +
+    // shutting down, so the bounded flush window isn't consumed by child spawn
+    // latency under heavy CPU contention (keeps this test deterministic).
+    let ready = std::time::Instant::now();
+    while sup.child_pid().is_none() {
+        if ready.elapsed() > std::time::Duration::from_secs(10) {
+            panic!("telemetry child never spawned within 10s");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+
     for i in 0..n {
         handle.emit(ev(&format!("s{i}")));
     }
