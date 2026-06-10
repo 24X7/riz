@@ -1,5 +1,7 @@
 # Wave 7 — Code Debt Cleanup: Tactical Implementation Plan
 
+> Status: archived — shipped in wave-7; all debt items closed as of 2026-05-31.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Pay down 10 architectural debt items flagged by the codebase audit, add observability instrumentation, chaos/property tests, and two audit cleanups — all with strict CI gates passing at every commit.

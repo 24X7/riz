@@ -1,5 +1,7 @@
 # Process Isolation Implementation Plan
 
+> Status: archived — shipped in wave-3; no corresponding spec needed.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Two targeted hardening changes: (1) return 429 when all concurrency slots are in use instead of blocking indefinitely, and (2) kill the entire process group on timeout/crash so child processes spawned by the lambda don't survive.

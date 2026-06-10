@@ -1,5 +1,7 @@
 # Riz WebSocket APIs Implementation Plan
 
+> Status: archived — shipped in wave-6 (see docs/superpowers/specs/2026-05-26-drift-prevention-automation-design.md era); feature complete as of 2026-05-29.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add AWS API Gateway v2 WebSocket API support to riz. User-declared functions with `protocol = "websocket"` receive `$connect`, `$disconnect`, and `$default` lifecycle events shaped exactly like AWS's `ApiGatewayWebsocketProxyRequest`. The `requestContext.connectionId` is populated; functions can push messages back to connected clients via a built-in `@connections` management API at `/_riz/connections/{id}`.

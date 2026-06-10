@@ -1,5 +1,7 @@
 # Processes Tab Metrics + Console Log Redirect Plan
 
+> Status: archived — shipped in wave-3; no corresponding spec needed.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** (1) Redirect `console.log` to stderr in the bun adapter so handler output appears in the TUI instead of corrupting the protocol. (2) Add Memory (MB) and CPU% columns to the Processes tab using per-PID sysinfo queries.

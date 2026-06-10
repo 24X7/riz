@@ -1,5 +1,7 @@
 # Riz v0.1 — Honest Ship Roadmap
 
+> Status: superseded — all waves shipped; active roadmap is docs/plans/v1-roadmap.md.
+
 > **For agentic workers:** This is a ROADMAP — a sequenced, scoped catalog of every item needed to ship a credible v0.1 of riz. Each wave links to a tactical implementation plan (REQUIRED SUB-PLAN). Use superpowers:subagent-driven-development to execute the tactical plans one wave at a time.
 
 **Goal:** Ship riz v0.1 with the AWS API Gateway v2 + Lambda contract fully honored (including WebSocket APIs, the recently-flagged gap), the marketing-vs-reality gaps closed, the runtime claims actually backed by code, and the code debt that the architecture audit flagged paid down before scale hits.
