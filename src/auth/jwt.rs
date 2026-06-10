@@ -128,8 +128,15 @@ impl JwtAuthorizer {
 
         let mut validation = Validation::new(alg);
         validation.set_issuer(&[&self.config.issuer]);
-        // Audience can be a single string or an array — normalise.
-        validation.set_audience(&[&self.config.audience]);
+        // Audience is optional. When a non-empty audience is configured (WorkOS
+        // client id and most OAuth IdPs), enforce the `aud` claim. When empty,
+        // skip `aud` validation entirely — Clerk's default session token has no
+        // `aud` claim, and jsonwebtoken rejects a missing-but-required audience.
+        if self.config.audience.is_empty() {
+            validation.validate_aud = false;
+        } else {
+            validation.set_audience(&[&self.config.audience]);
+        }
         validation.validate_exp = true;
         validation.validate_nbf = false;
 

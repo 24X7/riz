@@ -79,6 +79,11 @@ tokio-tungstenite = "0.24"
 regex = "1"
 proptest = "1"
 rand = "0.8"
+# Ephemeral RSA keypair generation for the WorkOS/Clerk JWT-signature
+# integration tests (tests/auth_workos.rs, tests/auth_clerk.rs). Dev-only — the
+# release binary builds the JWKS DecodingKey from `n`/`e` and never signs, so
+# `rsa` does NOT ship in the lean `riz` binary.
+rsa = "0.9"
 
 # Config for 'cargo dist'
 [workspace.metadata.dist]

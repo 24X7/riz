@@ -12,8 +12,8 @@ Check off each row as it is provisioned; fill in the **Notes** column with the r
 
 | Service | Why we need it / phase | What's needed | Status | Notes |
 |---|---|---|---|---|
-| **Clerk** | JWT/JWKS auth integration tests — verify riz validates Clerk-issued RS256/ES256 tokens against a real JWKS endpoint (Phase 3) | Test tenant created, JWKS URL (`https://<tenant>.clerk.accounts.dev/.well-known/jwks.json`), at least one test user token | `[ ] not started` | |
-| **WorkOS** | JWT/JWKS auth integration tests — verify riz validates WorkOS-issued tokens (Phase 3) | Test organization/tenant created, JWKS URL (`https://api.workos.com/sso/jwks/<client_id>`), test IdP connection, sample token | `[ ] not started` | |
+| **Clerk** | JWT/JWKS auth integration tests — verify riz validates Clerk-issued RS256/ES256 tokens against a real JWKS endpoint (Phase 3) | **CI needs nothing** — `tests/auth_clerk.rs` is deterministic: it mints a local RSA keypair, serves a recorded-shape JWKS, and signs Clerk-shaped tokens (incl. the no-`aud` default). A live test tenant (JWKS URL `https://<tenant>.clerk.accounts.dev/.well-known/jwks.json` + a test user token) is only needed for an OPTIONAL nightly live-tenant smoke. | `[ ] optional (live smoke only)` | CI proven via locally-minted tokens — no account required to merge. |
+| **WorkOS** | JWT/JWKS auth integration tests — verify riz validates WorkOS-issued tokens (Phase 3) | **CI needs nothing** — `tests/auth_workos.rs` is deterministic: local RSA keypair, recorded-shape JWKS, WorkOS-shaped signed tokens (with `aud` enforced). A live test org (JWKS URL `https://api.workos.com/sso/jwks/<client_id>` + sample token) is only needed for an OPTIONAL nightly live-tenant smoke. | `[ ] optional (live smoke only)` | CI proven via locally-minted tokens — no account required to merge. |
 
 ---
 

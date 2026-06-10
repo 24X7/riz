@@ -1,0 +1,65 @@
+# Clerk JWT authorizer example.
+#
+# riz validates the bearer token's RS256 signature + claims against Clerk's
+# JWKS endpoint. Proven end-to-end with real cryptography in
+# tests/auth_clerk.rs (valid default token accepted *without* an `aud` claim;
+# expired / wrong-issuer / tampered-signature all rejected).
+#
+# ── 3-line Clerk setup ────────────────────────────────────────────────────────
+#   1. issuer    Your Clerk Frontend API / issuer, shown in the Clerk dashboard
+#                under "API Keys". Looks like:
+#                  https://<your-slug>.clerk.accounts.dev   (development)
+#                  https://clerk.<your-domain>.com          (production)
+#   2. audience  OMITTED on purpose — see the note below. Clerk's DEFAULT
+#                session token has NO `aud` claim.
+#   3. jwks_uri  Clerk publishes JWKS at:
+#                  https://<your-slug>.clerk.accounts.dev/.well-known/jwks.json
+#
+# ── IMPORTANT: Clerk's default session token has NO `aud` claim ───────────────
+# Most OAuth IdPs put an `aud` (audience) claim in their tokens and riz enforces
+# it. Clerk's DEFAULT session token does not. riz makes `audience` OPTIONAL: when
+# you omit it (as below), riz SKIPS `aud` validation entirely and validates only
+# the signature, `iss`, and `exp` — so a stock Clerk session token validates
+# out of the box.
+#
+# If you DO want audience enforcement, create a Clerk JWT Template that sets an
+# `aud` claim, mint tokens from that template, and add the matching
+#   audience = "<your-aud-value>"
+# line back to the [function.api.authorizer] block. riz will then enforce it.
+#
+# riz fetches the JWKS at startup, then on each request validates the token's
+# signature, `iss`, and `exp`. Valid token → 200 and the claims
+# (sub, sid, azp, …) are injected onto event.requestContext.authorizer.
+# Invalid/expired/missing token → 401, and the handler never runs.
+#
+# NOTE: riz fetches the JWKS at startup, so booting THIS config requires the
+# jwks_uri below to be reachable. Point it at your Clerk instance before
+# `riz run`.
+
+[server]
+port = 3000
+host = "127.0.0.1"
+
+[function.api]
+runtime = "bun"
+handler = "./examples/lambdas/events/index.handler"
+timeout_ms = 5000
+concurrency = 2
+
+# Clerk JWT authorizer. Note: NO `audience` line — Clerk's default session
+# token has no `aud` claim, so riz skips aud validation (signature + iss + exp
+# are still enforced). Add `audience = "..."` only if you use a Clerk JWT
+# Template that sets `aud`.
+[function.api.authorizer]
+type = "jwt"
+issuer = "https://your-slug.clerk.accounts.dev"
+jwks_uri = "https://your-slug.clerk.accounts.dev/.well-known/jwks.json"
+
+[[function.api.routes]]
+path = "/api"
+method = "ANY"
+
+# Try it once the JWKS endpoint is reachable:
+#   curl -i http://127.0.0.1:3000/api                          # → 401 (no token)
+#   curl -i -H "Authorization: Bearer <clerk-session-token>" \
+#        http://127.0.0.1:3000/api                              # → 200

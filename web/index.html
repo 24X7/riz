@@ -1986,6 +1986,8 @@ $ claude mcp add riz-local \
             <h4>Security &amp; Auth</h4>
             <ul>
               <li>Lambda authorizers — REQUEST + JWT (JWKS, TTL cache)</li>
+              <li>JWT/JWKS signature validation (RS256/ES256) — drop in Auth0, Cognito, Okta, WorkOS, or Clerk</li>
+              <li>WorkOS &amp; Clerk proven end-to-end — Clerk's no-<code>aud</code> default session token works out of the box</li>
               <li>CORS auto-preflight — OPTIONS → 204, <code>Access-Control-Allow-*</code> headers</li>
               <li>Bearer-token auth on <code>/_riz/*</code> (<code>/_riz/health</code> stays open)</li>
             </ul>

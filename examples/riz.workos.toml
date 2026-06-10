@@ -1,0 +1,57 @@
+# WorkOS (AuthKit) JWT authorizer example.
+#
+# riz validates the bearer token's RS256 signature + claims against WorkOS's
+# JWKS endpoint. Proven end-to-end with real cryptography in
+# tests/auth_workos.rs (valid token accepted; expired / wrong-issuer /
+# wrong-audience / tampered-signature all rejected).
+#
+# ── 3-line WorkOS setup ───────────────────────────────────────────────────────
+#   1. issuer    Your AuthKit issuer, shown in the WorkOS dashboard under
+#                "Authentication → AuthKit". Looks like:
+#                  https://<your-app>.authkit.app
+#                (Self-hosted user-management issuers are also supported — use
+#                 whatever value WorkOS stamps into the token's `iss` claim.)
+#   2. audience  Your WorkOS Client ID (dashboard → API Keys), e.g.
+#                  client_01HXXXXXXXXXXXXXXXXXXXXXXX
+#                WorkOS AuthKit tokens DO carry a standard `aud` claim, so riz
+#                enforces it. Set this to reject tokens minted for other apps.
+#   3. jwks_uri  WorkOS publishes JWKS at:
+#                  https://api.workos.com/sso/jwks/<your-client-id>
+#                (AuthKit also exposes it at
+#                 https://<your-app>.authkit.app/.well-known/jwks.json)
+#
+# riz fetches the JWKS at startup, then on each request validates the token's
+# signature, `iss`, `aud`, and `exp`. Valid token → 200 and the claims
+# (sub, sid, org_id, role, …) are injected onto
+# event.requestContext.authorizer. Invalid/expired/missing token → 401, and the
+# handler never runs.
+#
+# NOTE: riz fetches the JWKS at startup, so booting THIS config requires the
+# jwks_uri below to be reachable. Point it at your WorkOS app before `riz run`.
+
+[server]
+port = 3000
+host = "127.0.0.1"
+
+[function.api]
+runtime = "bun"
+handler = "./examples/lambdas/events/index.handler"
+timeout_ms = 5000
+concurrency = 2
+
+# WorkOS AuthKit JWT authorizer. issuer/audience/jwks_uri all from the WorkOS
+# dashboard. `audience` (your Client ID) is enforced.
+[function.api.authorizer]
+type = "jwt"
+issuer = "https://your-app.authkit.app"
+audience = "client_01HXXXXXXXXXXXXXXXXXXXXXXX"
+jwks_uri = "https://api.workos.com/sso/jwks/client_01HXXXXXXXXXXXXXXXXXXXXXXX"
+
+[[function.api.routes]]
+path = "/api"
+method = "ANY"
+
+# Try it once the JWKS endpoint is reachable:
+#   curl -i http://127.0.0.1:3000/api                          # → 401 (no token)
+#   curl -i -H "Authorization: Bearer <workos-access-token>" \
+#        http://127.0.0.1:3000/api                              # → 200

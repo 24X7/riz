@@ -39,6 +39,13 @@ pub struct JwtAuthorizerConfig {
     /// Token issuer URI (validated against `iss` claim).
     pub issuer: String,
     /// Expected audience (validated against `aud` claim).
+    ///
+    /// Optional. When set (e.g. a WorkOS client id), the `aud` claim is
+    /// enforced. When omitted or empty, `aud` validation is SKIPPED — this is
+    /// required for IdPs like Clerk whose default session token carries no
+    /// `aud` claim. Defaults to empty so existing single-IdP configs that
+    /// always set it are unaffected.
+    #[serde(default)]
     pub audience: String,
     /// JWKS endpoint URL.
     pub jwks_uri: String,
@@ -634,11 +641,10 @@ impl Config {
                         "function '{name}' JWT authorizer must have a non-empty issuer"
                     ));
                 }
-                if jwt_cfg.audience.is_empty() {
-                    return Err(format!(
-                        "function '{name}' JWT authorizer must have a non-empty audience"
-                    ));
-                }
+                // `audience` is intentionally OPTIONAL: when empty, `aud`
+                // validation is skipped (required for Clerk's default session
+                // token, which has no `aud`). When set, it is enforced in
+                // src/auth/jwt.rs (WorkOS and most OAuth IdPs).
             }
         }
         // Gateway: validate provider kinds + that default/fallback names exist.

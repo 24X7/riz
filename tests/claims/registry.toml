@@ -116,6 +116,24 @@ status = "proven"
 proof = "request_authorizer_allows_valid_token"
 
 [[claim]]
+id = "auth-jwt-jwks"
+page_text = "JWT/JWKS signature validation (RS256/ES256) — drop in Auth0, Cognito, Okta, WorkOS, or Clerk"
+status = "proven"
+proof = "workos_valid_token_is_accepted_and_claims_present"
+
+[[claim]]
+id = "auth-workos"
+page_text = "WorkOS &amp; Clerk proven end-to-end"
+status = "proven"
+proof = "workos_valid_token_is_accepted_and_claims_present"
+
+[[claim]]
+id = "auth-clerk"
+page_text = "Clerk's no-aud default session token works out of the box"
+status = "proven"
+proof = "clerk_default_token_without_aud_is_accepted"
+
+[[claim]]
 id = "auth-cors-preflight"
 page_text = "CORS auto-preflight"
 status = "proven"
