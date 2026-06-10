@@ -22,16 +22,40 @@
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": "riz",
-    "description": "Self-hosted AWS Lambda runtime in one Rust binary. Drop in your HTTP API v2 + WebSocket handlers — every function becomes a typed MCP tool an agent can call. Five runtimes: Bun, Node.js, Python, Rust, and capability-sandboxed WASM. OpenAI-compatible LLM gateway built in.",
+    "description": "Self-hosted AWS Lambda runtime harness in one Rust binary. Write a plain Lambda-shaped function — no web framework to pick — and the runtime makes it production-grade: always-on process safety profile, supervised crash-respawn, graceful in-flight drain, real percentile observability, and warm pre-spawned pools (no per-request cold start). Every function becomes a typed MCP tool an agent can call the moment it boots. Five runtimes: Bun, Node.js, Python, Rust, and capability-sandboxed WASM. OpenAI-compatible LLM gateway built in.",
     "url": "https://riz.dev",
     "applicationCategory": "DeveloperApplication",
+    "applicationSubCategory": "Serverless Runtime",
     "operatingSystem": "Linux, macOS",
+    "softwareVersion": "0.1",
     "programmingLanguage": ["TypeScript","JavaScript","Python","Rust","WebAssembly"],
+    "featureList": [
+      "Runtime harness: write a plain AWS-Lambda-shaped handler, no web framework decision",
+      "Warm pre-spawned process pool per function — no per-request cold start",
+      "Always-on per-child safety profile: RLIMIT_CORE=0, NOFILE=4096, FSIZE=100MiB, NPROC=256, PR_SET_PDEATHSIG=SIGKILL, NO_NEW_PRIVS",
+      "Supervised crash-respawn with a liveness watcher",
+      "Graceful 30s in-flight request drain on shutdown and hot-swap",
+      "S3 hot-swap deploys with health-check and automatic rollback",
+      "riz.toml and handler-source hot-reload on save",
+      "Every function auto-exposed as a typed MCP tool at /_riz/mcp (spec 2025-11-25)",
+      "Five runtimes: Bun, Node.js, Python, Rust, and capability-sandboxed WASI/WASM",
+      "OpenAI-compatible LLM gateway with provider routing, SSE streaming, embeddings, and budget caps",
+      "Real percentile observability (P50–P99 over a 5-min window) + Prometheus at /_riz/metrics",
+      "OpenTelemetry OTLP/HTTP export with token-aware GenAI tracing",
+      "JWT/JWKS Lambda authorizers (RS256/ES256) — Auth0, Cognito, Okta, WorkOS, Clerk",
+      "Capability-sandboxed WASI runtime — deny-by-default filesystem and network"
+    ],
     "author": {
       "@type": "Person",
       "name": "Chris Rizzuto",
       "email": "chris@riz.dev",
       "url": "https://linkedin.com/in/ship247"
+    },
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD",
+      "category": "Free, open-source"
     },
     "license": "https://www.apache.org/licenses/LICENSE-2.0",
     "codeRepository": "https://github.com/24X7/riz"
@@ -1560,8 +1584,8 @@
     <div class="eyebrow">// agent-native lambda runtime · mcp spec 2025-11-25 · single rust binary · v0.1</div>
     <h1>Lambda for the<br/><em>agent era.</em></h1>
     <p class="sub">
-      <strong>Drop in your AWS Lambda handlers — and the moment <code style="font-family:var(--mono);font-size:.82em;color:var(--cyan)">riz run</code> boots, every function is a typed MCP tool an agent can call.</strong>
-      One ~10&nbsp;MB Rust binary you own runs real AWS HTTP API v2 + WebSocket traffic across five runtimes — Bun, Node.js, Python, Rust, and capability-sandboxed WASM — with an OpenAI-compatible LLM gateway on the same port.
+      <strong>Write a plain AWS-Lambda-shaped function — no framework to pick, no stack to wire — and the moment <code style="font-family:var(--mono);font-size:.82em;color:var(--cyan)">riz run</code> boots it's production-grade and a typed MCP tool an agent can call.</strong>
+      riz is the <em>runtime harness</em>: you write only business logic, and one ~10&nbsp;MB Rust binary you own brings the always-on parts for free — process safety profile, supervised crash-respawn, graceful drain, real percentile observability, S3 hot-swap with auto-rollback. Real AWS HTTP API v2 + WebSocket traffic across five runtimes — Bun, Node.js, Python, Rust, and capability-sandboxed WASM — with an OpenAI-compatible LLM gateway on the same port. Warm pre-spawned pools mean no per-request cold start.
     </p>
     <div class="install">
       <span class="pr">$</span>
@@ -1896,10 +1920,13 @@ $ claude mcp add riz-local \
     <span class="lbl">// what's in the box</span>
     <h2>Everything. <em>One binary.</em></h2>
     <p class="status-sub">
-      Run AWS HTTP API v2 + WebSocket Lambda handlers across five runtimes on a
-      single ~10&nbsp;MB Rust binary. Agent-native MCP, an OpenAI-compatible LLM
-      gateway, capability-sandboxed WASM, hot-reload, real percentiles — no
-      Docker, no per-request container, no cloud bill.
+      You write the function; the runtime brings the rest. Safety profile,
+      supervised respawn, in-flight drain, warm pools, observability, and
+      hot-swap are the harness's job, not yours. Run AWS HTTP API v2 + WebSocket
+      Lambda handlers across five runtimes on a single ~10&nbsp;MB Rust binary —
+      agent-native MCP, an OpenAI-compatible LLM gateway, capability-sandboxed
+      WASM, hot-reload, real percentiles. No Docker, no per-request container,
+      no per-request cold start, no cloud bill.
     </p>
     <div class="status-grid">
 
@@ -1912,6 +1939,7 @@ $ claude mcp add riz-local \
             <h4>Agent &amp; AI Integration</h4>
             <ul>
               <li>MCP server at <code>/_riz/mcp</code> — every function is a tool, automatically, spec 2025-11-25</li>
+              <li>The flywheel: an agent writes a plain function, and the instant riz boots it's a callable, production-grade tool — zero glue</li>
               <li>Zero SDK code — point any MCP client at riz, your APIs become agent-callable</li>
               <li>Claude Agent SDK demo drives riz functions as tools — proven by an example</li>
               <li>Bearer-token gating on <code>/_riz/mcp</code> for shared-secret access control</li>
@@ -1931,8 +1959,9 @@ $ claude mcp add riz-local \
             <h4>Function Runtimes</h4>
             <ul>
               <li>Five runtimes — Bun, Node.js, Python, Rust, and capability-sandboxed WASM</li>
+              <li>Warm pre-spawned process pool per function — no per-request cold start; a spawn happens only at boot, respawn, or hot-swap</li>
               <li>Cross-runtime parity matrix — every HTTP capability tested on every runtime</li>
-              <li>WASI sandbox (<code>runtime = "wasm"</code>) — deny-by-default fs/net, sub-ms cold starts</li>
+              <li>WASI sandbox (<code>runtime = "wasm"</code>) — deny-by-default fs/net, sub-ms cold starts even when it does spawn</li>
             </ul>
           </article>
 
@@ -1957,7 +1986,9 @@ $ claude mcp add riz-local \
           <article class="bucket">
             <h4>Deployment &amp; Lifecycle</h4>
             <ul>
-              <li>Hot-swap deploys from S3 with in-flight request drain</li>
+              <li>Supervised crash-respawn + a liveness watcher — a child that dies or hangs is replaced; your logic stays up</li>
+              <li>Graceful 30s in-flight drain on shutdown and hot-swap — no dropped requests mid-deploy</li>
+              <li>S3 hot-swap deploys with a health-check and automatic rollback on a bad release</li>
               <li><code>riz.toml</code> hot-reload on save</li>
               <li>Real Lambda context — <code>getRemainingTimeInMillis</code>, <code>functionName</code>, <code>invokedFunctionArn</code>, <code>awsRequestId</code></li>
             </ul>
@@ -1967,8 +1998,9 @@ $ claude mcp add riz-local \
             <h4>Observability</h4>
             <ul>
               <li><code>/_riz/health</code> · <code>/_riz/metrics</code> · <code>/_riz/registry</code></li>
-              <li>Terminal dashboard: P50/P75/P90/P95/P99 over 5-min window</li>
+              <li>Real percentiles, not yours to wire — P50/P75/P90/P95/P99 over a 5-min window in the terminal dashboard, free with the harness</li>
               <li>OpenTelemetry export — OTLP/HTTP JSON, one pipeline fanning out to Datadog and CloudWatch/X-Ray</li>
+              <li>Token-aware GenAI tracing on that single OTLP path — prompt/completion token attrs roll up per request</li>
               <li>MCP server — spec 2025-11-25 (also negotiates 2024-11-05 / 2025-03-26 / 2025-06-18). JSON-RPC 2.0, full lifecycle.</li>
             </ul>
           </article>
@@ -1997,7 +2029,7 @@ $ claude mcp add riz-local \
           <article class="bucket">
             <h4>Security &amp; Isolation</h4>
             <ul>
-              <li>Always-on safety profile per child — <code>RLIMIT_CORE=0</code>, FD caps, fork-bomb caps, no privilege escalation</li>
+              <li>Always-on safety profile per child, applied for you — <code>RLIMIT_CORE=0</code>, <code>NOFILE=4096</code>, <code>FSIZE=100MiB</code>, <code>NPROC=256</code>, <code>PR_SET_PDEATHSIG=SIGKILL</code>, <code>NO_NEW_PRIVS</code></li>
               <li>Opt-in per-function caps — <code>memory_mb</code>, <code>cpu_time_secs</code>, and Linux Landlock filesystem allowlists</li>
               <li>WASI sandbox — deny-by-default filesystem and network, capabilities granted explicitly in <code>riz.toml</code></li>
               <li>Lambda authorizers (REQUEST + JWT/JWKS), CORS auto-preflight, bearer-token admin gating</li>
@@ -2101,12 +2133,16 @@ $ claude mcp add riz-local \
   <div class="auth-l">
     <span class="lbl">// why I built this</span>
     <blockquote>
-      I spent twenty years watching teams pour their logic into APIs — then
-      watched all of it become invisible to the agents that now do the work. riz
-      flips that: the functions you already have become an agent's hands the
-      moment the binary boots, no rewrite, no cloud account. The API layer
-      everyone already built is the substrate the agent era runs on. I wanted to
-      own that substrate, locally, end to end — so I built it.
+      I spent twenty years watching teams spend their best days on the part that
+      isn't the product — picking a framework, wiring reliability, bolting on
+      observability — before a single line of business logic shipped. riz is the
+      harness that erases that tax: write a plain function, and the runtime makes
+      it production-grade — safety profile, supervised respawn, drain, real
+      percentiles, warm pools so there's no per-request cold start. No framework
+      decision, no cloud account. And because every function is a typed MCP tool
+      the moment the binary boots, an agent that writes a function instantly has
+      production-grade hands. I wanted to own that substrate, locally, end to end
+      — so I built it.
     </blockquote>
     <div class="acard">
       <div class="badge">CR</div>

@@ -151,6 +151,36 @@ page_text = "CORS auto-preflight"
 status = "proven"
 proof = "cors_preflight_returns_204_with_allow_headers"
 
+[[claim]]
+id = "lifecycle-supervised-respawn"
+page_text = "Supervised crash-respawn + a liveness watcher — a child that dies or hangs is replaced; your logic stays up"
+status = "proven"
+proof = "liveness_fault_injection_respawns_within_250ms"
+
+[[claim]]
+id = "lifecycle-graceful-drain"
+page_text = "Graceful 30s in-flight drain on shutdown and hot-swap — no dropped requests mid-deploy"
+status = "proven"
+proof = "hot_swap_drains_in_flight_requests"
+
+[[claim]]
+id = "lifecycle-s3-hotswap-rollback"
+page_text = "S3 hot-swap deploys with a health-check and automatic rollback on a bad release"
+status = "proven"
+proof = "deploy_health_check_uses_422_for_crash"
+
+[[claim]]
+id = "isolation-always-on-safety-profile"
+page_text = "Always-on safety profile per child, applied for you"
+status = "proven"
+proof = "child_inherits_always_on_caps"
+
+[[claim]]
+id = "observability-token-aware-tracing"
+page_text = "Token-aware GenAI tracing on that single OTLP path — prompt/completion token attrs roll up per request"
+status = "proven"
+proof = "otlp_encoder_emits_genai_token_attrs"
+
 # ─────────────────────────── Benchmark (perf floor) ─────────────────────────
 
 [[claim]]
@@ -167,6 +197,24 @@ id = "test-count"
 page_text = "800+ tests"
 status = "copy-only"
 note = "Honest floor, not a pinned count: the absolute number from `cargo nextest list` grows every commit (827 as of 2026-06-10), so the page states a floor ('800+') that stays true without per-commit churn. The cross-runtime parity *capability* it advertises is proven separately (see cross-runtime-parity). landing_page_contract.rs::every_page_claim_is_registered checks this string is reflected here so it can't silently drift."
+
+[[claim]]
+id = "warm-pool-no-cold-start"
+page_text = "Warm pre-spawned process pool per function — no per-request cold start; a spawn happens only at boot, respawn, or hot-swap"
+status = "copy-only"
+note = "Honest phrasing of the warm-pool behavior — NOT 'zero cold starts ever'. riz keeps one warm pre-spawned child-process pool per function (see src/process — spawn_all / wait_for_ready), so a cold start happens only at boot, respawn, or hot-swap, never per request in steady state. WASM is sub-ms even when it does spawn. The deterministic perf-floor sibling is ws_handles_100_messages_within_10s (see perf-throughput); this claim is registered copy-only because 'no per-request cold start' is a steady-state architectural property, not a single asserted number."
+
+[[claim]]
+id = "runtime-harness-production-grade"
+page_text = "You write the function; the runtime brings the rest."
+status = "copy-only"
+note = "Positioning frame for the product thesis: riz is a runtime harness, not a framework — the author writes only business logic and the runtime supplies the always-on parts (safety profile, supervised respawn, drain, observability, hot-swap). 'Production-grade' and 'no framework decision' are subjective umbrella framings; the underlying primitives they summarize are each proven by their own claims (isolation-always-on-safety-profile, lifecycle-supervised-respawn, lifecycle-graceful-drain, lifecycle-s3-hotswap-rollback, metrics-prometheus, otlp-export)."
+
+[[claim]]
+id = "agent-flywheel"
+page_text = "an agent writes a plain function, and the instant riz boots it's a callable, production-grade tool — zero glue"
+status = "copy-only"
+note = "The adoption-mechanism framing: an agent (or human) that writes a function instantly has a callable MCP tool with no glue. The provable mechanics under it are the MCP auto-exposure (mcp-agent-native) and agent tool-call (agent-tooluse) claims; 'production-grade' is the same umbrella framing covered by runtime-harness-production-grade. Registered copy-only because the sentence is positioning, not a single asserted behavior."
 
 [[claim]]
 id = "bug-tracker-closed"
