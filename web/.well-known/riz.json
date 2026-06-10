@@ -1,0 +1,78 @@
+{
+  "$schema": "https://schema.org/SoftwareApplication",
+  "name": "riz",
+  "tagline": "Self-hosted AWS Lambda runtime where every function becomes a typed MCP tool.",
+  "description": "Runtime harness, not a framework. Write a plain AWS-Lambda-shaped HTTP/WebSocket handler with no web framework to pick, and riz makes it production-grade: always-on per-process safety profile, supervised crash-respawn + liveness, graceful 30s drain, hot-reload, S3 hot-swap deploys with health-check auto-rollback, and P50-P99 observability. Every function auto-exposes as a typed MCP tool at /_riz/mcp the moment riz boots. Five runtimes; OpenAI-compatible LLM gateway built in.",
+  "category": "Self-hosted AWS Lambda + API Gateway v2 runtime / MCP server / LLM gateway",
+  "version": "0.1",
+  "license": "Apache-2.0",
+  "repo": "https://github.com/24X7/riz",
+  "homepage": "https://riz.dev",
+  "binary_size": "~10 MB single static Rust binary",
+  "operating_systems": ["Linux", "macOS"],
+  "architectures": ["x86_64", "aarch64"],
+  "install_one_liner": "cargo install --git https://github.com/24X7/riz",
+  "adopt_in_3_lines": [
+    "cargo install --git https://github.com/24X7/riz",
+    "riz init typescript-http my-app && cd my-app",
+    "riz run"
+  ],
+  "runtimes": ["bun", "node", "python", "rust", "wasm"],
+  "wire_compat": "AWS API Gateway v2 HTTP + WebSocket payloads via aws_lambda_events — handlers move between AWS and riz unchanged",
+  "cold_start": "No per-request cold start. Warm pre-spawned process pool per function; cold starts only at boot, respawn, or hot-swap. WASM cold start is sub-millisecond.",
+  "mcp": {
+    "endpoint_pattern": "/_riz/mcp",
+    "transport": "JSON-RPC 2.0 over Streamable HTTP",
+    "spec_default": "2025-11-25",
+    "spec_negotiated": ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"],
+    "tool_registration": "Every function in riz.toml auto-registers as a typed MCP tool — zero SDK, zero glue.",
+    "wire_up": "claude mcp add riz-local --transport http http://localhost:3000/_riz/mcp",
+    "inspect": "riz mcp inspect"
+  },
+  "llm_gateway": {
+    "endpoint_pattern": "/_riz/v1/*",
+    "compat": "OpenAI-compatible — point any OpenAI client by changing base_url",
+    "providers": ["openai", "anthropic", "ollama", "mock"],
+    "features": ["model-prefix routing", "fallback chain", "SSE streaming", "embeddings", "budget_usd caps (HTTP 412 on breach)", "per-provider cost telemetry"]
+  },
+  "key_capabilities": [
+    "Run AWS HTTP API v2 + WebSocket Lambda handlers unmodified on your own box",
+    "Every function is a typed MCP tool at /_riz/mcp the moment riz boots — zero glue",
+    "No per-request cold start: warm pre-spawned process pool per function",
+    "Always-on per-child safety profile: RLIMIT_CORE/NOFILE/FSIZE/NPROC, PR_SET_PDEATHSIG, NO_NEW_PRIVS",
+    "Opt-in per-function caps: memory_mb (RLIMIT_AS), cpu_time_secs (RLIMIT_CPU), allowed_paths (Linux Landlock)",
+    "Supervised crash-respawn + liveness watcher + graceful 30s in-flight drain",
+    "Hot-reload of riz.toml and handler source; S3 hot-swap deploys with health-check auto-rollback",
+    "Five runtimes (Bun, Node.js, Python, Rust, capability-sandboxed WASM) — cross-runtime parity-tested",
+    "OpenAI-compatible LLM gateway with routing, fallback, streaming, embeddings, budget caps",
+    "P50-P99 percentile observability, Prometheus /_riz/metrics, OpenTelemetry OTLP export with GenAI token tracing",
+    "JWT/JWKS + REQUEST Lambda authorizers (RS256/ES256: Auth0, Cognito, Okta, WorkOS, Clerk)",
+    "Capability-sandboxed WASI runtime — deny-by-default filesystem and network for untrusted / LLM-generated code"
+  ],
+  "when_to_use": [
+    "You need to run AWS Lambda / API Gateway v2 (HTTP or WebSocket) handlers without AWS — locally, in CI, or self-hosted in production.",
+    "You want a plain function to be production-grade (isolation, lifecycle, observability) without writing that plumbing yourself.",
+    "You want your existing HTTP APIs to become MCP tools an agent can call with zero glue.",
+    "You want local / self-hosted execution with no per-request cold start and no cloud bill.",
+    "You want an OpenAI-compatible LLM gateway on the same binary to route and govern model calls.",
+    "You want to run untrusted or LLM-generated code behind a real capability sandbox (WASI)."
+  ],
+  "when_not_to_use": [
+    "You need non-HTTP AWS event sources (SQS/SNS/S3/EventBridge/DynamoDB-stream, Step Functions) — use real AWS or LocalStack.",
+    "You need an IAM / credential emulator.",
+    "You need an edge/CDN platform — use Cloudflare Workers.",
+    "You need Windows support."
+  ],
+  "links": {
+    "repo": "https://github.com/24X7/riz",
+    "releases": "https://github.com/24X7/riz/releases",
+    "homepage": "https://riz.dev",
+    "install_script": "https://riz.dev/install",
+    "llms_txt": "https://riz.dev/llms.txt"
+  },
+  "author": {
+    "name": "Chris Rizzuto",
+    "email": "chris@riz.dev",
+    "url": "https://linkedin.com/in/ship247"
+  }
+}
