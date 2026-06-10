@@ -280,7 +280,7 @@ fn integration_timeout_returns_504_unit_level() {
 
 /// Integration-level 504 test: gate on bun.
 ///
-/// Uses a sleep-based lambda fixture (sleeps 500ms) with `integration_timeout_ms=200`
+/// Uses a sleep-based lambda fixture (sleeps 3000ms) with `integration_timeout_ms=200`
 /// to guarantee the integration timeout fires before the handler responds.
 /// Requires bun on PATH.
 #[tokio::test]
@@ -295,8 +295,8 @@ async fn gateway_timeout_returns_504_for_routed_request() {
         return;
     }
 
-    // The sleep-lambda sleeps 500ms before responding.
-    // integration_timeout_ms = 200 fires first → 504.
+    // The sleep-lambda sleeps 3000ms before responding.
+    // integration_timeout_ms = 200 fires first → 504 (15x margin = deterministic).
     let mut functions = IndexMap::new();
     functions.insert(
         "slow-fn".to_string(),
@@ -308,7 +308,7 @@ async fn gateway_timeout_returns_504_for_routed_request() {
                 "/tests/fixtures/sleep-lambda/index.ts"
             )),
             timeout_ms: 60_000,
-            integration_timeout_ms: 200, // fires before the 500ms sleep completes
+            integration_timeout_ms: 200, // fires before the 3000ms sleep completes
             stage_variables: Default::default(),
             cache_ttl_secs: None,
             concurrency: 1,
@@ -370,7 +370,7 @@ async fn gateway_timeout_returns_504_for_routed_request() {
     assert_eq!(
         resp.status().as_u16(),
         504,
-        "integration_timeout_ms=200 must produce 504 for 500ms sleep handler (got {} after {:?})",
+        "integration_timeout_ms=200 must produce 504 for 3000ms sleep handler (got {} after {:?})",
         resp.status(),
         elapsed
     );

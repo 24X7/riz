@@ -164,9 +164,9 @@ note = "Headline 91k req/s · p99<1ms is a benches/ result (see benches/README.m
 
 [[claim]]
 id = "test-count"
-page_text = "788 tests"
+page_text = "800+ tests"
 status = "copy-only"
-note = "Point-in-time stat: the absolute count from `cargo nextest list` drifts every commit. The cross-runtime parity *capability* it advertises is proven separately (see cross-runtime-parity). landing_page_contract.rs::every_page_claim_is_registered checks this number is reflected here so it can't silently drift."
+note = "Honest floor, not a pinned count: the absolute number from `cargo nextest list` grows every commit (827 as of 2026-06-10), so the page states a floor ('800+') that stays true without per-commit churn. The cross-runtime parity *capability* it advertises is proven separately (see cross-runtime-parity). landing_page_contract.rs::every_page_claim_is_registered checks this string is reflected here so it can't silently drift."
 
 [[claim]]
 id = "bug-tracker-closed"

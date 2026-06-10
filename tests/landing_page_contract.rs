@@ -101,10 +101,10 @@ fn every_page_claim_is_registered() {
          every live capability claim should be mapped"
     );
 
-    // The page's Proof bucket states a test count like "788 tests". Extract it
-    // and require that exact string to be registered (it's the `test-count`
-    // copy-only claim's page_text).
-    let test_count = Regex::new(r"(\d{2,5}) tests \(<code>cargo nextest run</code>\)")
+    // The page's Proof bucket states a test count like "800+ tests" (an honest
+    // floor, not a pinned number — see the test-count claim's note). Extract it
+    // (optional trailing '+') and require that exact string to be registered.
+    let test_count = Regex::new(r"(\d{2,5}\+?) tests \(<code>cargo nextest run</code>\)")
         .unwrap()
         .captures(&page)
         .map(|c| c[1].to_string())
