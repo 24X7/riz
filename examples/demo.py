@@ -17,6 +17,8 @@ Boots ONE riz instance from examples/riz.all.toml and demonstrates, live:
   • Lambda authorizers       REQUEST allow → 200, deny → 401
   • WebSocket                $connect/$default/$disconnect across Bun/Python/Rust
   • Handler hot-reload        edit a handler, next request runs new code (no restart)
+  • Agent SDK                 Claude Agent SDK drives riz functions as MCP tools
+                              (live if ANTHROPIC_API_KEY is set; else how-to)
   • Scaffolding & doctor      riz init --list, riz doctor
 
 Everything is REAL: every line below makes an actual HTTP/JSON-RPC/WebSocket call
@@ -813,6 +815,76 @@ def hot_reload_section() -> None:
     pause()
 
 
+def agent_sdk_section() -> None:
+    banner("Agent SDK — Claude drives riz functions as MCP tools")
+    sub("The agent-substrate payoff: every riz function is already an MCP tool")
+    sub("(see the MCP section above). examples/agent-sdk/agent_demo.py points the")
+    sub("Claude Agent SDK at /_riz/mcp and lets Claude call your functions as tools.")
+
+    demo = ROOT / "examples" / "agent-sdk" / "agent_demo.py"
+    tools_cfg = ROOT / "examples" / "riz.agent.toml"
+    req("examples/agent-sdk/agent_demo.py")
+    out("task: \"look up order 1042; if it's delayed, open a support ticket\"")
+    out("→ Claude calls mcp__riz__lookup_order then mcp__riz__create_ticket")
+    out(f"tools served by: {tools_cfg.relative_to(ROOT)} "
+        "(lookup_order · list_inventory · create_ticket)")
+
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        sub("ANTHROPIC_API_KEY detected — launching the live Agent SDK demo against")
+        sub("a dedicated riz instance booted from examples/riz.agent.toml.")
+        # Pick a free port and write a patched config so the agent-tools
+        # instance never collides with the main demo on :3000.
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
+            _s.bind((HOST, 0))
+            agent_port = _s.getsockname()[1]
+        agent_url = f"http://{HOST}:{agent_port}/_riz/mcp"
+        agent_cfg = Path("/tmp/riz-agent.toml")
+        agent_cfg.write_text(
+            tools_cfg.read_text().replace("port = 3000", f"port = {agent_port}")
+        )
+        proc = subprocess.Popen(
+            [str(BIN), "--config", str(agent_cfg), "run"],
+            stdout=open("/tmp/riz-agent.log", "wb"), stderr=subprocess.STDOUT,
+            stdin=DEVNULL,
+        )
+        try:
+            ready = False
+            for _ in range(60):
+                if reachable(f"http://{HOST}:{agent_port}/ready"):
+                    ready = True
+                    break
+                time.sleep(0.25)
+            if not ready:
+                warn("agent-tools riz did not come up — see /tmp/riz-agent.log; skipping live run")
+            else:
+                r = subprocess.run(
+                    [sys.executable, str(demo)],
+                    capture_output=True, text=True, stdin=DEVNULL,
+                    env={**os.environ, "RIZ_MCP_URL": agent_url},
+                    timeout=120,
+                )
+                tail = (r.stdout + r.stderr).rstrip().splitlines()
+                print(indent("\n".join(tail[-12:]) if tail else "(no output)"))
+                if r.returncode == 0:
+                    ok("Claude completed the task by calling riz functions as tools")
+                else:
+                    warn(f"agent_demo.py exited {r.returncode} (needs claude-agent-sdk + valid key)")
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                proc.kill()
+    else:
+        sub("No ANTHROPIC_API_KEY set — skipping the live model run. To try it:")
+        out("pip install claude-agent-sdk && export ANTHROPIC_API_KEY=sk-ant-...")
+        out("riz --config examples/riz.agent.toml run     # terminal 1")
+        out("python3 examples/agent-sdk/agent_demo.py      # terminal 2")
+    sub("The substrate (tools/list + tools/call) is proven keyless by "
+        "tests/examples_agent.rs.")
+    pause()
+
+
 def scaffolding_section() -> None:
     banner("Scaffolding & diagnostics")
     r = subprocess.run([str(BIN), "init", "--list"], capture_output=True, text=True, stdin=DEVNULL)
@@ -864,6 +936,7 @@ def main() -> None:
         authorizers_section()
         websocket_section()
         hot_reload_section()
+        agent_sdk_section()
         scaffolding_section()
         final_telemetry()
     finally:

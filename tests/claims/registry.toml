@@ -20,6 +20,12 @@ status = "proven"
 proof = "mcp_inspect_against_running_riz_lists_tools_and_spec_version"
 
 [[claim]]
+id = "agent-tooluse"
+page_text = "Claude Agent SDK demo drives riz functions as tools — proven by an example"
+status = "proven"
+proof = "agent_tools_are_mcp_tools_and_callable_over_riz_mcp"
+
+[[claim]]
 id = "llm-gateway-openai-compatible"
 page_text = "OpenAI-compatible gateway"
 status = "proven"

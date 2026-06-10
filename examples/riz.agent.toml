@@ -1,0 +1,53 @@
+# riz.agent.toml — the agent-substrate demo config.
+#
+# Three side-effect-light functions, each of which auto-becomes ONE MCP tool
+# at `/_riz/mcp` the moment `riz run` boots. The Claude Agent SDK script in
+# examples/agent-sdk/ points at that endpoint and lets Claude call these as
+# tools (tool name == function name below).
+#
+#   riz --config examples/riz.agent.toml run
+#   → MCP tools: lookup_order, list_inventory, create_ticket
+#
+# The LLM gateway uses the deterministic `mock` provider so the AI path is
+# exercisable in CI without a key. Swap to a real provider for live use.
+
+[server]
+port = 3000
+host = "127.0.0.1"
+
+[gateway]
+default_provider = "mock"
+fallback_chain = ["mock"]
+
+[gateway.providers.mock]
+kind = "mock"
+
+[function.lookup_order]
+runtime = "bun"
+handler = "./examples/lambdas/agent-tools/index.lookupOrder"
+timeout_ms = 2000
+concurrency = 4
+
+[[function.lookup_order.routes]]
+path = "/orders/{id}"
+method = "GET"
+
+[function.list_inventory]
+runtime = "bun"
+handler = "./examples/lambdas/agent-tools/index.listInventory"
+timeout_ms = 2000
+concurrency = 4
+
+[[function.list_inventory.routes]]
+path = "/inventory"
+method = "GET"
+
+[function.create_ticket]
+runtime = "bun"
+handler = "./examples/lambdas/agent-tools/index.createTicket"
+timeout_ms = 2000
+concurrency = 4
+
+[[function.create_ticket.routes]]
+path = "/tickets"
+method = "POST"
