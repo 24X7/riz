@@ -852,15 +852,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cadence"
-version = "1.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ca08f6db9f0c963249cf23a27820f9d973d2acaad4d6bfaeb858b58ebd58a6a"
-dependencies = [
- "crossbeam-channel",
-]
-
-[[package]]
 name = "cap-fs-ext"
 version = "3.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3591,7 +3582,6 @@ dependencies = [
  "aws_lambda_events",
  "axum",
  "base64",
- "cadence",
  "chrono",
  "clap",
  "crossterm",

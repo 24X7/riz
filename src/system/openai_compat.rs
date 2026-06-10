@@ -9,6 +9,7 @@
 //!   POST /_riz/v1/chat/completions   (non-streaming today; SSE next)
 //!   GET  /_riz/v1/models
 
+use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::sync::Arc;
 
@@ -24,13 +25,102 @@ use futures_util::stream;
 use serde_json::json;
 
 use crate::llm::{ChatRequest, ChatResponse, EmbeddingsRequest, Gateway, ProviderError};
+use crate::observability::ipc::{
+    AttrValue, SpanKind, TelemetryEvent, GEN_AI_INPUT_TOKENS, GEN_AI_OUTPUT_TOKENS,
+    GEN_AI_REQUEST_MODEL, GEN_AI_SYSTEM,
+};
+use crate::observability::TelemetryHandle;
+use crate::server::{new_span_id, new_trace_id, now_unix_nanos};
 
 /// `POST /_riz/v1/chat/completions` — OpenAI chat-completions shape.
 /// `stream: true` returns an SSE stream of `chat.completion.chunk` events
 /// terminated by `data: [DONE]`; otherwise a single JSON `chat.completion`.
-pub async fn chat_completions(gw: Arc<Gateway>, Json(req): Json<ChatRequest>) -> Response {
+///
+/// Emits a request root **Server** span and, on a successful gateway call, a
+/// `chat.completions` **Client** child span carrying OTel GenAI token
+/// attributes (`gen_ai.system`, `gen_ai.request.model`,
+/// `gen_ai.usage.input_tokens`/`output_tokens`). The child's `parent_span_id`
+/// is the request span — so the gateway call rolls up under the request.
+pub async fn chat_completions(
+    gw: Arc<Gateway>,
+    telemetry: TelemetryHandle,
+    Json(req): Json<ChatRequest>,
+) -> Response {
     let streaming = req.stream;
-    match gw.chat(&req).await {
+    let trace_id = new_trace_id();
+    let request_span_id = new_span_id();
+    let request_start = now_unix_nanos();
+    let requested_model = req.model.clone();
+
+    let outcome = gw.chat(&req).await;
+
+    // Child span for the gateway/LLM call, parented to the request span.
+    if let Ok(resp) = &outcome {
+        let mut attrs = BTreeMap::new();
+        attrs.insert(
+            GEN_AI_SYSTEM.to_string(),
+            AttrValue::String("riz-gateway".to_string()),
+        );
+        attrs.insert(
+            GEN_AI_REQUEST_MODEL.to_string(),
+            AttrValue::String(resp.model.clone()),
+        );
+        attrs.insert(
+            GEN_AI_INPUT_TOKENS.to_string(),
+            AttrValue::Int(resp.usage.prompt_tokens as i64),
+        );
+        attrs.insert(
+            GEN_AI_OUTPUT_TOKENS.to_string(),
+            AttrValue::Int(resp.usage.completion_tokens as i64),
+        );
+        let child_end = now_unix_nanos();
+        telemetry.emit(TelemetryEvent {
+            name: "chat.completions".to_string(),
+            kind: SpanKind::Client,
+            trace_id: trace_id.clone(),
+            span_id: new_span_id(),
+            parent_span_id: Some(request_span_id.clone()),
+            start_unix_nanos: request_start,
+            end_unix_nanos: child_end,
+            attributes: attrs,
+        });
+    }
+
+    let status: u16 = match &outcome {
+        Ok(_) => 200,
+        Err(ProviderError::BadRequest(_)) => 400,
+        Err(ProviderError::BudgetExceeded) => 412,
+        Err(_) => 502,
+    };
+
+    // Request root span (Server). Emitted after the child so a collector sees a
+    // complete tree; ids link them regardless of arrival order.
+    let mut req_attrs = BTreeMap::new();
+    req_attrs.insert(
+        "http.method".to_string(),
+        AttrValue::String("POST".to_string()),
+    );
+    req_attrs.insert(
+        "http.route".to_string(),
+        AttrValue::String("/_riz/v1/chat/completions".to_string()),
+    );
+    req_attrs.insert("http.status_code".to_string(), AttrValue::Int(status as i64));
+    req_attrs.insert(
+        GEN_AI_REQUEST_MODEL.to_string(),
+        AttrValue::String(requested_model),
+    );
+    telemetry.emit(TelemetryEvent {
+        name: "POST /_riz/v1/chat/completions".to_string(),
+        kind: SpanKind::Server,
+        trace_id,
+        span_id: request_span_id,
+        parent_span_id: None,
+        start_unix_nanos: request_start,
+        end_unix_nanos: now_unix_nanos(),
+        attributes: req_attrs,
+    });
+
+    match outcome {
         Ok(resp) if streaming => stream_response(resp).into_response(),
         Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
         Err(e @ ProviderError::BadRequest(_)) => {

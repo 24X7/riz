@@ -195,7 +195,7 @@ src/
   hotreload.rs         # notify-based watcher for riz.toml + handler sources
   deploy.rs            # POST /_riz/deploy hot-swap from S3
   state.rs             # RizState + per-function counters/latency
-  metrics.rs           # Datadog cadence emitter
+  observability/       # isolated __telemetry child + OTLP/HTTP-JSON exporter
   tui/                 # ratatui dashboard
   system/              # /_riz/* endpoints (health, metrics, registry, mcp)
     mcp/               # MCP server (spec 2025-11-25)

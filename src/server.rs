@@ -86,12 +86,17 @@ pub fn build_app(state: Arc<AppState>) -> AxumRouter {
                 Ok(gw) => {
                     let gw = Arc::new(gw);
                     let gw_chat = gw.clone();
+                    let chat_telemetry = state.telemetry.clone();
                     app = app.route(
                         "/_riz/v1/chat/completions",
                         post(move |body: Json<crate::llm::ChatRequest>| {
                             let gw = gw_chat.clone();
+                            let telemetry = chat_telemetry.clone();
                             async move {
-                                crate::system::openai_compat::chat_completions(gw, body).await
+                                crate::system::openai_compat::chat_completions(
+                                    gw, telemetry, body,
+                                )
+                                .await
                             }
                         }),
                     );
@@ -343,7 +348,6 @@ async fn dispatch_lambda(
         if let Some(cached) = state.cache.get(&cache_key).await {
             let latency = start.elapsed().as_secs_f64() * 1000.0;
             let request_id = Uuid::new_v4().to_string();
-            state.metrics.record_cache_hit(&route_key_for_logs);
             state.push_log(
                 "INFO",
                 Some(&route_key_for_logs),
@@ -630,22 +634,18 @@ async fn dispatch_lambda(
 
             let status_u16 = gw_resp.status_code as u16;
             let healthy = status_u16 < 500;
-            state
-                .metrics
-                .record_request(&function_name, &method_str, status_u16, latency);
+            let _ = &runtime_tag;
 
-            match status_u16 {
-                502 => state
-                    .metrics
-                    .record_lambda_crash(&function_name, &runtime_tag),
-                504 => state.metrics.record_lambda_timeout(&function_name),
-                _ => {}
-            }
-            state.metrics.record_lambda_healthy(&function_name, healthy);
-
-            if status_u16 < 400 {
-                state.metrics.record_cache_miss(&function_name);
-            }
+            // Request root span (OTLP). Non-blocking emit — telemetry is
+            // best-effort and never adds latency to or fails the request path.
+            emit_request_span(
+                &state.telemetry,
+                start,
+                latency,
+                &method_str,
+                &function_name,
+                status_u16,
+            );
 
             state
                 .riz_state
@@ -695,6 +695,72 @@ async fn dispatch_lambda(
             apply_cors_response_headers(gateway_to_axum(&resp), &cors_hdrs)
         }
     }
+}
+
+/// Current wall-clock time as unix-nanos (for OTLP span timestamps).
+pub(crate) fn now_unix_nanos() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0)
+}
+
+/// A random lowercase-hex OTLP trace id (16 bytes / 32 hex chars).
+pub(crate) fn new_trace_id() -> String {
+    Uuid::new_v4().simple().to_string()
+}
+
+/// A random lowercase-hex OTLP span id (8 bytes / 16 hex chars). Derived from
+/// the low half of a UUID — sufficient entropy for in-process span ids.
+pub(crate) fn new_span_id() -> String {
+    let u = Uuid::new_v4().as_u128();
+    format!("{:016x}", (u as u64))
+}
+
+/// Emit the request root span on completion. Computes the span start from the
+/// request `start` instant and the measured `latency`. Non-blocking.
+fn emit_request_span(
+    telemetry: &crate::observability::TelemetryHandle,
+    start: Instant,
+    latency_ms: f64,
+    method: &str,
+    function_name: &str,
+    status: u16,
+) {
+    use crate::observability::ipc::{AttrValue, SpanKind, TelemetryEvent};
+    use std::collections::BTreeMap;
+
+    let end = now_unix_nanos();
+    // Reconstruct the span window from the monotonic latency so start <= end.
+    let span_nanos = (latency_ms * 1_000_000.0) as u64;
+    let begin = end.saturating_sub(span_nanos);
+    let _ = start;
+
+    let mut attributes = BTreeMap::new();
+    attributes.insert(
+        "http.method".to_string(),
+        AttrValue::String(method.to_string()),
+    );
+    attributes.insert(
+        "http.route".to_string(),
+        AttrValue::String(function_name.to_string()),
+    );
+    attributes.insert("http.status_code".to_string(), AttrValue::Int(status as i64));
+    attributes.insert(
+        "duration_ms".to_string(),
+        AttrValue::Double(latency_ms),
+    );
+
+    telemetry.emit(TelemetryEvent {
+        name: format!("{method} {function_name}"),
+        kind: SpanKind::Server,
+        trace_id: new_trace_id(),
+        span_id: new_span_id(),
+        parent_span_id: None,
+        start_unix_nanos: begin,
+        end_unix_nanos: end,
+        attributes,
+    });
 }
 
 /// Merge CORS response headers into an existing axum `Response`.

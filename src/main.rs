@@ -6,12 +6,6 @@ mod deploy;
 mod gateway;
 mod hotreload;
 mod llm;
-mod metrics;
-// The bin only invokes `observability::process::run_worker` (the __telemetry
-// child entry). The host-side emitter/supervisor are exercised by the lib +
-// integration tests now and get wired into the server in phase 2c; from the
-// bin's view they're not-yet-constructed, hence the scoped allow.
-#[allow(dead_code)]
 mod observability;
 mod process;
 mod router;
@@ -1008,7 +1002,38 @@ async fn async_main() -> anyhow::Result<()> {
 
     let registry = Arc::new(process::runtime::RuntimeRegistry::new()?);
     let cache = cache::CacheLayer::new(&config.cache);
-    let metrics = metrics::MetricsEmitter::new(&config.datadog);
+
+    // Telemetry: when enabled, spawn the isolated `__telemetry` child and use
+    // its non-blocking handle; otherwise a disabled (drop-everything) handle so
+    // every emit call site stays unconditional. When an OTLP endpoint is
+    // configured the child exports OTLP/HTTP-JSON; otherwise it appends to a
+    // sink file. The supervisor is leaked (lives for the process lifetime) —
+    // there is no clean-shutdown seam threaded through `main` yet.
+    let telemetry = if config.telemetry.enabled {
+        let sink = std::env::temp_dir().join("riz-telemetry.jsonl");
+        let target = observability::ExportTarget {
+            endpoint: config.telemetry.endpoint.clone(),
+            headers: config.telemetry.headers.clone(),
+        };
+        match observability::TelemetrySupervisor::spawn(
+            &sink,
+            config.telemetry.queue_capacity,
+            target,
+        ) {
+            Ok(sup) => {
+                let handle = sup.handle();
+                // Keep the supervisor (and its child) alive for the process.
+                Box::leak(Box::new(sup));
+                handle
+            }
+            Err(e) => {
+                tracing::warn!("telemetry: supervisor spawn failed: {e} — telemetry disabled");
+                observability::TelemetryHandle::disabled()
+            }
+        }
+    } else {
+        observability::TelemetryHandle::disabled()
+    };
     // log_tx / log_rx were already created earlier (before tracing init)
     // so the TUI log layer's sink could be set at registry time. They're
     // in scope from the outer let-binding.
@@ -1127,7 +1152,7 @@ async fn async_main() -> anyhow::Result<()> {
         process_manager,
         cache,
         auth_cache: crate::auth::authorizer::AuthCache::new(),
-        metrics,
+        telemetry,
         runtime_registry: registry,
         log_tx,
         log_rx: tokio::sync::Mutex::new(log_rx),

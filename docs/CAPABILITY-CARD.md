@@ -92,8 +92,7 @@ claude mcp add riz-local --transport http http://localhost:3000/_riz/mcp
 | `/_riz/metrics` | Prometheus-compatible scrape endpoint |
 | `/_riz/registry` | Live function registry |
 | **Terminal dashboard** | `riz run --dev` — Ratatui TUI with P50 / P75 / P90 / P95 / P99 latency over 5-min rolling window |
-| **Datadog** | Metrics emitter — works with Datadog Agent's OpenMetrics integration |
-| **OpenTelemetry** | *coming (v0.2)* — single-path OTEL exporter + W3C Trace Context + token-aware tracing |
+| **OpenTelemetry** | Hand-rolled OTLP/HTTP-JSON span exporter — one export path fanning out to Datadog and CloudWatch/X-Ray (just different endpoint + headers). Token-aware span tree with OTel GenAI conventions (`gen_ai.usage.input_tokens` / `output_tokens`, `gen_ai.request.model`, `gen_ai.system`). |
 
 ---
 
@@ -141,7 +140,7 @@ This measures the riz dispatch path (routing + process pool bridge). Real throug
 | **Eval harness** | `riz eval <function>` — rank prompt × model × guard combos on quality / cost / latency |
 | **Smarter MCP** | Per-route typed schemas auto-derived from TS / Python / Rust types; MCP over WebSocket; OAuth 2.1; federation |
 | **Go runtime** | Go support via static-binary protocol (thin `riz-go-runtime` module + templates) |
-| **OpenTelemetry** | Single-path OTEL exporter, W3C Trace Context, token-aware tracing |
+| **Distributed tracing** | W3C Trace Context propagation across services + X-Ray segment mapping (the OTLP exporter itself already ships — see Observability) |
 | **Non-HTTP event sources** | SQS / SNS / S3 / EventBridge triggers |
 
 ---

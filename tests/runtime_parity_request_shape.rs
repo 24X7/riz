@@ -84,7 +84,7 @@ async fn boot_riz(config_toml: &str) -> SocketAddr {
     let config: riz::config::Config = toml::from_str(config_toml).expect("toml parses");
     let registry = Arc::new(riz::process::runtime::RuntimeRegistry::new().expect("registry"));
     let cache = riz::cache::CacheLayer::new(&config.cache);
-    let metrics = riz::metrics::MetricsEmitter::new(&config.datadog);
+    let telemetry = riz::observability::TelemetryHandle::disabled();
     let (log_tx, log_rx) = tokio::sync::mpsc::channel::<riz::state::LogEntry>(10_000);
 
     let riz_state = Arc::new(riz::state::RizState::new());
@@ -126,7 +126,7 @@ async fn boot_riz(config_toml: &str) -> SocketAddr {
         process_manager,
         cache,
         auth_cache: riz::auth::authorizer::AuthCache::new(),
-        metrics,
+        telemetry,
         runtime_registry: registry,
         log_tx,
         log_rx: tokio::sync::Mutex::new(log_rx),

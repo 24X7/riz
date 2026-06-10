@@ -14,8 +14,10 @@
 //! to serving requests.
 
 pub mod ipc;
+pub mod otel;
 pub mod process;
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -121,10 +123,39 @@ pub struct TelemetrySupervisor {
     task: tokio::task::JoinHandle<()>,
 }
 
+/// Where the telemetry child sends events: either an OTLP/HTTP collector
+/// endpoint (2b export path) or, when no endpoint is configured, the sink file
+/// (the 2a seam, also used by tests).
+#[derive(Clone, Debug)]
+pub struct ExportTarget {
+    /// OTLP/HTTP collector base (e.g. `http://localhost:4318`). `None` => append
+    /// JSON lines to the sink file instead of exporting.
+    pub endpoint: Option<String>,
+    /// Headers attached to every OTLP export POST (auth tokens, `dd-api-key`, …).
+    pub headers: BTreeMap<String, String>,
+}
+
+impl ExportTarget {
+    /// No endpoint: the child appends JSON lines to its sink file.
+    pub fn sink_only() -> Self {
+        Self {
+            endpoint: None,
+            headers: BTreeMap::new(),
+        }
+    }
+}
+
+/// Env vars the supervisor sets on the `__telemetry` child to convey the OTLP
+/// export target. Argv stays `__telemetry <sink>` (the sink is still the
+/// fallback when no endpoint is set), and these add the exporter config.
+const ENV_ENDPOINT: &str = "RIZ_TELEMETRY_ENDPOINT";
+const ENV_HEADERS: &str = "RIZ_TELEMETRY_HEADERS";
+
 impl TelemetrySupervisor {
     /// Spawn the supervisor and the first telemetry child. `sink` is the file
-    /// the child appends events to (2a); `capacity` bounds the emit channel.
-    pub fn spawn(sink: &Path, capacity: usize) -> anyhow::Result<Self> {
+    /// the child appends events to when no endpoint is configured; `capacity`
+    /// bounds the emit channel; `target` selects sink-file vs OTLP export.
+    pub fn spawn(sink: &Path, capacity: usize, target: ExportTarget) -> anyhow::Result<Self> {
         let (tx, rx) = mpsc::channel::<TelemetryEvent>(capacity.max(1));
         let handle = TelemetryHandle::from_sender(tx);
         let child_pid = Arc::new(Mutex::new(None));
@@ -132,7 +163,7 @@ impl TelemetrySupervisor {
         let sink = sink.to_path_buf();
         let pid_slot = child_pid.clone();
         let task = tokio::spawn(async move {
-            supervise_loop(rx, sink, pid_slot).await;
+            supervise_loop(rx, sink, target, pid_slot).await;
         });
 
         Ok(Self {
@@ -168,20 +199,27 @@ impl TelemetrySupervisor {
 async fn supervise_loop(
     mut rx: mpsc::Receiver<TelemetryEvent>,
     sink: PathBuf,
+    target: ExportTarget,
     pid_slot: Arc<Mutex<Option<u32>>>,
 ) {
     let exe = resolve_exe();
     let mut backoff = RESPAWN_BACKOFF_MIN;
+    // Serialize the export target into env once; re-applied to every respawn.
+    let headers_json = serde_json::to_string(&target.headers).unwrap_or_else(|_| "{}".into());
 
     loop {
         // Spawn a fresh child.
-        let mut child = match tokio::process::Command::new(&exe)
-            .arg("__telemetry")
+        let mut cmd = tokio::process::Command::new(&exe);
+        cmd.arg("__telemetry")
             .arg(&sink)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
+            .stderr(std::process::Stdio::null());
+        if let Some(ep) = &target.endpoint {
+            cmd.env(ENV_ENDPOINT, ep);
+            cmd.env(ENV_HEADERS, &headers_json);
+        }
+        let mut child = match cmd.spawn()
         {
             Ok(c) => c,
             Err(e) => {

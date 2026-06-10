@@ -21,6 +21,15 @@ pub enum SpanKind {
     Client,
 }
 
+/// OTel GenAI semantic-convention attribute keys. These are just well-known
+/// string keys in the generic [`TelemetryEvent::attributes`] map — naming them
+/// here keeps the request → chat-completion wiring and the OTLP encoder honest
+/// about which conventions we follow.
+pub const GEN_AI_SYSTEM: &str = "gen_ai.system";
+pub const GEN_AI_REQUEST_MODEL: &str = "gen_ai.request.model";
+pub const GEN_AI_INPUT_TOKENS: &str = "gen_ai.usage.input_tokens";
+pub const GEN_AI_OUTPUT_TOKENS: &str = "gen_ai.usage.output_tokens";
+
 /// A typed span attribute value (OTel `AnyValue` subset we use).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

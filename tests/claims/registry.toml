@@ -104,10 +104,10 @@ status = "proven"
 proof = "riz_metrics_returns_401_without_auth_when_token_configured"
 
 [[claim]]
-id = "datadog-emitter"
-page_text = "Datadog metrics emitter"
+id = "otlp-export"
+page_text = "OpenTelemetry export — OTLP/HTTP JSON, one pipeline fanning out to Datadog and CloudWatch/X-Ray"
 status = "proven"
-proof = "datadog_emitter_constructs_from_config"
+proof = "otlp_encoder_emits_genai_token_attrs"
 
 [[claim]]
 id = "auth-lambda-authorizers"
@@ -190,7 +190,7 @@ roadmap = "Phase 2 — Go and Java/JVM runtime adapters"
 
 [[claim]]
 id = "roadmap-otel-tracing"
-page_text = "OpenTelemetry exporter with W3C Trace Context propagation"
+page_text = "W3C Trace Context propagation across services + X-Ray segment mapping"
 status = "coming-soon"
 data_claim = "roadmap-otel-tracing"
-roadmap = "Phase 2 — event sources + OTel tracing + agent memory"
+roadmap = "Phase 2 — event sources + cross-service trace propagation + agent memory"

@@ -1967,7 +1967,7 @@ $ claude mcp add riz-local \
             <ul>
               <li><code>/_riz/health</code> · <code>/_riz/metrics</code> · <code>/_riz/registry</code></li>
               <li>Terminal dashboard: P50/P75/P90/P95/P99 over 5-min window</li>
-              <li>Datadog metrics emitter</li>
+              <li>OpenTelemetry export — OTLP/HTTP JSON, one pipeline fanning out to Datadog and CloudWatch/X-Ray</li>
               <li>MCP server — spec 2025-11-25 (also negotiates 2024-11-05 / 2025-03-26 / 2025-06-18). JSON-RPC 2.0, full lifecycle.</li>
             </ul>
           </article>
@@ -2082,7 +2082,7 @@ $ claude mcp add riz-local \
             <h4>Event Sources &amp; Tracing</h4>
             <ul>
               <li>Non-HTTP event sources (SQS, SNS, S3, EventBridge)</li>
-              <li>OpenTelemetry exporter with W3C Trace Context propagation (X-Ray headers come free)</li>
+              <li>W3C Trace Context propagation across services + X-Ray segment mapping</li>
               <li>Stateful agent memory — <code>/_riz/memory/{agent_id}</code> KV + vector blob store</li>
             </ul>
             <span class="ribbon">coming soon</span>

@@ -40,7 +40,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 anyhow = "1"
 uuid = { version = "1", features = ["v4"] }
-cadence = "1"
 ipnet = "2"
 nix = { version = "0.29", features = ["process", "signal", "resource"] }
 signal-hook = "0.3"

@@ -61,7 +61,7 @@ method = "GET"
 
     let registry = Arc::new(riz::process::runtime::RuntimeRegistry::new().unwrap());
     let cache = riz::cache::CacheLayer::new(&config.cache);
-    let metrics = riz::metrics::MetricsEmitter::new(&config.datadog);
+    let telemetry = riz::observability::TelemetryHandle::disabled();
     let (log_tx, log_rx) = tokio::sync::mpsc::channel::<riz::state::LogEntry>(10_000);
 
     let riz_state = Arc::new(riz::state::RizState::new());
@@ -103,7 +103,7 @@ method = "GET"
         process_manager,
         cache,
         auth_cache: riz::auth::authorizer::AuthCache::new(),
-        metrics,
+        telemetry,
         runtime_registry: registry,
         log_tx,
         log_rx: tokio::sync::Mutex::new(log_rx),
@@ -186,7 +186,7 @@ method = "GET"
     let config: riz::config::Config = toml::from_str(&config_toml).unwrap();
     let registry = Arc::new(riz::process::runtime::RuntimeRegistry::new().unwrap());
     let cache = riz::cache::CacheLayer::new(&config.cache);
-    let metrics = riz::metrics::MetricsEmitter::new(&config.datadog);
+    let telemetry = riz::observability::TelemetryHandle::disabled();
     let (log_tx, log_rx) = tokio::sync::mpsc::channel::<riz::state::LogEntry>(10_000);
 
     let riz_state = Arc::new(riz::state::RizState::new());
@@ -228,7 +228,7 @@ method = "GET"
         process_manager,
         cache,
         auth_cache: riz::auth::authorizer::AuthCache::new(),
-        metrics,
+        telemetry,
         runtime_registry: registry,
         log_tx,
         log_rx: tokio::sync::Mutex::new(log_rx),
@@ -307,7 +307,7 @@ method = "ANY"
 
     let registry = Arc::new(riz::process::runtime::RuntimeRegistry::new().unwrap());
     let cache = riz::cache::CacheLayer::new(&config.cache);
-    let metrics = riz::metrics::MetricsEmitter::new(&config.datadog);
+    let telemetry = riz::observability::TelemetryHandle::disabled();
     let (log_tx, log_rx) = tokio::sync::mpsc::channel::<riz::state::LogEntry>(10_000);
 
     let riz_state = Arc::new(riz::state::RizState::new());
@@ -349,7 +349,7 @@ method = "ANY"
         process_manager,
         cache,
         auth_cache: riz::auth::authorizer::AuthCache::new(),
-        metrics,
+        telemetry,
         runtime_registry: registry,
         log_tx,
         log_rx: tokio::sync::Mutex::new(log_rx),
@@ -440,7 +440,7 @@ method = "GET"
     let config: riz::config::Config = toml::from_str(&config_toml).unwrap();
     let registry = Arc::new(riz::process::runtime::RuntimeRegistry::new().unwrap());
     let cache = riz::cache::CacheLayer::new(&config.cache);
-    let metrics = riz::metrics::MetricsEmitter::new(&config.datadog);
+    let telemetry = riz::observability::TelemetryHandle::disabled();
     let (log_tx, log_rx) = tokio::sync::mpsc::channel::<riz::state::LogEntry>(100_000);
 
     let riz_state = Arc::new(riz::state::RizState::new());
@@ -482,7 +482,7 @@ method = "GET"
         process_manager,
         cache,
         auth_cache: riz::auth::authorizer::AuthCache::new(),
-        metrics,
+        telemetry,
         runtime_registry: registry,
         log_tx,
         log_rx: tokio::sync::Mutex::new(log_rx),

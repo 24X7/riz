@@ -123,15 +123,12 @@ pub struct Config {
     pub server: ServerConfig,
     #[serde(default)]
     pub cache: CacheConfig,
-    #[serde(default)]
-    pub datadog: DatadogConfig,
     /// Telemetry / observability (`[telemetry]`). Disabled by default. When
     /// enabled, the host runs an isolated `riz __telemetry` child and emits span
     /// events to it through a bounded, non-blocking channel. See
     /// `docs/superpowers/specs/2026-06-10-observability-design.md`.
-    /// Read by the server wiring in phase 2c (enabled/queue_capacity) and the
-    /// exporter in 2b (endpoint/headers); not yet consumed in 2a.
-    #[allow(dead_code)]
+    /// `enabled`/`queue_capacity` drive the host wiring; `endpoint`/`headers`
+    /// drive the OTLP/HTTP-JSON exporter in the isolated child.
     #[serde(default)]
     pub telemetry: TelemetryConfig,
     #[serde(default)]
@@ -251,39 +248,6 @@ impl Default for CacheConfig {
         Self {
             default_ttl_secs: 0,
             max_size_mb: default_cache_size(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct DatadogConfig {
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default = "default_statsd")]
-    pub statsd_host: String,
-    #[serde(default = "default_service")]
-    pub service: String,
-    #[serde(default = "default_env")]
-    pub env: String,
-}
-
-fn default_statsd() -> String {
-    "127.0.0.1:8125".into()
-}
-fn default_service() -> String {
-    "riz".into()
-}
-fn default_env() -> String {
-    "production".into()
-}
-
-impl Default for DatadogConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            statsd_host: default_statsd(),
-            service: default_service(),
-            env: default_env(),
         }
     }
 }

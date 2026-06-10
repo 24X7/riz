@@ -27,7 +27,7 @@ fn bun_available() -> bool {
 fn make_state(config: Config) -> Arc<riz::state::AppState> {
     let registry = Arc::new(riz::process::runtime::RuntimeRegistry::new().unwrap());
     let cache = riz::cache::CacheLayer::new(&config.cache);
-    let metrics = riz::metrics::MetricsEmitter::new(&config.datadog);
+    let telemetry = riz::observability::TelemetryHandle::disabled();
     let riz_state = Arc::new(riz::state::RizState::new());
     let process_manager = Arc::new(riz::process::ProcessManager::new(riz_state.clone()));
     let (log_tx, log_rx) = tokio::sync::mpsc::channel::<riz::state::LogEntry>(10_000);
@@ -50,7 +50,7 @@ fn make_state(config: Config) -> Arc<riz::state::AppState> {
         process_manager,
         cache,
         auth_cache: AuthCache::new(),
-        metrics,
+        telemetry,
         runtime_registry: registry,
         log_tx,
         log_rx: tokio::sync::Mutex::new(log_rx),

@@ -1,7 +1,7 @@
 use crate::auth::authorizer::AuthCache;
 use crate::cache::CacheLayer;
 use crate::config::Config;
-use crate::metrics::MetricsEmitter;
+use crate::observability::TelemetryHandle;
 use crate::process::runtime::RuntimeRegistry;
 use crate::process::ProcessManager;
 use crate::router::Router;
@@ -18,7 +18,10 @@ pub struct AppState {
     pub cache: CacheLayer,
     /// Authorizer response cache (keyed by source_ip + auth_header_hash + function_name).
     pub auth_cache: AuthCache,
-    pub metrics: MetricsEmitter,
+    /// Non-blocking, best-effort telemetry emitter (OTLP/HTTP-JSON span export
+    /// via the isolated `__telemetry` child). `emit` never blocks the request
+    /// path; a disabled handle drops every event. See `observability::`.
+    pub telemetry: TelemetryHandle,
     pub runtime_registry: Arc<RuntimeRegistry>,
     pub log_tx: mpsc::Sender<LogEntry>,
     pub log_rx: Mutex<mpsc::Receiver<LogEntry>>,

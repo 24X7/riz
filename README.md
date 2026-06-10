@@ -208,7 +208,7 @@ clean `412`; cost surfaces next to latency in the same operator view.
 - Response cache + invalidation (auth-aware bypass)
 - **Hot-reload** of `riz.toml` and handler source on save
 - **Hot-swap deploys** from S3 with 30s in-flight drain
-- Prometheus `/_riz/metrics`, rich `/_riz/health`, `/_riz/registry`, plus a live **terminal dashboard** (`--dev`) with P50–P99 latency; Datadog emitter
+- Prometheus `/_riz/metrics`, rich `/_riz/health`, `/_riz/registry`, plus a live **terminal dashboard** (`--dev`) with P50–P99 latency; hand-rolled **OpenTelemetry** OTLP/HTTP-JSON span export (one path → Datadog and CloudWatch/X-Ray) from an isolated telemetry child
 - Process pool with semaphore-bounded concurrency, liveness watcher, auto-respawn on crash/timeout, two-phase graceful shutdown
 - `riz init` (7 templates), `riz doctor` (preflight), `riz routes`, `riz validate`, `riz mcp inspect`
 - **Single ~10 MB Rust binary** — no GC pauses, no Docker, no per-request container

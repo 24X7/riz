@@ -22,7 +22,7 @@ async fn boot_server(
     use riz::state::{FunctionState, RizState};
 
     let cache = riz::cache::CacheLayer::new(&config.cache);
-    let metrics = riz::metrics::MetricsEmitter::new(&config.datadog);
+    let telemetry = riz::observability::TelemetryHandle::disabled();
     let (log_tx, log_rx) = tokio::sync::mpsc::channel::<riz::state::LogEntry>(64_000);
     let riz_state = Arc::new(RizState::new());
     let stage = config.server.stage.clone();
@@ -64,7 +64,7 @@ async fn boot_server(
         process_manager,
         cache,
         auth_cache: riz::auth::authorizer::AuthCache::new(),
-        metrics,
+        telemetry,
         runtime_registry: registry,
         log_tx,
         log_rx: tokio::sync::Mutex::new(log_rx),
