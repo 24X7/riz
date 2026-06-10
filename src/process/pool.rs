@@ -64,7 +64,14 @@ pub(super) async fn spawn_process(
     let mut cmd = runtime.spawn_command(cfg);
     cmd.stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+        .stderr(std::process::Stdio::piped())
+        // Safety net: if a ProcessHandle is dropped without going through the
+        // explicit drain/kill path (e.g. a pool torn down at shutdown, a handle
+        // dropped on respawn, or an integration test ending while a slow handler
+        // is still running), reap the child instead of orphaning it. The graceful
+        // drain path still kills explicitly first; SIGKILL on an already-exited
+        // child is a no-op. Eliminates nextest "leaky" reports + orphaned workers.
+        .kill_on_drop(true);
 
     #[cfg(unix)]
     {
