@@ -16,6 +16,16 @@ Tested on: Apple M-series, 1 host process + 20 Bun worker processes, localhost l
 
 ## Reproducing
 
+The canonical one-command path is **`scripts/bench.sh`** at the repo root — it builds release, boots riz headless against the ping config, waits for `/ping` to return 200, warms up, runs `wrk`, and tears the server down on exit:
+
+```bash
+./scripts/bench.sh
+# tunables: PORT, DURATION, CONNECTIONS, THREADS (env); --tty for pty-accurate output
+PORT=4000 DURATION=10s CONNECTIONS=20 THREADS=4 ./scripts/bench.sh
+```
+
+If you'd rather drive `wrk` by hand (note: global flags like `--config`/`--log-level` come **before** the `run` subcommand):
+
 ```bash
 # 1. Build release binary
 cargo build --release
@@ -29,6 +39,8 @@ wrk -t4 -c20 -d20s --latency http://127.0.0.1:3000/ping
 ```
 
 Match `wrk -c<N>` to your `concurrency` setting in `bench-config.toml`. Over-saturating the pool will queue requests and inflate the tail; under-saturating leaves processes idle.
+
+`benches/run-bench.sh` is the older hardcoded variant (fixed port 3000, 30s, no warmup). Prefer `scripts/bench.sh`.
 
 ## What the numbers mean
 
