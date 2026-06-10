@@ -1007,8 +1007,9 @@ async fn async_main() -> anyhow::Result<()> {
     // its non-blocking handle; otherwise a disabled (drop-everything) handle so
     // every emit call site stays unconditional. When an OTLP endpoint is
     // configured the child exports OTLP/HTTP-JSON; otherwise it appends to a
-    // sink file. The supervisor is leaked (lives for the process lifetime) —
-    // there is no clean-shutdown seam threaded through `main` yet.
+    // sink file. The supervisor is held (not leaked) so it can be gracefully
+    // shut down — flushing all enqueued spans — after the server drains.
+    let mut telemetry_supervisor: Option<observability::TelemetrySupervisor> = None;
     let telemetry = if config.telemetry.enabled {
         let sink = std::env::temp_dir().join("riz-telemetry.jsonl");
         let target = observability::ExportTarget {
@@ -1022,8 +1023,9 @@ async fn async_main() -> anyhow::Result<()> {
         ) {
             Ok(sup) => {
                 let handle = sup.handle();
-                // Keep the supervisor (and its child) alive for the process.
-                Box::leak(Box::new(sup));
+                // Keep the supervisor (and its child) alive; shut it down
+                // gracefully after the server-run future returns.
+                telemetry_supervisor = Some(sup);
                 handle
             }
             Err(e) => {
@@ -1207,7 +1209,21 @@ async fn async_main() -> anyhow::Result<()> {
         info!(mode = "production", addr = %addr, "riz starting");
     }
 
-    server::run(app_state, addr).await
+    // Serve until graceful shutdown drains inside `server::run` (its
+    // `with_graceful_shutdown`). Once this returns the process is done serving.
+    let serve_result = server::run(app_state, addr).await;
+
+    // Post-serve telemetry flush: gracefully shut down the supervisor so every
+    // span that was emitted (enqueued) before now is drained to the child and
+    // flushed to the sink/exporter — no span loss — within a bounded timeout.
+    // The `AppState.telemetry` handle clone may still exist; shutdown drains to
+    // empty by deadline rather than waiting for the channel to close, so it
+    // never deadlocks on that surviving sender.
+    if let Some(sup) = telemetry_supervisor.take() {
+        sup.shutdown().await;
+    }
+
+    serve_result
 }
 
 #[cfg(test)]

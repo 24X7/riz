@@ -26,10 +26,17 @@
 //! StatsD or any vendor wire protocol directly.
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use serde_json::{json, Value};
 
 use super::ipc::{AttrValue, SpanKind, TelemetryEvent};
+
+/// Bounded export retry: up to this many total attempts.
+const EXPORT_MAX_ATTEMPTS: usize = 3;
+/// Exponential backoff between attempts: 50ms -> 200ms -> 800ms (x4 each step).
+const EXPORT_BACKOFF_BASE: Duration = Duration::from_millis(50);
+const EXPORT_BACKOFF_FACTOR: u32 = 4;
 
 /// OTLP `SpanKind` enum values (from the trace proto). We map our three kinds.
 fn span_kind_code(kind: SpanKind) -> i32 {
@@ -99,12 +106,67 @@ pub fn encode_resource_spans(events: &[TelemetryEvent]) -> Value {
     })
 }
 
-/// POST an OTLP/HTTP-JSON trace document to `<endpoint>/v1/traces`.
+/// The outcome of one export attempt, classified for retry.
+enum AttemptError {
+    /// Worth retrying within the bounded budget (connection/timeout error, or a
+    /// retryable HTTP status: 408, 429, 500, 502, 503, 504).
+    Transient(anyhow::Error),
+    /// Not worth retrying (e.g. a 4xx other than 408/429, or a malformed URL).
+    Permanent(anyhow::Error),
+}
+
+/// HTTP status codes we treat as transient (worth a bounded retry).
+fn is_retryable_status(status: reqwest::StatusCode) -> bool {
+    matches!(status.as_u16(), 408 | 429 | 500 | 502 | 503 | 504)
+}
+
+/// POST the OTLP document once. 2xx => Ok; retryable status or a
+/// connection/timeout reqwest error => `Transient`; any other failure (4xx
+/// except 408/429, etc.) => `Permanent`.
+fn export_once(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    headers: &BTreeMap<String, String>,
+    body: &Value,
+) -> Result<(), AttemptError> {
+    let mut req = client.post(url).header("Content-Type", "application/json");
+    for (k, v) in headers {
+        req = req.header(k, v);
+    }
+    let resp = match req.json(body).send() {
+        Ok(r) => r,
+        Err(e) => {
+            // Connection refused, timeout, DNS, etc. — all worth a bounded retry.
+            return Err(AttemptError::Transient(anyhow::anyhow!(
+                "otlp export to {url}: request error: {e}"
+            )));
+        }
+    };
+    let status = resp.status();
+    if status.is_success() {
+        return Ok(());
+    }
+    let err = anyhow::anyhow!("otlp export to {url} failed: HTTP {status}");
+    if is_retryable_status(status) {
+        Err(AttemptError::Transient(err))
+    } else {
+        Err(AttemptError::Permanent(err))
+    }
+}
+
+/// POST an OTLP/HTTP-JSON trace document to `<endpoint>/v1/traces`, with a
+/// bounded exponential-backoff retry on transient failures.
 ///
 /// `endpoint` is the collector base (e.g. `http://localhost:4318`); the
 /// `/v1/traces` path is appended. `headers` are added verbatim (auth tokens,
 /// `dd-api-key`, etc.) alongside the mandatory `Content-Type: application/json`.
 /// Runs on `reqwest::blocking` — the `__telemetry` child has no async runtime.
+///
+/// Retry policy: up to [`EXPORT_MAX_ATTEMPTS`] (3) attempts; sleep 50ms, 200ms,
+/// 800ms between them. Transient = reqwest connection/timeout errors and HTTP
+/// 408/429/500/502/503/504. 2xx is success; other 4xx are permanent (no retry).
+/// After exhausting the budget the error is returned (the caller logs + drops):
+/// telemetry stays best-effort and must never wedge the child.
 pub fn export(
     client: &reqwest::blocking::Client,
     endpoint: &str,
@@ -112,18 +174,25 @@ pub fn export(
     body: &Value,
 ) -> anyhow::Result<()> {
     let url = format!("{}/v1/traces", endpoint.trim_end_matches('/'));
-    let mut req = client
-        .post(&url)
-        .header("Content-Type", "application/json");
-    for (k, v) in headers {
-        req = req.header(k, v);
+    let mut backoff = EXPORT_BACKOFF_BASE;
+    let mut last_err: Option<anyhow::Error> = None;
+
+    for attempt in 0..EXPORT_MAX_ATTEMPTS {
+        match export_once(client, &url, headers, body) {
+            Ok(()) => return Ok(()),
+            Err(AttemptError::Permanent(e)) => return Err(e),
+            Err(AttemptError::Transient(e)) => {
+                last_err = Some(e);
+                // Don't sleep after the final attempt.
+                if attempt + 1 < EXPORT_MAX_ATTEMPTS {
+                    std::thread::sleep(backoff);
+                    backoff *= EXPORT_BACKOFF_FACTOR;
+                }
+            }
+        }
     }
-    let resp = req.json(body).send()?;
-    let status = resp.status();
-    if !status.is_success() {
-        anyhow::bail!("otlp export to {url} failed: HTTP {status}");
-    }
-    Ok(())
+
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("otlp export to {url}: exhausted retries")))
 }
 
 #[cfg(test)]
