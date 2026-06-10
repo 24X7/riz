@@ -14,8 +14,12 @@ name = "riz"
 version = "0.1.0"
 edition = "2021"
 repository = "https://github.com/24X7/riz"
-description = "Self-hosted AWS Lambda runtime — HTTP API v2 + WebSocket handlers in Bun, Python, Rust. MCP server built in."
+homepage = "https://riz.dev"
+readme = "README.md"
+description = "Self-hosted AWS Lambda + API Gateway v2 runtime where every function becomes an MCP tool — five runtimes (Bun, Node.js, Python, Rust, WASM), one binary, no per-request cold start."
 license = "Apache-2.0"
+keywords = ["lambda", "serverless", "mcp", "aws", "runtime"]
+categories = ["web-programming::http-server", "command-line-utilities", "development-tools"]
 
 [[bin]]
 name = "riz"
