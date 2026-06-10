@@ -189,6 +189,23 @@ sandbox = "wasi"
 path = "/echo-wasm"
 method = "ANY"
 
+# orders-wasm — the REAL-COMPUTE WASM example. Same deny-by-default WASI
+# sandbox as echo-wasm, but the handler does actual business logic: it parses an
+# order payload (array of line-items), validates every field, and prices the
+# order (per-line extended amounts, subtotal, 8.25% tax, grand total) in integer
+# cents. Proves a `.wasm` handler runs application logic, not just echo. Build:
+# cd examples/lambdas/orders-wasm && cargo build --release --target wasm32-wasip1
+[function.orders-wasm]
+runtime = "wasm"
+handler = "./examples/lambdas/orders-wasm/target/wasm32-wasip1/release/orders-wasm.wasm"
+timeout_ms = 5000
+concurrency = 2
+[function.orders-wasm.stage_variables]
+sandbox = "wasi"
+[[function.orders-wasm.routes]]
+path = "/orders"
+method = "POST"
+
 # ─────────────── Authorizers ───────────────
 # The two auth handlers below are LIVE functions referenced from other
 # functions' `[function.X.authorizer]` blocks. They must be registered as

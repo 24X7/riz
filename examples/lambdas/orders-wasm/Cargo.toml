@@ -1,0 +1,15 @@
+# Independent workspace root — built for wasm32-wasip1, not part of the host workspace.
+[workspace]
+
+[package]
+name = "orders-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "Real-compute WASM example — validates + prices an order payload under wasmtime's WASI sandbox, run by riz"
+
+[dependencies]
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+strip = true

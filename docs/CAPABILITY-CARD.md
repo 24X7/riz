@@ -134,6 +134,7 @@ This measures the riz dispatch path (routing + process pool bridge). Real throug
 | Item | Summary |
 |---|---|
 | **WASM guards** | Pre/post-invoke `.wasm` guards — validate schemas, redact PII, scrub secrets, enforce response shape across every runtime |
+| **WASM resource broker** | Host-mediated capability access for WASI guests — brokered Postgres (Neon / Supabase), S3, KV under deny-by-default per-function grants with timeouts, concurrency caps, and rate limits ([design](superpowers/specs/2026-06-10-wasm-resource-broker-design.md)) |
 | **Gateway: Bedrock + Vertex** | Additional providers to the shipped OpenAI / Anthropic / Ollama routing |
 | **Semantic cache** | Similarity-based cache — targets 30–70% cost reduction on repetitive workloads |
 | **Record & replay** | `riz replay --since 1h` — diff handler responses against captured traffic; dataset export for fine-tuning |
@@ -145,4 +146,4 @@ This measures the riz dispatch path (routing + process pool bridge). Real throug
 
 ---
 
-*Last updated: 2026-06-09*
+*Last updated: 2026-06-10*

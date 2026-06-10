@@ -62,6 +62,12 @@ status = "proven"
 proof = "wasm_echo_passes_path_and_query"
 
 [[claim]]
+id = "wasm-compute"
+page_text = "Runs real application logic in the sandbox — a WASM handler validates and prices an order entirely under WASI"
+status = "proven"
+proof = "wasm_orders_prices_a_valid_order"
+
+[[claim]]
 id = "wasi-sandbox"
 page_text = "deny-by-default filesystem and network, capabilities granted explicitly"
 status = "proven"
