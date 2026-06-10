@@ -1,0 +1,41 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.24X7/riz",
+  "title": "riz",
+  "description": "Self-hosted runtime that exposes your own HTTP/Lambda handlers as MCP tools over HTTP.",
+  "version": "0.1.0",
+  "websiteUrl": "https://riz.dev",
+  "repository": {
+    "url": "https://github.com/24X7/riz",
+    "source": "github"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "http://localhost:{port}/_riz/mcp",
+      "variables": {
+        "port": {
+          "description": "The local port riz is listening on (set via `riz run`; defaults to 3000).",
+          "default": "3000"
+        }
+      }
+    }
+  ],
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "kind": "self-hosted-runtime",
+      "summary": "riz is not a fixed-tool MCP server. It is a ~10 MB Rust binary you run on your own machine (Linux/macOS, x86_64 + aarch64). Each function declared in the user's riz.toml is auto-exposed as one MCP tool at /_riz/mcp the moment riz boots. The available tool set is therefore dynamic and user-defined, not a fixed list shipped by this package.",
+      "transport": "Streamable HTTP (MCP spec 2025-11-25; negotiates 2024-11-05, 2025-03-26, 2025-06-18).",
+      "install": "curl -fsSL https://riz.dev/install | sh",
+      "connect": "claude mcp add riz-local --transport http http://localhost:3000/_riz/mcp",
+      "capabilities": [
+        "Five runtimes in one binary: Bun, Node.js, Python, Rust, capability-sandboxed WASM (WASI deny-by-default).",
+        "Every riz.toml function auto-registers as a typed MCP tool at /_riz/mcp (zero SDK glue).",
+        "Built-in OpenAI-compatible LLM gateway on the same binary.",
+        "JWT / JWKS authentication.",
+        "No per-request cold start (warm pre-spawned pool per function)."
+      ],
+      "license": "Apache-2.0"
+    }
+  }
+}
