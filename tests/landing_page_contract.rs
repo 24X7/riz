@@ -1,22 +1,23 @@
-//! Landing-page sanity tests — minimal version.
+//! Landing-page sanity tests.
 //!
-//! Earlier this file enforced a strict claim-by-claim "truth slice" against
-//! every <li> on the page. That made sense when we'd had real claim-vs-reality
-//! incidents, but it became a drag on every site iteration. Two of the tests
-//! also shelled out to `cargo test --list` which took 2-3 minutes each.
-//!
-//! Trimmed to two cheap, high-signal checks:
+//! Two cheap, high-signal checks that prove the on-page `riz.toml` is real:
 //!   1. The example `riz.toml` shown on the page parses + validates via the
 //!      library's own config code (proves the snippet is real, not aspirational).
 //!   2. At least one pill exists in the #config section (smoke test that the
 //!      page didn't get accidentally truncated).
 //!
-//! Marketing copy correctness is a human/PR review concern from here on.
+//! Claim-vs-reality enforcement — every headline capability claim mapped to a
+//! REAL backing test — is the job of `tests/claims_truth.rs` against
+//! `tests/claims/registry.toml`. That is the authoritative truth check; this
+//! file only adds one bridge test below (`every_page_claim_is_registered`) so
+//! the Proof-bucket numeric claims (test count, bug-tracker line) on the page
+//! can't silently drift out of the registry.
 
 use regex::Regex;
 use std::fs;
 
 const LANDING_PAGE: &str = "web/index.html";
+const REGISTRY: &str = "tests/claims/registry.toml";
 
 fn html() -> String {
     fs::read_to_string(LANDING_PAGE).unwrap_or_else(|e| {
@@ -77,5 +78,54 @@ fn config_section_has_pills() {
     assert!(
         pill_count > 0,
         "expected at least one .pill inside #config section — page may be truncated"
+    );
+}
+
+/// Bridge test: the claims registry is non-trivial, and the Proof-bucket
+/// numeric claims that live on the page (the `cargo nextest run` test count and
+/// the production-readiness bug-tracker line) are each reflected as a registry
+/// claim. This stops a Proof-bucket number from drifting on the page without a
+/// corresponding registry entry (which `claims_truth.rs` then holds to the page
+/// text and an honest status).
+#[test]
+fn every_page_claim_is_registered() {
+    let registry = fs::read_to_string(REGISTRY)
+        .unwrap_or_else(|e| panic!("could not read {REGISTRY}: {e}"));
+    let page = html();
+
+    // Non-trivial registry: well more than a placeholder.
+    let claim_count = registry.matches("[[claim]]").count();
+    assert!(
+        claim_count >= 10,
+        "claims registry looks trivial ({claim_count} claims) — \
+         every live capability claim should be mapped"
+    );
+
+    // The page's Proof bucket states a test count like "788 tests". Extract it
+    // and require that exact string to be registered (it's the `test-count`
+    // copy-only claim's page_text).
+    let test_count = Regex::new(r"(\d{2,5}) tests \(<code>cargo nextest run</code>\)")
+        .unwrap()
+        .captures(&page)
+        .map(|c| c[1].to_string())
+        .expect("could not find the '<N> tests (cargo nextest run)' Proof-bucket line");
+    let test_count_phrase = format!("{test_count} tests");
+    assert!(
+        registry.contains(&test_count_phrase),
+        "the page advertises \"{test_count_phrase}\" but no registry claim carries \
+         that page_text — update the test-count claim in {REGISTRY}"
+    );
+
+    // The bug-tracker Proof line must likewise be mirrored in the registry.
+    let bug_line = "Production-readiness bug tracker closed, with regression-gate tests for the fixed bugs";
+    assert!(
+        page.contains(bug_line),
+        "the bug-tracker Proof line changed on the page; update this test and \
+         the bug-tracker-closed registry claim to match"
+    );
+    assert!(
+        registry.contains(bug_line),
+        "the bug-tracker Proof line on the page is not reflected in {REGISTRY} \
+         — register it so it can't silently drift"
     );
 }
