@@ -7,6 +7,7 @@ pub mod gateway;
 pub mod hotreload;
 pub mod llm;
 pub mod metrics;
+pub mod observability;
 pub mod process;
 pub mod router;
 pub mod runtime;

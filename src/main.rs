@@ -7,6 +7,12 @@ mod gateway;
 mod hotreload;
 mod llm;
 mod metrics;
+// The bin only invokes `observability::process::run_worker` (the __telemetry
+// child entry). The host-side emitter/supervisor are exercised by the lib +
+// integration tests now and get wired into the server in phase 2c; from the
+// bin's view they're not-yet-constructed, hence the scoped allow.
+#[allow(dead_code)]
+mod observability;
 mod process;
 mod router;
 mod runtime;
@@ -873,6 +879,13 @@ fn main() -> anyhow::Result<()> {
     let argv: Vec<String> = std::env::args().collect();
     if argv.get(1).map(String::as_str) == Some("__wasm-host") {
         return process::wasm::run_host(&argv[2..]);
+    }
+    // The isolated telemetry worker. Like __wasm-host, it runs synchronously
+    // *before* any tokio runtime so the child stays lean and decoupled from the
+    // host event loop. `riz __telemetry <sink>` reads length-prefixed events
+    // from stdin and (2a) appends them as JSON lines to the sink file.
+    if argv.get(1).map(String::as_str) == Some("__telemetry") {
+        return observability::process::run_worker(&argv[2..]);
     }
 
     tokio::runtime::Builder::new_multi_thread()

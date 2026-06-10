@@ -125,6 +125,15 @@ pub struct Config {
     pub cache: CacheConfig,
     #[serde(default)]
     pub datadog: DatadogConfig,
+    /// Telemetry / observability (`[telemetry]`). Disabled by default. When
+    /// enabled, the host runs an isolated `riz __telemetry` child and emits span
+    /// events to it through a bounded, non-blocking channel. See
+    /// `docs/superpowers/specs/2026-06-10-observability-design.md`.
+    /// Read by the server wiring in phase 2c (enabled/queue_capacity) and the
+    /// exporter in 2b (endpoint/headers); not yet consumed in 2a.
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub telemetry: TelemetryConfig,
     #[serde(default)]
     pub deploy: DeployConfig,
     #[serde(default)]
@@ -146,6 +155,49 @@ pub struct Config {
     /// "function" vocabulary); internal field is plural.
     #[serde(default, rename = "function")]
     pub functions: IndexMap<String, FunctionConfig>,
+}
+
+/// Telemetry / observability config (`[telemetry]`).
+///
+/// ```toml
+/// [telemetry]
+/// enabled = false                    # default; disabled => no child, no channel
+/// endpoint = "http://localhost:4318" # OTLP/HTTP collector (used in 2b)
+/// queue_capacity = 4096              # bounded emit channel
+/// [telemetry.headers]                # OTLP export headers (2b)
+/// # "x-api-key" = "..."
+/// ```
+///
+/// Every field is `#[serde(default)]` and the struct derives `Default`, so
+/// adding it to `Config` is non-breaking.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct TelemetryConfig {
+    /// Master switch. When `false`, the host uses a no-op telemetry handle: no
+    /// child process and no channel.
+    pub enabled: bool,
+    /// OTLP/HTTP collector endpoint. Consumed by the real exporter in phase 2b.
+    pub endpoint: Option<String>,
+    /// Headers attached to OTLP exports (phase 2b), e.g. auth tokens.
+    pub headers: std::collections::BTreeMap<String, String>,
+    /// Capacity of the bounded, non-blocking emit channel. Beyond this, events
+    /// are dropped rather than blocking the request path.
+    pub queue_capacity: usize,
+}
+
+fn default_telemetry_queue_capacity() -> usize {
+    4096
+}
+
+impl Default for TelemetryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            endpoint: None,
+            headers: std::collections::BTreeMap::new(),
+            queue_capacity: default_telemetry_queue_capacity(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
