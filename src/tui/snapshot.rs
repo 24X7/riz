@@ -1,5 +1,5 @@
 use crate::process::{HostStats, PoolStats};
-use crate::state::{AppState, FunctionStateSnapshot, LogEntry};
+use crate::state::{AppState, FunctionStateSnapshot, LogEntry, TokenStatsSnapshot};
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -17,6 +17,9 @@ pub struct TuiSnapshot {
     pub cache_entry_count: u64,
     /// Accumulated log entries (capped at 500 most-recent).
     pub log_entries: VecDeque<LogEntry>,
+    /// Global LLM token utilization read-model (cumulative totals + recent
+    /// chat-completions). Independent of the OTLP export pipeline.
+    pub token_stats: TokenStatsSnapshot,
     /// Unix seconds when this snapshot was captured.
     #[allow(dead_code)]
     pub captured_at_secs: u64,
@@ -59,6 +62,7 @@ pub fn spawn_snapshotter(
             let host_stats = state.process_manager.host_stats();
             let uptime_secs = state.riz_state.uptime_secs();
             let cache_entry_count = state.cache.entry_count();
+            let token_stats = state.riz_state.token_stats.snapshot();
             let captured_at_secs = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
@@ -71,6 +75,7 @@ pub fn spawn_snapshotter(
                 uptime_secs,
                 cache_entry_count,
                 log_entries: log_buf.clone(),
+                token_stats,
                 captured_at_secs,
             };
 

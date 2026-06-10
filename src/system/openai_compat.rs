@@ -44,6 +44,7 @@ use crate::server::{new_span_id, new_trace_id, now_unix_nanos};
 pub async fn chat_completions(
     gw: Arc<Gateway>,
     telemetry: TelemetryHandle,
+    riz_state: Arc<crate::state::RizState>,
     Json(req): Json<ChatRequest>,
 ) -> Response {
     let streaming = req.stream;
@@ -56,6 +57,16 @@ pub async fn chat_completions(
 
     // Child span for the gateway/LLM call, parented to the request span.
     if let Ok(resp) = &outcome {
+        // Same token data, two sinks: the OTLP span below (export) and the
+        // local read-model here (the --dev TUI, which must not depend on the
+        // export pipeline). Recording is non-blocking and won't stall the
+        // response path.
+        riz_state.record_tokens(
+            &resp.model,
+            &gw.resolved_provider(&requested_model),
+            resp.usage.prompt_tokens,
+            resp.usage.completion_tokens,
+        );
         let mut attrs = BTreeMap::new();
         attrs.insert(
             GEN_AI_SYSTEM.to_string(),

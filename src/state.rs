@@ -450,11 +450,111 @@ impl FunctionState {
     }
 }
 
+// ─── TokenStats (local LLM token read-model for the --dev TUI) ─────────────
+
+/// One recorded chat-completion's token utilization. Plain, cloneable data.
+#[derive(Clone, Debug)]
+pub struct TokenCall {
+    pub model: String,
+    pub provider: String,
+    pub input: u32,
+    pub output: u32,
+    /// Wall-clock time the call completed. Carried for future "x s ago"
+    /// rendering / sorting; not yet displayed.
+    #[allow(dead_code)]
+    pub at: SystemTime,
+}
+
+/// Local, export-independent token read-model. Lives on `RizState` so the
+/// `--dev` TUI can surface per-call token utilization even when
+/// `[telemetry].enabled = false` (the OTLP export pipeline is a separate sink).
+///
+/// LLM calls flow through the global `/_riz/v1/chat/completions` gateway, not
+/// arbitrary riz-functions, so token accounting is global/per-model — there is
+/// no per-FunctionState token counter. Cumulative totals are lock-free atomics;
+/// the recent-call ring is a short Mutex critical section (try_lock, capped).
+pub struct TokenStats {
+    total_input: AtomicU64,
+    total_output: AtomicU64,
+    recent: std::sync::Mutex<VecDeque<TokenCall>>,
+}
+
+impl TokenStats {
+    /// Keep the most-recent N chat-completions for the TUI's recent-calls list.
+    pub const RECENT_CAP: usize = 20;
+
+    pub fn new() -> Self {
+        Self {
+            total_input: AtomicU64::new(0),
+            total_output: AtomicU64::new(0),
+            recent: std::sync::Mutex::new(VecDeque::new()),
+        }
+    }
+
+    /// Record one chat-completion's token usage. Lock-light and non-blocking:
+    /// totals are atomic; the recent ring uses `try_lock` so a contended render
+    /// never stalls the response path (a dropped recent-entry is acceptable —
+    /// the cumulative totals are always exact).
+    pub fn record(&self, model: &str, provider: &str, input: u32, output: u32) {
+        self.total_input.fetch_add(input as u64, Ordering::Relaxed);
+        self.total_output.fetch_add(output as u64, Ordering::Relaxed);
+        if let Ok(mut ring) = self.recent.try_lock() {
+            ring.push_back(TokenCall {
+                model: model.to_string(),
+                provider: provider.to_string(),
+                input,
+                output,
+                at: SystemTime::now(),
+            });
+            while ring.len() > Self::RECENT_CAP {
+                ring.pop_front();
+            }
+        }
+    }
+
+    /// Capture an immutable, cloneable snapshot for the TUI snapshotter.
+    pub fn snapshot(&self) -> TokenStatsSnapshot {
+        let recent = self
+            .recent
+            .lock()
+            .map(|r| r.iter().cloned().collect())
+            .unwrap_or_default();
+        TokenStatsSnapshot {
+            total_input: self.total_input.load(Ordering::Relaxed),
+            total_output: self.total_output.load(Ordering::Relaxed),
+            recent,
+        }
+    }
+}
+
+impl Default for TokenStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Plain-data view of `TokenStats` — what the TUI renders. `recent` is ordered
+/// oldest→newest (the TUI shows the tail). Cloneable and `Default`.
+#[derive(Clone, Debug, Default)]
+pub struct TokenStatsSnapshot {
+    pub total_input: u64,
+    pub total_output: u64,
+    pub recent: Vec<TokenCall>,
+}
+
+impl TokenStatsSnapshot {
+    pub fn total(&self) -> u64 {
+        self.total_input + self.total_output
+    }
+}
+
 /// Shared runtime state. Single source of truth for all per-function metrics.
 pub struct RizState {
     pub functions: RwLock<IndexMap<String, Arc<FunctionState>>>,
     pub start_time: Instant,
     pub version: &'static str,
+    /// Global LLM token utilization read-model (per-model, not per-function).
+    pub token_stats: TokenStats,
 }
 
 impl RizState {
@@ -463,7 +563,15 @@ impl RizState {
             functions: RwLock::new(IndexMap::new()),
             start_time: Instant::now(),
             version: env!("CARGO_PKG_VERSION"),
+            token_stats: TokenStats::new(),
         }
+    }
+
+    /// Record one chat-completion's token utilization into the local read-model.
+    /// Called from the gateway chat-completion path alongside the OTLP span —
+    /// same data, two sinks (export + TUI). Non-blocking; safe on the hot path.
+    pub fn record_tokens(&self, model: &str, provider: &str, input: u32, output: u32) {
+        self.token_stats.record(model, provider, input, output);
     }
 
     pub async fn register(&self, f: FunctionState) {
@@ -709,6 +817,59 @@ mod riz_state_tests {
         // Counters must be preserved.
         assert_eq!(f.invocations.load(Ordering::Relaxed), 7);
         assert_eq!(f.cache_hits.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn record_tokens_accumulates_totals() {
+        let state = RizState::new();
+        state.record_tokens("gpt-4o", "openai", 100, 40);
+        state.record_tokens("anthropic/claude", "anthropic", 200, 60);
+        let snap = state.token_stats.snapshot();
+        assert_eq!(snap.total_input, 300);
+        assert_eq!(snap.total_output, 100);
+        assert_eq!(snap.total(), 400);
+    }
+
+    #[test]
+    fn record_tokens_keeps_recent_calls_in_order() {
+        let state = RizState::new();
+        state.record_tokens("m1", "p1", 1, 2);
+        state.record_tokens("m2", "p2", 3, 4);
+        let snap = state.token_stats.snapshot();
+        assert_eq!(snap.recent.len(), 2);
+        // Oldest→newest ordering (TUI renders the tail).
+        assert_eq!(snap.recent[0].model, "m1");
+        assert_eq!(snap.recent[0].provider, "p1");
+        assert_eq!(snap.recent[0].input, 1);
+        assert_eq!(snap.recent[0].output, 2);
+        assert_eq!(snap.recent[1].model, "m2");
+        assert_eq!(snap.recent[1].output, 4);
+    }
+
+    #[test]
+    fn recent_calls_are_capped_but_totals_remain_exact() {
+        let state = RizState::new();
+        let n = TokenStats::RECENT_CAP + 5;
+        for i in 0..n {
+            state.record_tokens(&format!("m{i}"), "p", 1, 1);
+        }
+        let snap = state.token_stats.snapshot();
+        // Ring is capped to RECENT_CAP, retaining the newest entries.
+        assert_eq!(snap.recent.len(), TokenStats::RECENT_CAP);
+        assert_eq!(snap.recent.last().unwrap().model, format!("m{}", n - 1));
+        assert_eq!(snap.recent.first().unwrap().model, format!("m{}", n - TokenStats::RECENT_CAP));
+        // Cumulative totals count every call regardless of the ring cap.
+        assert_eq!(snap.total_input, n as u64);
+        assert_eq!(snap.total_output, n as u64);
+    }
+
+    #[test]
+    fn fresh_token_stats_snapshot_is_empty() {
+        let snap = RizState::new().token_stats.snapshot();
+        assert_eq!(snap.total_input, 0);
+        assert_eq!(snap.total_output, 0);
+        assert_eq!(snap.total(), 0);
+        assert!(snap.recent.is_empty());
     }
 
     #[tokio::test]

@@ -223,6 +223,13 @@ impl Gateway {
         }
     }
 
+    /// Public view of which provider a model routes to — used by the
+    /// chat-completion handler to tag the local token read-model (and the
+    /// `--dev` TUI's recent-calls list) with the serving provider.
+    pub fn resolved_provider(&self, model: &str) -> String {
+        self.route(model)
+    }
+
     /// The ordered list of providers to attempt: the routed one first, then the
     /// fallback chain, de-duplicated, skipping any that aren't configured.
     fn attempt_order(&self, model: &str) -> Vec<String> {

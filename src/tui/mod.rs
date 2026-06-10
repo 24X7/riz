@@ -253,6 +253,7 @@ fn run_loop<B: ratatui::backend::Backend>(
             app.uptime_secs = snap.uptime_secs;
             app.cache_entry_count = snap.cache_entry_count;
             app.log_entries = snap.log_entries.clone();
+            app.token_stats = snap.token_stats.clone();
         }
 
         // Clamp selection if routes were removed

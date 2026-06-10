@@ -1,5 +1,5 @@
 use crate::process::{HostStats, PoolStats};
-use crate::state::{FunctionStateSnapshot, LogEntry};
+use crate::state::{FunctionStateSnapshot, LogEntry, TokenStatsSnapshot};
 use std::collections::VecDeque;
 use std::time::Instant;
 
@@ -14,6 +14,8 @@ pub struct App {
     pub uptime_secs: u64,
     pub cache_entry_count: u64,
     pub log_entries: VecDeque<LogEntry>,
+    /// Global LLM token utilization (cumulative + recent chat-completions).
+    pub token_stats: TokenStatsSnapshot,
     pub selected_tab: usize,
     pub selected_route: Option<usize>,
     #[allow(dead_code)]
@@ -22,7 +24,7 @@ pub struct App {
 
 impl App {
     pub fn tab_titles() -> &'static [&'static str] {
-        &["Routes", "Processes", "Cache"]
+        &["Routes", "Processes", "Cache", "Tokens"]
     }
 
     pub fn next_tab(&mut self) {

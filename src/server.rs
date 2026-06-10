@@ -87,14 +87,16 @@ pub fn build_app(state: Arc<AppState>) -> AxumRouter {
                     let gw = Arc::new(gw);
                     let gw_chat = gw.clone();
                     let chat_telemetry = state.telemetry.clone();
+                    let chat_riz_state = state.riz_state.clone();
                     app = app.route(
                         "/_riz/v1/chat/completions",
                         post(move |body: Json<crate::llm::ChatRequest>| {
                             let gw = gw_chat.clone();
                             let telemetry = chat_telemetry.clone();
+                            let riz_state = chat_riz_state.clone();
                             async move {
                                 crate::system::openai_compat::chat_completions(
-                                    gw, telemetry, body,
+                                    gw, telemetry, riz_state, body,
                                 )
                                 .await
                             }

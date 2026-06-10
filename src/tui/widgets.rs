@@ -22,6 +22,7 @@ pub fn render(frame: &mut Frame, app: &App) {
         0 => render_routes(frame, app, chunks[1]),
         1 => render_processes(frame, app, chunks[1]),
         2 => render_cache(frame, app, chunks[1]),
+        3 => render_tokens(frame, app, chunks[1]),
         _ => {}
     }
 }
@@ -349,6 +350,95 @@ fn render_cache(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
+fn render_tokens(frame: &mut Frame, app: &App, area: Rect) {
+    render_tokens_panel(frame, &app.token_stats, area);
+}
+
+/// Render the LLM token-utilization panel from a plain `TokenStatsSnapshot`.
+/// Factored out of `render_tokens` so it can be exercised in isolation against
+/// a ratatui `TestBackend` without constructing a full `App`.
+///
+/// Layout: a one-line cumulative summary (input / output / total) on top, then
+/// a table of the most-recent chat-completions (`model · in→out`). LLM token
+/// accounting is global/per-model (calls flow through the `/_riz/v1` gateway,
+/// not per riz-function), so this is the system-wide view.
+pub fn render_tokens_panel(
+    frame: &mut Frame,
+    stats: &crate::state::TokenStatsSnapshot,
+    area: Rect,
+) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(0)])
+        .split(area);
+
+    // ── Cumulative summary strip ──
+    let summary = Line::from(vec![
+        Span::styled("Input: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            stats.total_input.to_string(),
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("   "),
+        Span::styled("Output: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            stats.total_output.to_string(),
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("   "),
+        Span::styled("Total: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            stats.total().to_string(),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]);
+    let summary_panel = Paragraph::new(summary).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Tokens — cumulative"),
+    );
+    frame.render_widget(summary_panel, chunks[0]);
+
+    // ── Recent chat-completions (newest at the bottom) ──
+    let header = Row::new(["Model", "Provider", "In", "Out"]).style(
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    );
+    let rows: Vec<Row> = stats
+        .recent
+        .iter()
+        .map(|c| {
+            Row::new([
+                Cell::from(c.model.clone()),
+                Cell::from(c.provider.clone()).style(Style::default().fg(Color::DarkGray)),
+                Cell::from(c.input.to_string()),
+                Cell::from(format!("→{}", c.output)),
+            ])
+        })
+        .collect();
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Percentage(46),
+            Constraint::Percentage(24),
+            Constraint::Length(10),
+            Constraint::Length(10),
+        ],
+    )
+    .header(header)
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Recent chat-completions  (model · in→out)"),
+    );
+    frame.render_widget(table, chunks[1]);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,5 +477,102 @@ mod tests {
 
         let visible = filter_logs(&entries, None);
         assert_eq!(visible.len(), 2);
+    }
+
+    use crate::state::{TokenCall, TokenStatsSnapshot};
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    /// Flatten a rendered TestBackend buffer into a single string so we can
+    /// assert on the displayed text regardless of cell layout.
+    fn buffer_text(terminal: &Terminal<TestBackend>) -> String {
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn tokens_panel_renders_totals_and_recent_models() {
+        let stats = TokenStatsSnapshot {
+            total_input: 1234,
+            total_output: 567,
+            recent: vec![
+                TokenCall {
+                    model: "gpt-4o".into(),
+                    provider: "openai".into(),
+                    input: 100,
+                    output: 40,
+                    at: SystemTime::UNIX_EPOCH,
+                },
+                TokenCall {
+                    model: "claude-sonnet".into(),
+                    provider: "anthropic".into(),
+                    input: 200,
+                    output: 60,
+                    at: SystemTime::UNIX_EPOCH,
+                },
+            ],
+        };
+
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| render_tokens_panel(f, &stats, f.area()))
+            .unwrap();
+
+        let text = buffer_text(&terminal);
+        // Cumulative figures are displayed.
+        assert!(text.contains("1234"), "input total missing: {text}");
+        assert!(text.contains("567"), "output total missing");
+        assert!(text.contains("1801"), "computed total (1234+567) missing");
+        // Recent-call models + token figures are displayed.
+        assert!(text.contains("gpt-4o"), "first model missing");
+        assert!(text.contains("claude-sonnet"), "second model missing");
+        assert!(text.contains("→40"), "first call output tokens missing");
+    }
+
+    #[test]
+    fn tokens_panel_renders_empty_without_panic() {
+        let stats = TokenStatsSnapshot::default();
+        let backend = TestBackend::new(80, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| render_tokens_panel(f, &stats, f.area()))
+            .unwrap();
+        let text = buffer_text(&terminal);
+        // Empty read-model still shows the zeroed cumulative strip.
+        assert!(text.contains("Tokens"), "panel title missing: {text}");
+    }
+
+    #[test]
+    fn dashboard_tokens_tab_renders_token_figures() {
+        // Full dashboard render via the public `render(frame, app)` entrypoint,
+        // proving the Tokens tab is wired end-to-end and doesn't panic.
+        let mut app = App::default();
+        app.selected_tab = 3; // Tokens
+        app.token_stats = TokenStatsSnapshot {
+            total_input: 42,
+            total_output: 8,
+            recent: vec![TokenCall {
+                model: "demo-model".into(),
+                provider: "mock".into(),
+                input: 7,
+                output: 3,
+                at: SystemTime::UNIX_EPOCH,
+            }],
+        };
+
+        let backend = TestBackend::new(120, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(text.contains("demo-model"), "model not rendered: {text}");
+        assert!(text.contains("42"), "input total not rendered");
+        assert!(text.contains("Tokens"), "tab/title not rendered");
     }
 }
