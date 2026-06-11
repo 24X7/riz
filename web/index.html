@@ -1582,10 +1582,10 @@
 <section class="hero">
   <div class="hero-l">
     <div class="eyebrow">// agent-native lambda runtime · mcp spec 2025-11-25 · single rust binary · v0.1</div>
-    <h1>Lambda for the<br/><em>agent era.</em></h1>
+    <h1>Ship agent-ready APIs on Lambda —<br/><em>without the cold starts.</em></h1>
     <p class="sub">
-      <strong>Write a plain AWS-Lambda-shaped function — no framework to pick, no stack to wire — and the moment <code style="font-family:var(--mono);font-size:.82em;color:var(--cyan)">riz run</code> boots it's production-grade and a typed MCP tool an agent can call.</strong>
-      riz is the <em>runtime harness</em>: you write only business logic, and one ~10&nbsp;MB Rust binary you own brings the always-on parts for free — process safety profile, supervised crash-respawn, graceful drain, real percentile observability, S3 hot-swap with auto-rollback. Real AWS HTTP API v2 + WebSocket traffic across five runtimes — Bun, Node.js, Python, Rust, and capability-sandboxed WASM — with an OpenAI-compatible LLM gateway on the same port. Warm pre-spawned pools mean no per-request cold start.
+      <strong>Build agent-ready integrations and product APIs on the AWS Lambda model — handlers run unmodified, with no per-request cold start. riz layers on everything you'd otherwise wire by hand: a production safety profile, supervised respawn, real percentile observability, and a typed MCP tool for every function.</strong>
+      riz is the <em>runtime harness</em>: you write only business logic, and one ~10&nbsp;MB Rust binary you own runs real AWS HTTP API v2 + WebSocket traffic across five runtimes — Bun, Node.js, Python, Rust, and capability-sandboxed WASM — with an OpenAI-compatible LLM gateway on the same port and S3 hot-swap deploys with auto-rollback.
     </p>
     <div class="install">
       <span class="pr">$</span>
