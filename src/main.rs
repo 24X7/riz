@@ -499,6 +499,34 @@ async fn run_mcp_inspect(url: &str, bearer: Option<&str>) -> anyhow::Result<()> 
             println!("    outputSchema:  — (not declared)");
         }
     }
+    // ── SSE channel probe (Streamable HTTP, spec 2025-03-26+) ───────────────
+    // GET with Accept: text/event-stream opens the server-initiated channel.
+    // Verify it answers 200 text/event-stream; don't consume the stream.
+    let sse_resp = auth_header(
+        client
+            .get(url)
+            .header("accept", "text/event-stream"),
+    )
+    .send()
+    .await;
+    println!();
+    match sse_resp {
+        Ok(r) if r.status().is_success() => {
+            let ct = r
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            if ct.contains("text/event-stream") {
+                println!("SSE channel:   open (GET → 200 text/event-stream)");
+            } else {
+                println!("SSE channel:   unexpected content-type {ct:?} on GET");
+            }
+        }
+        Ok(r) => println!("SSE channel:   unavailable (GET → {})", r.status()),
+        Err(e) => println!("SSE channel:   probe failed: {e}"),
+    }
+
     println!();
     println!(
         "✓ MCP endpoint healthy. Point Claude / Cursor at {url} to use these tools."

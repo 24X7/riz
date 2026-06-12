@@ -40,7 +40,14 @@ pub fn build_app(state: Arc<AppState>) -> AxumRouter {
         .route("/health", get(health_handler))
         .route("/ready", get(ready_handler))
         .route("/cache/invalidate", post(cache_invalidate))
-        .route("/deploy", post(crate::deploy::deploy_handler));
+        .route("/deploy", post(crate::deploy::deploy_handler))
+        // MCP Streamable HTTP: the transport entry serves GET-SSE / POST-SSE /
+        // DELETE itself and delegates everything else (plain-JSON POST, OPTIONS
+        // preflight, non-SSE GET) back to dispatch_lambda unchanged.
+        .route(
+            "/_riz/mcp",
+            any(crate::system::mcp::transport::entry),
+        );
 
     // Mount WebSocket upgrade routes for every protocol=websocket function.
     // build_app runs once at startup, so a try_read in this sync context is
@@ -267,7 +274,7 @@ async fn kill_all_processes(state: &AppState) {
     }
 }
 
-async fn dispatch_lambda(
+pub(crate) async fn dispatch_lambda(
     State(state): State<Arc<AppState>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     req: Request<AxumBody>,

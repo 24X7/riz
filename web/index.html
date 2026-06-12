@@ -1942,6 +1942,7 @@ $ claude mcp add riz-local \
               <li>The flywheel: an agent writes a plain function, and the instant riz boots it's a callable, production-grade tool — zero glue</li>
               <li>Zero SDK code — point any MCP client at riz, your APIs become agent-callable</li>
               <li>Per-route typed tool schemas — <code>{id}</code> path params typed from the route template, declared query params typed via <code>[function.x.mcp]</code>, validated on call</li>
+              <li>Streamable HTTP transport — POST answers stream as SSE event frames, GET opens the server channel, <code>Mcp-Session-Id</code> honored</li>
               <li>Claude Agent SDK demo drives riz functions as tools — proven by an example</li>
               <li>Bearer-token gating on <code>/_riz/mcp</code> for shared-secret access control</li>
             </ul>

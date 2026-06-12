@@ -32,6 +32,12 @@ status = "proven"
 proof = "tools_list_types_path_params_from_route_template"
 
 [[claim]]
+id = "mcp-sse-transport"
+page_text = "POST answers stream as SSE event frames, GET opens the server channel"
+status = "proven"
+proof = "post_with_sse_accept_streams_the_response"
+
+[[claim]]
 id = "llm-gateway-openai-compatible"
 page_text = "OpenAI-compatible gateway"
 status = "proven"

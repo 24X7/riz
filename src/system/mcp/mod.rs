@@ -10,7 +10,7 @@
 //! to the function's own code.
 //!
 //! Transport: stateless HTTP. One JSON-RPC message per POST. Notifications
-//! (requests without `id`) get a 204 No Content. JSON-RPC batch arrays are
+//! (requests without `id`) get a 202 Accepted (Streamable HTTP spec). Batch arrays are
 //! still accepted for legacy 2024-11-05 / 2025-03-26 clients — batching was
 //! removed in MCP 2025-06-18, and new clients should send single messages.
 //!
@@ -24,6 +24,7 @@ mod encoding;
 mod protocol;
 mod schema;
 mod tools;
+pub mod transport;
 
 use crate::auth::bearer::validate_bearer;
 use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
@@ -34,7 +35,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::runtime::response::json_response as http_json_response;
-use encoding::{json_response, jsonrpc_error_response, jsonrpc_error_value, no_content_response};
+use encoding::{accepted_response, json_response, jsonrpc_error_response, jsonrpc_error_value};
 use protocol::{JsonRpcError, JsonRpcRequest};
 
 pub struct McpHandler {
@@ -55,12 +56,13 @@ impl McpHandler {
                 },
                 // GET on the MCP endpoint is part of the Streamable HTTP
                 // transport spec (2025-03-26+): clients use it to subscribe to
-                // server-initiated SSE streams. Riz is fundamentally
-                // request/response — no server push — so we accept GET and
-                // return 405 with a JSON-RPC method-not-allowed shape, which
-                // is the spec-sanctioned response for transport-supported-
-                // but-not-used. Without this route the gateway would 404,
-                // which clients can't disambiguate from "endpoint missing".
+                // server-initiated SSE streams. GET *with* `Accept:
+                // text/event-stream` is served at the axum layer (see
+                // transport.rs — a live SSE channel); a GET without that
+                // accept header lands here and gets 405 with a JSON-RPC
+                // method-not-allowed shape. Without this route the gateway
+                // would 404, which clients can't disambiguate from
+                // "endpoint missing".
                 RouteEntry {
                     method: RouteMethod::Get,
                     path: "/_riz/mcp".into(),
@@ -115,15 +117,16 @@ impl LambdaHandler for McpHandler {
             }
         }
         // Streamable HTTP (MCP 2025-03-26+): GET is reserved for server-initiated
-        // SSE streams. Riz doesn't push, so return 405 with the JSON-RPC error
-        // shape and Allow: POST per HTTP semantics.
+        // SSE streams, which transport.rs serves when the client sends
+        // `Accept: text/event-stream`. A GET that lands here lacked that
+        // accept header → 405 with Allow: POST per HTTP semantics.
         if event.http_method == http::Method::GET {
             let body = serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": serde_json::Value::Null,
                 "error": {
                     "code": -32601,
-                    "message": "GET not supported on /_riz/mcp — server does not initiate streams. Use POST with JSON-RPC body."
+                    "message": "GET on /_riz/mcp requires Accept: text/event-stream (opens the SSE channel). Use POST with a JSON-RPC body for requests."
                 }
             });
             let mut resp = http_json_response(405, &body);
@@ -145,7 +148,7 @@ impl LambdaHandler for McpHandler {
         };
 
         // JSON-RPC 2.0 batch: array of requests. Process each, collect
-        // non-notification responses, return a JSON array (or 204 if all
+        // non-notification responses, return a JSON array (or 202 if all
         // were notifications). Empty batch is itself an "Invalid Request".
         if let Some(arr) = raw.as_array() {
             if arr.is_empty() {
@@ -162,7 +165,7 @@ impl LambdaHandler for McpHandler {
                 }
             }
             return Ok(if out.is_empty() {
-                no_content_response()
+                accepted_response()
             } else {
                 json_response(serde_json::Value::Array(out))
             });
@@ -171,7 +174,7 @@ impl LambdaHandler for McpHandler {
         // Single request (object).
         match self.process_one(&raw).await {
             Some(resp) => Ok(json_response(resp)),
-            None => Ok(no_content_response()), // it was a notification
+            None => Ok(accepted_response()), // it was a notification
         }
     }
 }
@@ -523,13 +526,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn notification_without_id_returns_204_no_content() {
+    async fn notification_without_id_returns_202_accepted() {
         let s = Arc::new(RizState::new());
         let h = McpHandler::new(s, None);
         let req = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
         assert_eq!(
-            resp.status_code, 204,
+            resp.status_code, 202,
             "notifications must not produce a body"
         );
         assert!(matches!(resp.body, None | Some(Body::Empty)));
@@ -542,7 +545,7 @@ mod tests {
         let h = McpHandler::new(s, None);
         let req = r#"{"jsonrpc":"2.0","method":"nonsense/method"}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
-        assert_eq!(resp.status_code, 204);
+        assert_eq!(resp.status_code, 202);
     }
 
     #[tokio::test]
@@ -594,7 +597,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn batch_with_only_notifications_returns_204() {
+    async fn batch_with_only_notifications_returns_202() {
         let s = Arc::new(RizState::new());
         let h = McpHandler::new(s, None);
         let req = r#"[
@@ -602,7 +605,7 @@ mod tests {
             {"jsonrpc":"2.0","method":"some/notification"}
         ]"#;
         let resp = h.invoke(evt(req)).await.unwrap();
-        assert_eq!(resp.status_code, 204);
+        assert_eq!(resp.status_code, 202);
     }
 
     #[tokio::test]

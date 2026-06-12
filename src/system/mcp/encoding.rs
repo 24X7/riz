@@ -10,9 +10,11 @@ pub(super) fn json_response(value: serde_json::Value) -> ApiGatewayV2httpRespons
     response::json_response(200, &value)
 }
 
-/// 204 No Content — used when the entire request was notifications.
-pub(super) fn no_content_response() -> ApiGatewayV2httpResponse {
-    response::empty_response(204)
+/// 202 Accepted — used when the entire request was notifications.
+/// Streamable HTTP (MCP 2025-03-26+) mandates 202 for bodies that contain
+/// only notifications/responses (nothing for the server to answer).
+pub(super) fn accepted_response() -> ApiGatewayV2httpResponse {
+    response::empty_response(202)
 }
 
 /// Build a JSON-RPC error envelope around a single id, return as a full HTTP
