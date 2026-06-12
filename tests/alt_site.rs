@@ -23,9 +23,14 @@ fn alt_pages() -> Vec<(PathBuf, String)> {
 /// Strings that were retired as fictions on the main site and must never
 /// reappear on the alt site either.
 const BANNED: &[&str] = &[
-    "ctx.invokeModel",         // API that never existed
-    "semantic cache</b>",      // unshipped feature presented as live
-    "MIT",                     // riz is Apache-2.0
+    "ctx.invokeModel",  // API that never existed
+    "semantic cache</b>", // unshipped feature presented as live
+    // riz is Apache-2.0 — these are the realistic mis-license phrasings
+    // (bare "MIT" would false-positive on RLIMIT).
+    "MIT license",
+    "MIT License",
+    "License: MIT",
+    "MIT-licensed",
 ];
 
 #[test]

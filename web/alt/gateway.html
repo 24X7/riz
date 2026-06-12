@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>riz — LLM gateway. Every model, one base_url.</title>
+  <meta name="description" content="OpenAI-compatible LLM gateway built into the riz binary. Route OpenAI, Anthropic, and local Ollama by model prefix with fallback, budget caps that fail closed, per-provider cost telemetry, and bearer auth."/>
+  <!-- agents: this page covers routing model calls through a self-hosted gateway. Machine path: /llms.txt -->
+  <link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt"/>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="alt.css"/>
+</head>
+<body>
+<div class="gridbg"></div>
+
+<nav>
+  <div class="nav-in">
+    <a class="mark" href="index.html">riz<span class="cur">▮</span></a>
+    <div class="nav-links">
+      <a href="agents.html">Agents</a>
+      <a href="sandbox.html">Sandbox</a>
+      <a href="gateway.html" class="on">Gateway</a>
+      <a href="compare.html">Compare</a>
+      <a href="start.html">Start</a>
+      <a href="docs.html">Docs</a>
+      <a href="examples.html">Examples</a>
+    </div>
+    <div class="nav-right">
+      <a class="agent-chip" href="/llms.txt">AGENT? →</a>
+      <a class="gh-btn" href="https://github.com/24X7/riz" target="_blank">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<header class="page-hero">
+  <div class="wrap">
+    <div class="kicker">llm gateway · openai-compatible · <b>same binary, same port</b></div>
+    <h1>Every model.<br/>One <em>base_url.</em></h1>
+    <p class="sub">
+      Your functions call models. Something should route, meter, and cap those calls —
+      without becoming another service to deploy. The riz gateway is
+      <b style="color:var(--t-hi)">already in the binary serving your functions</b>:
+      point any OpenAI client at <code style="font-family:var(--mono);font-size:.85em;color:var(--t-hi)">/_riz/v1</code> and you're governed.
+    </p>
+    <div class="cta-row">
+      <a class="cta pri" href="start.html">Start in 3 lines →</a>
+      <a class="cta sec" href="docs.html#gateway">Gateway reference</a>
+    </div>
+  </div>
+</header>
+
+<!-- routing -->
+<section>
+  <div class="wrap">
+    <div class="sec-kicker">routing</div>
+    <h2 class="sec">OpenAI in. Anthropic, Ollama,<br/>or OpenAI <em>out.</em></h2>
+    <div class="duo">
+      <div>
+        <p class="lead" style="margin-top:1rem">
+          One wire format — the OpenAI shape every SDK, LangChain, LlamaIndex, and CrewAI
+          already speak. Behind it, riz routes by <b>model prefix</b>
+          (<code style="font-size:.82em;color:var(--t-hi)">anthropic/claude-…</code> →  Anthropic, mapped to the
+          Messages API for you) with a de-duplicated <b>fallback chain</b> when a provider is down.
+        </p>
+        <ul class="facts" style="margin-top:1rem">
+          <li>Providers: OpenAI · Anthropic · local Ollama (no key) · deterministic <code>mock</code> for CI</li>
+          <li>Chat completions, SSE streaming, embeddings, model list</li>
+          <li>Change a client's <code>base_url</code> — that's the whole migration</li>
+        </ul>
+        <div class="ledger" style="margin-top:1.4rem">
+          <span class="tag">proof</span>
+          <span><code>chat_completions_returns_openai_shape</code> ·
+          <code>models_lists_configured_providers</code> ·
+          <code>streaming_returns_openai_sse_chunks</code></span>
+        </div>
+      </div>
+      <div>
+        <div class="well">
+          <div class="well-hd"><b>riz.toml</b><span>validated by the real config code in CI</span></div>
+          <pre data-riz-toml><span class="k">[gateway]</span>
+default_provider = <span class="s">"anthropic"</span>
+fallback_chain = [<span class="s">"anthropic"</span>, <span class="s">"openai"</span>, <span class="s">"ollama"</span>]
+budget_usd = <span class="n">50.0</span>          <span class="c"># hard stop · HTTP 412 on breach</span>
+
+<span class="k">[gateway.providers.anthropic]</span>
+kind = <span class="s">"anthropic"</span>
+api_key_env = <span class="s">"ANTHROPIC_API_KEY"</span>
+
+<span class="k">[gateway.providers.openai]</span>
+kind = <span class="s">"openai"</span>
+api_key_env = <span class="s">"OPENAI_API_KEY"</span>
+
+<span class="k">[gateway.providers.ollama]</span>
+kind = <span class="s">"ollama"</span>          <span class="c"># local · no key · free</span></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- finops -->
+<section style="padding-top:1.5rem">
+  <div class="wrap">
+    <div class="sec-kicker">ai finops</div>
+    <h2 class="sec">The budget cap<br/><em>fails closed.</em></h2>
+    <div class="duo">
+      <div>
+        <p class="lead" style="margin-top:1rem">
+          <code style="font-size:.82em;color:var(--t-hi)">budget_usd</code> is a hard stop: breach it and the gateway
+          answers <code style="font-size:.82em;color:var(--t-hi)">HTTP 412</code> instead of spending. And the detail
+          that separates a real cap from a decorative one: <b>a model the pricing table doesn't
+          know is billed at the most expensive tier</b> — an unlisted model can never silently
+          bypass your cap. Local Ollama models are known-free.
+        </p>
+        <p class="lead" style="margin-top:1rem">
+          <code style="font-size:.82em;color:var(--t-hi)">GET /_riz/v1/usage</code> is the ledger: cumulative cost and
+          tokens per provider. The same numbers flow into the OTLP pipeline as OTel GenAI
+          token attributes, rolled up per request — so "what did this agent chain cost?"
+          has an answer.
+        </p>
+        <div class="ledger" style="margin-top:1.4rem">
+          <span class="tag">proof</span>
+          <span><code>budget_zero_rejects_with_412</code> ·
+          <code>unknown_model_fails_closed_at_the_most_expensive_tier</code> ·
+          <code>multi_hop_agent_chain_rolls_up_token_usage_across_the_tree</code></span>
+        </div>
+      </div>
+      <div>
+        <div class="well">
+          <div class="well-hd"><b>the ledger</b><span>GET /_riz/v1/usage</span></div>
+          <pre>{
+  <span class="s">"anthropic"</span>: {
+    <span class="s">"requests"</span>: <span class="n">412</span>,
+    <span class="s">"tokens_in"</span>: <span class="n">88210</span>,
+    <span class="s">"tokens_out"</span>: <span class="n">31455</span>,
+    <span class="s">"cost_usd"</span>: <span class="n">3.62</span>
+  },
+  <span class="s">"ollama"</span>: { … <span class="s">"cost_usd"</span>: <span class="n">0.0</span> }
+}
+
+<span class="c"># over budget?</span>
+POST /_riz/v1/chat/completions → <span class="k">412</span></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- security -->
+<section style="padding-top:1.5rem">
+  <div class="wrap">
+    <div class="sec-kicker">locked door</div>
+    <h2 class="sec">The endpoint that spends money<br/>is <em>never the open one.</em></h2>
+    <div class="duo">
+      <div>
+        <p class="lead" style="margin-top:1rem">
+          Every <code style="font-size:.82em;color:var(--t-hi)">/_riz/v1/*</code> route is bearer-gated with a
+          constant-time compare when a token is configured — the same gate as the rest of the
+          admin surface. A leaked URL without the token gets a <b>401, not your invoice.</b>
+        </p>
+        <p class="lead" style="margin-top:1rem">
+          Honest scope note, because that's how this site works: streaming today re-emits the
+          completed response as standard SSE chunks any streaming client reads correctly;
+          token-level upstream pass-through is on the roadmap, and the
+          <a href="https://github.com/24X7/riz/blob/main/tests/claims/registry.toml" target="_blank" style="text-decoration:underline dotted">claims registry</a>
+          will say so the day it ships.
+        </p>
+        <div class="ledger" style="margin-top:1.4rem">
+          <span class="tag">proof</span>
+          <span><code>gateway_endpoints_return_401_without_token_when_configured</code></span>
+        </div>
+      </div>
+      <div>
+        <div class="well">
+          <div class="well-hd"><b>any OpenAI client</b><span>python · ts · curl</span></div>
+          <pre><span class="c"># the whole migration:</span>
+client = OpenAI(
+  base_url=<span class="s">"http://localhost:3000/_riz/v1"</span>,
+  api_key=os.environ[<span class="s">"RIZ_AUTH_BEARER_TOKEN"</span>]
+)
+
+r = client.chat.completions.create(
+  model=<span class="s">"anthropic/claude-opus-4-8"</span>,
+  messages=[{<span class="s">"role"</span>:<span class="s">"user"</span>,<span class="s">"content"</span>:<span class="s">"hi"</span>}]
+)</pre>
+        </div>
+      </div>
+    </div>
+    <div class="cta-row" style="margin-top:3rem">
+      <a class="cta pri" href="start.html">Route your first call →</a>
+      <a class="cta sec" href="compare.html">vs. running a separate gateway</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="foot-in">
+    <div class="grp">
+      <span class="foot-mark">riz<span class="cur">▮</span></span>
+      <p class="foot-note">The self-hosted Lambda runtime where every function is an agent's tool. One binary. Apache-2.0.</p>
+    </div>
+    <div class="grp">
+      <h5>Product</h5>
+      <a href="agents.html">Agent layer</a>
+      <a href="sandbox.html">Sandbox &amp; broker</a>
+      <a href="gateway.html">LLM gateway</a>
+      <a href="compare.html">Compare</a>
+    </div>
+    <div class="grp">
+      <h5>Build</h5>
+      <a href="start.html">Getting started</a>
+      <a href="docs.html">Documentation</a>
+      <a href="examples.html">Examples</a>
+      <a href="https://github.com/24X7/riz/releases" target="_blank">Releases ↗</a>
+    </div>
+    <div class="grp">
+      <h5>Project</h5>
+      <a href="https://github.com/24X7/riz" target="_blank">GitHub ↗</a>
+      <a href="https://github.com/24X7/riz/blob/main/tests/claims/registry.toml" target="_blank">Claims registry ↗</a>
+      <a href="https://github.com/24X7/riz/blob/main/LICENSE" target="_blank">Apache-2.0 ↗</a>
+    </div>
+  </div>
+  <div class="agent-block">
+    <div class="inner">
+      <b>// FOR AGENTS</b> — machine-readable surface:
+      <a href="/llms.txt">/llms.txt</a> ·
+      <a href="/.well-known/riz.json">/.well-known/riz.json</a> ·
+      MCP endpoint on any running instance: <b>&lt;host&gt;/_riz/mcp</b>.
+      The gateway is OpenAI-wire-compatible: clients work by changing base_url only.
+    </div>
+  </div>
+  <div class="foot-base">
+    <div class="foot-base-in">
+      <span>© 2026 · built by <a href="https://linkedin.com/in/ship247" style="text-decoration:underline dotted">Chris Rizzuto</a> · chris@riz.dev</span>
+      <span>every claim on this site maps to a passing test</span>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
