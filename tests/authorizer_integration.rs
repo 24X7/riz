@@ -185,6 +185,7 @@ async fn request_authorizer_allows_valid_token() {
             cpu_time_secs: None,
             allowed_paths: None,
             mcp: None,
+            capabilities: Default::default(),
         },
     );
     functions.insert(
@@ -208,6 +209,7 @@ async fn request_authorizer_allows_valid_token() {
             cpu_time_secs: None,
             allowed_paths: None,
             mcp: None,
+            capabilities: Default::default(),
         },
     );
 
@@ -284,6 +286,7 @@ async fn request_authorizer_rejects_invalid_token() {
             cpu_time_secs: None,
             allowed_paths: None,
             mcp: None,
+            capabilities: Default::default(),
         },
     );
     functions.insert(
@@ -307,6 +310,7 @@ async fn request_authorizer_rejects_invalid_token() {
             cpu_time_secs: None,
             allowed_paths: None,
             mcp: None,
+            capabilities: Default::default(),
         },
     );
 
@@ -381,6 +385,7 @@ async fn authorizer_none_opt_out_allows_any_request() {
             cpu_time_secs: None,
             allowed_paths: None,
             mcp: None,
+            capabilities: Default::default(),
         },
     );
 

@@ -65,6 +65,7 @@ fn make_function_config(handler: PathBuf) -> FunctionConfig {
         cpu_time_secs: None,
         allowed_paths: None,
         mcp: None,
+        capabilities: Default::default(),
     }
 }
 

@@ -238,6 +238,7 @@ mod tests {
             cpu_time_secs: None,
             allowed_paths: None,
             mcp: None,
+            capabilities: Default::default(),
         };
         FunctionState::user("api", c, "$default", 0)
     }

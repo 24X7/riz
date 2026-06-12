@@ -159,7 +159,103 @@ pub struct Config {
     /// "function" vocabulary); internal field is plural.
     #[serde(default, rename = "function")]
     pub functions: IndexMap<String, FunctionConfig>,
+    /// Named external resources for the WASM capability broker
+    /// (`[resources.pg.<name>]`). Credentials live HERE (host-side, via env
+    /// var names) — never in a function block, never across the WASI
+    /// boundary. Functions reference resources by name in
+    /// `[function.<fn>.capabilities.<grant>]`.
+    #[serde(default)]
+    pub resources: ResourcesConfig,
 }
+
+/// `[resources]` — named backends the broker may reach on behalf of granted
+/// functions. Declared once; referenced by `capabilities` grants.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ResourcesConfig {
+    /// `[resources.pg.<name>]` — Postgres-wire backends. One config row
+    /// covers Neon, Supabase, RDS, or any self-hosted PG: only the DSN
+    /// differs.
+    #[serde(default)]
+    pub pg: IndexMap<String, PgResourceConfig>,
+}
+
+/// One named Postgres backend.
+// dead_code: consumed by the broker (lib target + tests) today; the bin
+// target wires it into the __wasm-host in broker v1 Phase B, at which point
+// this allow comes off.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+pub struct PgResourceConfig {
+    /// Env var holding the connection string (read host-side at spawn; the
+    /// DSN itself never appears in config or guest memory).
+    pub dsn_env: String,
+    /// Server-side statement timeout applied to brokered queries.
+    #[serde(default = "default_pg_statement_timeout_ms")]
+    pub statement_timeout_ms: u64,
+}
+
+fn default_pg_statement_timeout_ms() -> u64 {
+    2_000
+}
+
+/// `[function.<fn>.capabilities.<grant>]` — one capability grant. The grant
+/// NAME (the toml key) is what the guest passes to broker verbs; it is an
+/// opaque handle, never a DSN or credential. Deny-by-default: a function
+/// with no capabilities block has zero brokered access.
+// dead_code: limit fields are read by the broker dispatcher (lib target +
+// tests); the bin target consumes them via the __wasm-host wiring in broker
+// v1 Phase B, at which point this allow comes off.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+pub struct CapabilityGrant {
+    /// Capability class. v1: `"pg"` only.
+    pub r#type: String,
+    /// Named resource this grant points at, as `<type>.<name>`
+    /// (e.g. `"pg.main"` → `[resources.pg.main]`).
+    pub resource: String,
+    /// `"read-only"` (queries run in a read-only transaction) or
+    /// `"read-write"`.
+    #[serde(default = "default_grant_mode")]
+    pub mode: String,
+    /// Concurrency cap: max brokered calls in flight for this grant.
+    /// Excess is rejected (`throttled`), never queued — a guest can't
+    /// stall the host by piling up calls.
+    #[serde(default = "default_grant_max_inflight")]
+    pub max_inflight: u32,
+    /// Token-bucket rate limit (calls/second). Absent → unlimited.
+    #[serde(default)]
+    pub rate_per_sec: Option<u32>,
+    /// Per-call deadline. The host races the backend I/O against this and
+    /// returns `timeout` — the guest invocation is never structurally hung.
+    #[serde(default = "default_grant_call_timeout_ms")]
+    pub call_timeout_ms: u64,
+    /// Request payload cap, enforced before any backend work.
+    #[serde(default = "default_grant_max_request_bytes")]
+    pub max_request_bytes: usize,
+    /// Response payload cap, enforced before bytes are handed to the guest.
+    #[serde(default = "default_grant_max_response_bytes")]
+    pub max_response_bytes: usize,
+}
+
+fn default_grant_mode() -> String {
+    "read-write".to_string()
+}
+fn default_grant_max_inflight() -> u32 {
+    4
+}
+fn default_grant_call_timeout_ms() -> u64 {
+    1_500
+}
+fn default_grant_max_request_bytes() -> usize {
+    64 * 1024
+}
+fn default_grant_max_response_bytes() -> usize {
+    1024 * 1024
+}
+
+/// Capability classes the broker understands. v1 is Postgres-wire only —
+/// the keystone that covers Neon, Supabase, and any PG with zero new code.
+pub const CAPABILITY_TYPES: &[&str] = &["pg"];
 
 /// Telemetry / observability config (`[telemetry]`).
 ///
@@ -363,6 +459,12 @@ pub struct FunctionConfig {
     /// envelope schema (back-compat).
     #[serde(default)]
     pub mcp: Option<McpToolConfig>,
+    /// Broker capability grants — `[function.X.capabilities.<grant>]`.
+    /// Deny-by-default: absent/empty means the function has zero brokered
+    /// access to external resources (today's behavior, unchanged). WASM-only
+    /// in v1 (the broker rides the `__wasm-host` boundary).
+    #[serde(default)]
+    pub capabilities: IndexMap<String, CapabilityGrant>,
 }
 
 /// `[function.X.mcp]` — per-function MCP tool schema tuning.
@@ -722,6 +824,67 @@ impl Config {
                              object (e.g. {{ type = \"object\", ... }})"
                         ));
                     }
+                }
+            }
+            // [function.X.capabilities.<grant>] — broker grants. Deny-by-
+            // default means an invalid grant must be a loud startup error,
+            // never a silently-ignored block.
+            for (gname, grant) in &func.capabilities {
+                if !matches!(func.runtime, RuntimeKind::Wasm) {
+                    return Err(format!(
+                        "function '{name}' grants capability '{gname}' but runtime is \
+                         '{}' — broker capabilities are WASM-only in v1 (the broker \
+                         rides the __wasm-host sandbox boundary)",
+                        func.runtime.as_str()
+                    ));
+                }
+                if !CAPABILITY_TYPES.contains(&grant.r#type.as_str()) {
+                    return Err(format!(
+                        "function '{name}' capability '{gname}' has type = \"{}\" — \
+                         must be one of {CAPABILITY_TYPES:?}",
+                        grant.r#type
+                    ));
+                }
+                let Some((rtype, rname)) = grant.resource.split_once('.') else {
+                    return Err(format!(
+                        "function '{name}' capability '{gname}' resource = \"{}\" — \
+                         must be \"<type>.<name>\" (e.g. \"pg.main\")",
+                        grant.resource
+                    ));
+                };
+                if rtype != grant.r#type {
+                    return Err(format!(
+                        "function '{name}' capability '{gname}': resource \"{}\" does not \
+                         match type \"{}\"",
+                        grant.resource, grant.r#type
+                    ));
+                }
+                if rtype == "pg" && !self.resources.pg.contains_key(rname) {
+                    return Err(format!(
+                        "function '{name}' capability '{gname}' references resource \
+                         \"{}\" but no [resources.pg.{rname}] block is declared",
+                        grant.resource
+                    ));
+                }
+                if grant.mode != "read-only" && grant.mode != "read-write" {
+                    return Err(format!(
+                        "function '{name}' capability '{gname}' mode = \"{}\" — must be \
+                         \"read-only\" or \"read-write\"",
+                        grant.mode
+                    ));
+                }
+                if grant.max_inflight == 0 {
+                    return Err(format!(
+                        "function '{name}' capability '{gname}' max_inflight = 0 — every \
+                         call would be throttled; must be at least 1"
+                    ));
+                }
+                if grant.call_timeout_ms == 0 || grant.call_timeout_ms > func.timeout_ms {
+                    return Err(format!(
+                        "function '{name}' capability '{gname}' call_timeout_ms = {} — must \
+                         be 1..={} (the function's timeout_ms)",
+                        grant.call_timeout_ms, func.timeout_ms
+                    ));
                 }
             }
         }
@@ -1111,6 +1274,7 @@ handler = "./h.ts"
             cpu_time_secs: None,
             allowed_paths: None,
             mcp: None,
+            capabilities: Default::default(),
         }
     }
 

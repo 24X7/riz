@@ -658,6 +658,7 @@ mod riz_state_tests {
             cpu_time_secs: None,
             allowed_paths: None,
             mcp: None,
+            capabilities: Default::default(),
         }
     }
 

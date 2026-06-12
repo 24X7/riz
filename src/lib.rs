@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod broker;
 pub mod cache;
 pub mod config;
 pub mod cors;

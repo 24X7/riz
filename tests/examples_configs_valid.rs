@@ -38,6 +38,7 @@ const KNOWN_TOP_LEVEL: &[&str] = &[
     "cors",
     "gateway",
     "function",
+    "resources",
 ];
 
 #[test]
