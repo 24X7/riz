@@ -67,6 +67,8 @@ async fn make_state() -> Arc<riz::state::AppState> {
         allowed_paths: None,
         mcp: None,
         capabilities: Default::default(),
+        guard_in: None,
+        guard_out: None,
     };
     riz_state
         .register(riz::state::FunctionState::user("echo", cfg, "$default", 0))

@@ -1,4 +1,5 @@
 pub mod bun;
+pub mod guard;
 pub mod liveness;
 pub mod node;
 pub mod pool;
@@ -124,6 +125,13 @@ pub struct HostStats {
 }
 
 impl ProcessManager {
+    /// The shared function-state registry (metrics/health counters). Used by
+    /// dispatch-side callers (e.g. guard timing) that record against pool
+    /// names without holding their own RizState handle.
+    pub fn riz_state(&self) -> &Arc<RizState> {
+        &self.riz_state
+    }
+
     pub fn new(riz_state: Arc<RizState>) -> Self {
         Self {
             pools: RwLock::new(HashMap::new()),
@@ -143,31 +151,71 @@ impl ProcessManager {
     ) -> anyhow::Result<()> {
         let mut pools = self.pools.write().await;
         for (name, cfg) in functions {
-            let pool = Arc::new(RoutePool {
-                name: name.clone(),
-                config: cfg.clone(),
-                handles: RwLock::new(Vec::new()),
-                semaphore: Arc::new(Semaphore::new(cfg.concurrency)),
-                restart_count: AtomicU32::new(0),
-                consecutive_crashes: AtomicU32::new(0),
-                healthy: AtomicBool::new(true),
-                runtime_registry: registry.clone(),
-                log_tx: log_tx.clone(),
-                riz_state: self.riz_state.clone(),
-            });
-            let mut handle_vec = pool.handles.write().await;
-            for _ in 0..cfg.concurrency {
-                let handle = spawn_with_cold_start_record(&pool, name)
+            Self::build_pool_into(
+                &mut pools,
+                name,
+                cfg,
+                registry,
+                &log_tx,
+                &self.riz_state,
+            )
+            .await?;
+            // WASM guards ride the same pool machinery — spawned as sibling
+            // pools so they get liveness, respawn, and kill_on_drop for free.
+            // A guard that can't spawn is a STARTUP error: a configured
+            // policy must never be silently absent.
+            if let Some(guard) = &cfg.guard_in {
+                let gname = format!("{name}{}", guard::GUARD_IN_SUFFIX);
+                let gcfg = guard::guard_pool_config(guard, cfg);
+                Self::build_pool_into(&mut pools, &gname, &gcfg, registry, &log_tx, &self.riz_state)
                     .await
-                    .with_context(|| format!("failed to spawn lambda for {name}"))?;
-                let handle_arc = Arc::new(Mutex::new(handle));
-                let pid = handle_arc.lock().await.pid;
-                spawn_liveness_watcher(pid, handle_arc.clone(), pool.clone(), name.clone());
-                handle_vec.push(handle_arc);
+                    .with_context(|| format!("failed to spawn guard_in for {name}"))?;
             }
-            drop(handle_vec);
-            pools.insert(name.clone(), pool);
+            if let Some(guard) = &cfg.guard_out {
+                let gname = format!("{name}{}", guard::GUARD_OUT_SUFFIX);
+                let gcfg = guard::guard_pool_config(guard, cfg);
+                Self::build_pool_into(&mut pools, &gname, &gcfg, registry, &log_tx, &self.riz_state)
+                    .await
+                    .with_context(|| format!("failed to spawn guard_out for {name}"))?;
+            }
         }
+        Ok(())
+    }
+
+    /// Construct one pool (handles + liveness watchers) and insert it into
+    /// the map under `name`. Shared by handler pools and guard pools.
+    async fn build_pool_into(
+        pools: &mut std::collections::HashMap<String, Arc<RoutePool>>,
+        name: &str,
+        cfg: &FunctionConfig,
+        registry: &Arc<RuntimeRegistry>,
+        log_tx: &mpsc::Sender<LogEntry>,
+        riz_state: &Arc<RizState>,
+    ) -> anyhow::Result<()> {
+        let pool = Arc::new(RoutePool {
+            name: name.to_string(),
+            config: cfg.clone(),
+            handles: RwLock::new(Vec::new()),
+            semaphore: Arc::new(Semaphore::new(cfg.concurrency)),
+            restart_count: AtomicU32::new(0),
+            consecutive_crashes: AtomicU32::new(0),
+            healthy: AtomicBool::new(true),
+            runtime_registry: registry.clone(),
+            log_tx: log_tx.clone(),
+            riz_state: riz_state.clone(),
+        });
+        let mut handle_vec = pool.handles.write().await;
+        for _ in 0..cfg.concurrency {
+            let handle = spawn_with_cold_start_record(&pool, name)
+                .await
+                .with_context(|| format!("failed to spawn lambda for {name}"))?;
+            let handle_arc = Arc::new(Mutex::new(handle));
+            let pid = handle_arc.lock().await.pid;
+            spawn_liveness_watcher(pid, handle_arc.clone(), pool.clone(), name.to_string());
+            handle_vec.push(handle_arc);
+        }
+        drop(handle_vec);
+        pools.insert(name.to_string(), pool);
         Ok(())
     }
 

@@ -259,6 +259,10 @@ pub enum FunctionKind {
     #[default]
     User,
     System,
+    /// A WASM guard pool (`{fn}::guard_in` / `{fn}::guard_out`). Visible in
+    /// /_riz/health and /_riz/registry (guard timing is an acceptance
+    /// criterion), but never an MCP tool and not a routable function.
+    Guard,
 }
 
 /// Per-function runtime state. One entry per FUNCTION (not per route) —
@@ -403,6 +407,15 @@ impl FunctionState {
             last_invoked: std::sync::Mutex::new(None),
             latency: std::sync::Mutex::new(LatencyWindow::new()),
         }
+    }
+
+    /// Guard pools: like system entries (no config, no cache) but with the
+    /// Guard kind so health/registry surface their timing.
+    pub fn guard(name: impl Into<String>, stage: impl Into<String>) -> Self {
+        let mut s = Self::system(name, vec![], stage);
+        s.kind = FunctionKind::Guard;
+        *s.runtime_tag.lock().unwrap() = "wasm-guard".to_string();
+        s
     }
 
     /// Construct a system-function state (e.g. `_riz_health`).
@@ -659,6 +672,8 @@ mod riz_state_tests {
             allowed_paths: None,
             mcp: None,
             capabilities: Default::default(),
+            guard_in: None,
+            guard_out: None,
         }
     }
 

@@ -97,6 +97,7 @@ impl LambdaHandler for RegistryHandler {
             };
             let kind = match f.kind {
                 FunctionKind::User => "user",
+                FunctionKind::Guard => "guard",
                 FunctionKind::System => "system",
             };
             out.push(RegistryFunction {
@@ -163,6 +164,8 @@ mod tests {
             allowed_paths: None,
             mcp: None,
             capabilities: Default::default(),
+            guard_in: None,
+            guard_out: None,
         };
         FunctionState::user("api", c, "$default", 0)
     }

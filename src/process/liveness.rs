@@ -122,6 +122,8 @@ mod tests {
             allowed_paths: None,
             mcp: None,
             capabilities: Default::default(),
+            guard_in: None,
+            guard_out: None,
         };
         let registry = Arc::new(crate::process::runtime::RuntimeRegistry::new().expect("registry"));
         let (log_tx, _log_rx) = mpsc::channel::<crate::state::LogEntry>(16);

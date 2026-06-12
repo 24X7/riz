@@ -367,6 +367,8 @@ fn validate_rejects_jwt_authorizer_with_wrong_type() {
                     allowed_paths: None,
                     mcp: None,
                     capabilities: Default::default(),
+                    guard_in: None,
+                    guard_out: None,
                 },
             );
             m

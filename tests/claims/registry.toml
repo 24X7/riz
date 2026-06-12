@@ -249,11 +249,16 @@ note = "Softened from the unverifiable 'All 20 … each with a regression-gate t
 # ─────────────────────────── Roadmap (coming soon) ──────────────────────────
 
 [[claim]]
-id = "roadmap-wasm-guards"
-page_text = "Pre-invoke guards"
-status = "coming-soon"
-data_claim = "roadmap-wasm-guards"
-roadmap = "Phase 2 — WASM guard layer (guard_in / guard_out)"
+id = "wasm-guards"
+page_text = "the same module wraps Bun, Node.js, Python, Rust, and WASM handlers"
+status = "proven"
+proof = "one_wasm_guard_protects_every_runtime"
+
+[[claim]]
+id = "wasm-guards-fail-closed"
+page_text = "a policy that can't run never silently allows traffic"
+status = "proven"
+proof = "one_wasm_guard_protects_every_runtime"
 
 [[claim]]
 id = "roadmap-gateway-deepened"

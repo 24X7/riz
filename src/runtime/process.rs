@@ -19,6 +19,11 @@ pub struct ProcessHandler {
     /// Matches AWS API GW v2's `stageVariables` field — per-deployment-stage
     /// config the handler reads at runtime.
     stage_variables: std::collections::HashMap<String, String>,
+    /// Pool name of the pre-invoke WASM guard, when configured
+    /// (`{name}::guard_in`). See `process::guard` for the verdict contract.
+    guard_in_pool: Option<String>,
+    /// Pool name of the post-invoke WASM guard (`{name}::guard_out`).
+    guard_out_pool: Option<String>,
     process_manager: Arc<ProcessManager>,
 }
 
@@ -42,7 +47,57 @@ impl ProcessHandler {
             timeout_ms: cfg.timeout_ms,
             integration_timeout_ms: cfg.integration_timeout_ms,
             stage_variables: cfg.stage_variables.clone(),
+            guard_in_pool: cfg
+                .guard_in
+                .as_ref()
+                .map(|_| format!("{name}{}", crate::process::guard::GUARD_IN_SUFFIX)),
+            guard_out_pool: cfg
+                .guard_out
+                .as_ref()
+                .map(|_| format!("{name}{}", crate::process::guard::GUARD_OUT_SUFFIX)),
             process_manager,
+        }
+    }
+
+    /// Run a guard pool against a JSON payload and interpret the verdict.
+    /// EVERY failure path (pool error, unhealthy pool, garbage verdict,
+    /// unknown action) fails CLOSED — a configured policy that can't run
+    /// must never silently allow traffic.
+    async fn run_guard(
+        &self,
+        pool_name: &str,
+        payload: &serde_json::Value,
+    ) -> Result<crate::process::guard::GuardVerdict, HandlerError> {
+        use crate::process::guard::{GuardVerdict, GUARD_TIMEOUT_MS};
+        let started = std::time::Instant::now();
+        let verdict: Result<GuardVerdict, PoolError> = self
+            .process_manager
+            .invoke_generic(pool_name, payload, GUARD_TIMEOUT_MS)
+            .await;
+        let ok = matches!(
+            &verdict,
+            Ok(v) if v.action == "allow" || v.action == "deny"
+        );
+        // Guard timing surfaces in /_riz/health under the guard pool name
+        // (no-op unless the name is registered, which main.rs does).
+        self.process_manager
+            .riz_state()
+            .record_invocation(
+                pool_name,
+                started.elapsed().as_secs_f64() * 1000.0,
+                ok,
+                false,
+            )
+            .await;
+        match verdict {
+            Ok(v) if v.action == "allow" || v.action == "deny" => Ok(v),
+            Ok(v) => Err(HandlerError::Process(format!(
+                "guard '{pool_name}' verdict not understood (action={:?}) — failing closed",
+                v.action
+            ))),
+            Err(e) => Err(HandlerError::Process(format!(
+                "guard '{pool_name}' failed ({e}) — failing closed"
+            ))),
         }
     }
 
@@ -70,6 +125,41 @@ impl LambdaHandler for ProcessHandler {
             event.stage_variables.insert(k.clone(), v.clone());
         }
 
+        // ── Pre-invoke WASM guard (v1 roadmap #3) ────────────────────────
+        // The guard sees the event before the handler. allow → proceed
+        // (optionally with a mutated event); deny → answer with the guard's
+        // status without ever invoking the handler. Failures fail closed
+        // (run_guard). One guard wraps every runtime alike.
+        if let Some(guard_pool) = &self.guard_in_pool {
+            let payload = serde_json::to_value(&event)
+                .map_err(|e| HandlerError::Internal(format!("event serialize: {e}")))?;
+            let verdict = self.run_guard(guard_pool, &payload).await?;
+            match verdict.action.as_str() {
+                "allow" => {
+                    if let Some(mutated) = verdict.event {
+                        event = serde_json::from_value(mutated).map_err(|e| {
+                            HandlerError::Process(format!(
+                                "guard '{guard_pool}' returned an invalid mutated event \
+                                 ({e}) — failing closed"
+                            ))
+                        })?;
+                    }
+                }
+                "deny" => {
+                    let status = verdict.status_code.unwrap_or(403);
+                    let body = verdict
+                        .body
+                        .unwrap_or_else(|| r#"{"error":"rejected by guard"}"#.to_string());
+                    return Ok(crate::runtime::response::text_response(
+                        status,
+                        "application/json",
+                        body,
+                    ));
+                }
+                _ => unreachable!("run_guard only passes allow/deny through"),
+            }
+        }
+
         // Two timeouts here, matching AWS:
         // - integration_timeout_ms: wraps the whole call. If exceeded, we
         //   return 504 to the client without waiting for the handler.
@@ -84,26 +174,64 @@ impl LambdaHandler for ProcessHandler {
         )
         .await;
 
-        match outcome {
-            Ok(Ok(resp)) => Ok(resp),
-            Ok(Err(e)) => match e {
-                PoolError::Timeout(_, ms) => Err(HandlerError::Timeout(ms)),
-                PoolError::SemaphoreExhausted(_) => {
-                    Err(HandlerError::Overloaded(self.timeout_ms as usize))
+        let mut resp = match outcome {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(e)) => {
+                return match e {
+                    PoolError::Timeout(_, ms) => Err(HandlerError::Timeout(ms)),
+                    PoolError::SemaphoreExhausted(_) => {
+                        Err(HandlerError::Overloaded(self.timeout_ms as usize))
+                    }
+                    PoolError::SemaphoreClosed(name) => {
+                        Err(HandlerError::Internal(format!("pool closed: {name}")))
+                    }
+                    PoolError::NoPool(name) => Err(HandlerError::Internal(format!(
+                        "function not configured: {name}"
+                    ))),
+                    PoolError::InvalidResponse(_, detail) => {
+                        Err(HandlerError::Process(format!("bad gateway: {detail}")))
+                    }
+                    PoolError::Other(_, err) => Err(HandlerError::Process(err.to_string())),
                 }
-                PoolError::SemaphoreClosed(name) => {
-                    Err(HandlerError::Internal(format!("pool closed: {name}")))
+            }
+            Err(_elapsed) => return Err(HandlerError::Timeout(self.integration_timeout_ms)),
+        };
+
+        // ── Post-invoke WASM guard (v1 roadmap #4) ───────────────────────
+        // The guard sees the handler's response envelope before bytes leave:
+        // allow passes through, `response` replaces it (redaction / shape
+        // enforcement), deny swaps in status+body. Infra errors above bypass
+        // this — guard_out polices handler RESPONSES, not host failures.
+        if let Some(guard_pool) = &self.guard_out_pool {
+            let payload = serde_json::to_value(&resp)
+                .map_err(|e| HandlerError::Internal(format!("response serialize: {e}")))?;
+            let verdict = self.run_guard(guard_pool, &payload).await?;
+            match verdict.action.as_str() {
+                "allow" => {
+                    if let Some(replacement) = verdict.response {
+                        resp = serde_json::from_value(replacement).map_err(|e| {
+                            HandlerError::Process(format!(
+                                "guard '{guard_pool}' returned an invalid replacement \
+                                 response ({e}) — failing closed"
+                            ))
+                        })?;
+                    }
                 }
-                PoolError::NoPool(name) => Err(HandlerError::Internal(format!(
-                    "function not configured: {name}"
-                ))),
-                PoolError::InvalidResponse(_, detail) => {
-                    Err(HandlerError::Process(format!("bad gateway: {detail}")))
+                "deny" => {
+                    let status = verdict.status_code.unwrap_or(403);
+                    let body = verdict
+                        .body
+                        .unwrap_or_else(|| r#"{"error":"rejected by guard"}"#.to_string());
+                    return Ok(crate::runtime::response::text_response(
+                        status,
+                        "application/json",
+                        body,
+                    ));
                 }
-                PoolError::Other(_, err) => Err(HandlerError::Process(err.to_string())),
-            },
-            Err(_elapsed) => Err(HandlerError::Timeout(self.integration_timeout_ms)),
+                _ => unreachable!("run_guard only passes allow/deny through"),
+            }
         }
+        Ok(resp)
     }
 }
 
@@ -129,6 +257,8 @@ mod tests {
             allowed_paths: None,
             mcp: None,
             capabilities: Default::default(),
+            guard_in: None,
+            guard_out: None,
         }
     }
 

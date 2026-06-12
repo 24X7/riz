@@ -152,6 +152,8 @@ async fn oversized_body_returns_413_for_routed_request() {
             allowed_paths: None,
             mcp: None,
             capabilities: Default::default(),
+            guard_in: None,
+            guard_out: None,
         },
     );
     let state = make_state_with_functions(functions);
@@ -206,6 +208,8 @@ async fn auth_bypass_skips_cache() {
             allowed_paths: None,
             mcp: None,
             capabilities: Default::default(),
+            guard_in: None,
+            guard_out: None,
         },
     );
     let state = make_state_with_functions(functions);
@@ -327,6 +331,8 @@ async fn gateway_timeout_returns_504_for_routed_request() {
             allowed_paths: None,
             mcp: None,
             capabilities: Default::default(),
+            guard_in: None,
+            guard_out: None,
         },
     );
     let state = make_state_with_functions(functions.clone());

@@ -1161,6 +1161,24 @@ async fn async_main() -> anyhow::Result<()> {
                 default_ttl,
             ))
             .await;
+        // Guard pools get their own (system-kind) entries so guard timing
+        // surfaces in /_riz/health and metrics without becoming MCP tools.
+        if cfg.guard_in.is_some() {
+            riz_state
+                .register(state::FunctionState::guard(
+                    format!("{name}{}", process::guard::GUARD_IN_SUFFIX),
+                    &stage,
+                ))
+                .await;
+        }
+        if cfg.guard_out.is_some() {
+            riz_state
+                .register(state::FunctionState::guard(
+                    format!("{name}{}", process::guard::GUARD_OUT_SUFFIX),
+                    &stage,
+                ))
+                .await;
+        }
     }
 
     let process_manager = Arc::new(process::ProcessManager::new(riz_state.clone()));

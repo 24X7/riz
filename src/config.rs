@@ -457,6 +457,19 @@ pub struct FunctionConfig {
     /// in v1 (the broker rides the `__wasm-host` boundary).
     #[serde(default)]
     pub capabilities: IndexMap<String, CapabilityGrant>,
+    /// Pre-invoke WASM guard — `guard_in = "./guards/validate.wasm"`.
+    /// A `wasm32-wasip1` module that sees every incoming event BEFORE the
+    /// handler and answers a verdict: allow (optionally with a mutated
+    /// event) or deny (status + body, handler never runs). One guard
+    /// protects every runtime alike — the guard wraps a Bun, Node, Python,
+    /// Rust, or WASM handler identically. Guard failures fail CLOSED.
+    #[serde(default)]
+    pub guard_in: Option<PathBuf>,
+    /// Post-invoke WASM guard — `guard_out = "./guards/redact.wasm"`.
+    /// Runs on the response envelope before bytes leave: allow, mutate
+    /// (e.g. redact PII), or replace. Same verdict contract as `guard_in`.
+    #[serde(default)]
+    pub guard_out: Option<PathBuf>,
 }
 
 /// `[function.X.mcp]` — per-function MCP tool schema tuning.
@@ -1267,6 +1280,8 @@ handler = "./h.ts"
             allowed_paths: None,
             mcp: None,
             capabilities: Default::default(),
+            guard_in: None,
+            guard_out: None,
         }
     }
 

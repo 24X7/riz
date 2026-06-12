@@ -1,0 +1,15 @@
+# Independent workspace root — built for wasm32-wasip1, not part of the host workspace.
+[workspace]
+
+[package]
+name = "guard-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "WASM guard fixture: pre-invoke (deny/mutate/allow) + post-invoke (redact/deny) verdicts for the guard e2e tests"
+
+[dependencies]
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+strip = true

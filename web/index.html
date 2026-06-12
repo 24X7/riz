@@ -1653,31 +1653,31 @@
 
       <!-- Scene 2 — WASM guard pipeline: real verdicts visible -->
       <div class="scene" data-scene="wasm">
-        <div class="scene-hd">WASM sandbox · safety layer <span class="tag live">live · v0.1</span></div>
+        <div class="scene-hd">WASM guards · safety layer <span class="tag live">live · v0.1</span></div>
         <div class="scene-ttl">Untrusted code, <em>contained</em>.</div>
         <div class="scene-body">
           <div class="pipe">
             <div class="pipe-step req">incoming request</div>
             <div class="pipe-arr">▼</div>
             <div class="pipe-step guard">
-              <div class="gh"><b>WASI capability check</b><span class="lbl">deny-by-default</span></div>
-              <div class="li">filesystem — no grant · denied</div>
-              <div class="li">network — no grant · denied</div>
-              <div class="li">allowed: compute + stdio only</div>
+              <div class="gh"><b>guard_in.wasm</b><span class="lbl">pre-invoke · your policy</span></div>
+              <div class="li">event screened before the handler</div>
+              <div class="li">deny → handler never runs</div>
+              <div class="li">or mutate → scrubbed payload forward</div>
             </div>
             <div class="pipe-arr">▼</div>
-            <div class="pipe-step handler">orders.wasm runs<small>validates + prices the order · sub-ms spawn</small></div>
+            <div class="pipe-step handler">your handler runs<small>bun · node · python · rust · wasm — same guard for all five</small></div>
             <div class="pipe-arr">▼</div>
             <div class="pipe-step guard">
-              <div class="gh"><b>host safety profile</b><span class="lbl">always-on</span></div>
-              <div class="li">rlimits applied (mem · fds · procs)</div>
-              <div class="li">dies-with-host (PDEATHSIG)</div>
-              <div class="li">no privilege escalation</div>
+              <div class="gh"><b>guard_out.wasm</b><span class="lbl">post-invoke · your policy</span></div>
+              <div class="li">PII redacted (1 ssn → ***-**-****)</div>
+              <div class="li">response shape enforced</div>
+              <div class="li">guard failure? fails closed</div>
             </div>
             <div class="pipe-arr">▼</div>
             <div class="pipe-step res">response delivered</div>
           </div>
-          <div class="scene-note">// real app logic under WASI · capabilities granted explicitly per function · guards (pre/post-invoke) on the roadmap</div>
+          <div class="scene-note">// one .wasm guard wraps every runtime · WASI sandbox + host safety profile beneath · capability broker for granted Postgres access</div>
         </div>
       </div>
 
@@ -2040,6 +2040,17 @@ $ claude mcp add riz-local \
           </article>
 
           <article class="bucket">
+            <h4>WASM Guards</h4>
+            <ul>
+              <li>Pre-invoke guards (<code>guard_in</code>) — a <code>.wasm</code> policy sees every event before the handler: allow, mutate (scrubbed payload), or deny with your status — handler never runs on deny</li>
+              <li>Post-invoke guards (<code>guard_out</code>) — response sweep before bytes leave: redact PII, replace the envelope, or block it</li>
+              <li>One <code>.wasm</code> guard protects every runtime alike — the same module wraps Bun, Node.js, Python, Rust, and WASM handlers</li>
+              <li>Guard failures fail closed — a policy that can't run never silently allows traffic</li>
+              <li>Per-guard timing in <code>/_riz/health</code> (<code>fn::guard_in</code> entries)</li>
+            </ul>
+          </article>
+
+          <article class="bucket">
             <h4>Proof</h4>
             <ul>
               <li>800+ tests (<code>cargo nextest run</code>) — cross-runtime parity matrix on every HTTP capability</li>
@@ -2053,16 +2064,6 @@ $ claude mcp add riz-local \
       <div class="status-col">
         <h3>Roadmap</h3>
         <p class="h3-sub">v0.2 — the AI-substrate pillars</p>
-
-          <article class="bucket coming-soon" data-claim="roadmap-wasm-guards">
-            <h4>WASM Guards</h4>
-            <ul>
-              <li>Pre-invoke guards (<code>guard_in</code>) — validate schemas, detect prompt injection, enforce rate limits before the handler runs</li>
-              <li>Post-invoke guards (<code>guard_out</code>) — redact PII, scrub secrets, enforce response shape before bytes leave</li>
-              <li>One <code>.wasm</code> guard protects every runtime alike — language-agnostic safety layer atop the shipped WASI sandbox</li>
-            </ul>
-            <span class="ribbon">coming soon</span>
-          </article>
 
           <article class="bucket coming-soon" data-claim="roadmap-gateway-deepened">
             <h4>Gateway, deepened</h4>

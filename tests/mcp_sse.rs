@@ -35,6 +35,8 @@ fn base_cfg(routes: Vec<(&str, &str)>) -> FunctionConfig {
         allowed_paths: None,
         mcp: None,
         capabilities: Default::default(),
+        guard_in: None,
+        guard_out: None,
     }
 }
 
