@@ -5,7 +5,7 @@
 # Or:       curl -fsSL https://riz.dev/install | sh -s -- --version v0.1.0
 #
 # Source:   https://github.com/24X7/riz/blob/main/web/install
-# License:  MIT (same as riz)
+# License:  Apache-2.0 (same as riz)
 #
 # Release process: docs/release.md. Trigger is `git tag v0.X.Y && git push --tags`;
 # cargo-dist + GitHub Actions builds + uploads tarballs for all 4 targets. Until

@@ -2,13 +2,28 @@
 //! cumulative usage ledger the gateway exposes for AI-FinOps.
 //!
 //! Prices are illustrative USD per 1M tokens (input, output); refresh as
-//! providers change them. Unknown models price at zero. The `mock` provider
-//! carries a nominal price so cost/budget are demonstrable with no real API.
+//! providers change them. The `mock` provider carries a nominal price so
+//! cost/budget are demonstrable with no real API.
+//!
+//! Budget caps FAIL CLOSED: a model the table doesn't know is priced at the
+//! table's most expensive tier, not zero — otherwise a new model name (or a
+//! typo'd route) silently bypasses `[gateway] budget_usd` entirely. Models
+//! routed through the local `ollama/` provider are the explicit exception:
+//! they are known-free, not unknown.
 
 use serde::Serialize;
 
+/// Conservative fallback for models the table doesn't know: the most
+/// expensive tier listed below. Overcounting an unknown model throttles a
+/// budget early; undercounting (the old zero default) disables the cap.
+const UNKNOWN_MODEL_PRICE: (f64, f64) = (15.00, 75.00);
+
 /// USD per 1M tokens, as (input, output).
 fn price_per_million(model: &str) -> (f64, f64) {
+    // Local Ollama models are genuinely free — no metered upstream.
+    if model.starts_with("ollama/") {
+        return (0.0, 0.0);
+    }
     // Route forms like "openai/gpt-4o" → "gpt-4o".
     let m = model.rsplit('/').next().unwrap_or(model);
     match m {
@@ -21,7 +36,7 @@ fn price_per_million(model: &str) -> (f64, f64) {
         s if s.starts_with("claude-3-haiku") || s.starts_with("claude-haiku") => (0.80, 4.00),
         s if s.starts_with("text-embedding-3-small") => (0.02, 0.0),
         s if s.starts_with("text-embedding-3-large") => (0.13, 0.0),
-        _ => (0.0, 0.0),
+        _ => UNKNOWN_MODEL_PRICE,
     }
 }
 
@@ -45,9 +60,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mock_has_nonzero_price_unknown_is_free() {
+    fn mock_has_nonzero_price() {
         assert!(cost_usd("mock", 1000, 1000) > 0.0);
-        assert_eq!(cost_usd("some-unlisted-model", 1000, 1000), 0.0);
+    }
+
+    #[test]
+    fn unknown_model_fails_closed_at_the_most_expensive_tier() {
+        // A zero price here would let any unlisted model bypass budget_usd.
+        let unknown = cost_usd("some-unlisted-model", 1_000_000, 1_000_000);
+        assert_eq!(unknown, 15.00 + 75.00);
+        // Fail-closed means: at least as expensive as everything in the table.
+        for known in ["gpt-4", "claude-opus-4-8", "gpt-4o-mini"] {
+            assert!(
+                unknown >= cost_usd(known, 1_000_000, 1_000_000),
+                "unknown must price >= {known}"
+            );
+        }
+    }
+
+    #[test]
+    fn local_ollama_models_are_known_free() {
+        assert_eq!(cost_usd("ollama/llama3.2", 1_000_000, 1_000_000), 0.0);
     }
 
     #[test]

@@ -1660,24 +1660,24 @@
             <div class="pipe-step req">incoming request</div>
             <div class="pipe-arr">▼</div>
             <div class="pipe-step guard">
-              <div class="gh"><b>guard.in.wasm</b><span class="lbl">pre-invoke · 0.4ms</span></div>
-              <div class="li">schema match (zod)</div>
-              <div class="li">no prompt injection detected</div>
-              <div class="li">rate-limit 47 / 100 in window</div>
+              <div class="gh"><b>WASI capability check</b><span class="lbl">deny-by-default</span></div>
+              <div class="li">filesystem — no grant · denied</div>
+              <div class="li">network — no grant · denied</div>
+              <div class="li">allowed: compute + stdio only</div>
             </div>
             <div class="pipe-arr">▼</div>
-            <div class="pipe-step handler">your handler runs<small>bun · python · rust · wasm</small></div>
+            <div class="pipe-step handler">orders.wasm runs<small>validates + prices the order · sub-ms spawn</small></div>
             <div class="pipe-arr">▼</div>
             <div class="pipe-step guard">
-              <div class="gh"><b>guard.out.wasm</b><span class="lbl">post-invoke · 0.3ms</span></div>
-              <div class="li">PII redacted (3 emails · 1 ssn)</div>
-              <div class="li">secrets scrubbed (1 token)</div>
-              <div class="li">response shape enforced</div>
+              <div class="gh"><b>host safety profile</b><span class="lbl">always-on</span></div>
+              <div class="li">rlimits applied (mem · fds · procs)</div>
+              <div class="li">dies-with-host (PDEATHSIG)</div>
+              <div class="li">no privilege escalation</div>
             </div>
             <div class="pipe-arr">▼</div>
             <div class="pipe-step res">response delivered</div>
           </div>
-          <div class="scene-note">// WASI capabilities · no fs / net by default · one guard, three runtimes</div>
+          <div class="scene-note">// real app logic under WASI · capabilities granted explicitly per function · guards (pre/post-invoke) on the roadmap</div>
         </div>
       </div>
 
@@ -1688,12 +1688,12 @@
         <div class="scene-body">
           <div class="tier-lbl">your handler</div>
           <div class="chip-row">
-            <div class="chip" style="font-size:.58rem"><span class="rt">bun</span>ctx.invokeModel("claude-sonnet-4-6", prompt)</div>
+            <div class="chip" style="font-size:.58rem"><span class="rt">bun</span>fetch("/_riz/v1/chat/completions", …)</div>
           </div>
 
           <div class="flow-arr">
             <div class="flow-line"></div>
-            <span class="flow-lbl">route + cache + cap</span>
+            <span class="flow-lbl">route + cap + meter</span>
             <div class="flow-line"></div>
           </div>
 
@@ -1702,10 +1702,10 @@
             <div class="gw-col">
               <div class="gw-hub">
                 <div class="gw-hub-ttl">riz gateway</div>
-                <div class="gw-hub-row"><span>budget 24h</span><b>$42.18 / $50</b></div>
-                <div class="gw-hub-row"><span>semantic cache</span><b>47% hit</b></div>
-                <div class="gw-hub-row"><span>fallback</span><b>3 providers</b></div>
-                <div class="gw-hub-row"><span>audit log</span><b>writing</b></div>
+                <div class="gw-hub-row"><span>budget cap</span><b>$42.18 / $50</b></div>
+                <div class="gw-hub-row"><span>cost ledger</span><b>per provider</b></div>
+                <div class="gw-hub-row"><span>fallback chain</span><b>3 providers</b></div>
+                <div class="gw-hub-row"><span>SSE streaming</span><b>live</b></div>
               </div>
             </div>
             <div class="gw-col"></div>
@@ -1721,10 +1721,10 @@
           <div class="chip-row">
             <div class="chip" style="border-color:var(--amber);color:var(--amber)">Anthropic ✓</div>
             <div class="chip">OpenAI</div>
-            <div class="chip">Bedrock</div>
             <div class="chip">Ollama <small style="color:var(--ink4)">local</small></div>
+            <div class="chip">Mock <small style="color:var(--ink4)">CI</small></div>
           </div>
-          <div class="scene-note">// also speaks OpenAI · POST /_riz/v1/chat/completions</div>
+          <div class="scene-note">// any OpenAI client just works · POST /_riz/v1/chat/completions</div>
         </div>
       </div>
 
@@ -1817,7 +1817,7 @@
       <article class="vcard">
         <span class="vtag">live · gateway</span>
         <h3>One LLM gateway, every model</h3>
-        <p>Handlers call <code>ctx.invokeModel(name, prompt)</code> — riz routes across OpenAI, Anthropic, and local Ollama by model prefix, with budget caps, fallback, SSE streaming, embeddings, and per-provider cost telemetry. An OpenAI-compatible endpoint at <code>/_riz/v1/*</code> means existing clients just work.</p>
+        <p>Handlers (and any OpenAI client) just hit <code>/_riz/v1/chat/completions</code> — riz routes across OpenAI, Anthropic, and local Ollama by model prefix, with budget caps, fallback, SSE streaming, embeddings, and per-provider cost telemetry. An OpenAI-compatible endpoint at <code>/_riz/v1/*</code> means existing clients just work.</p>
       </article>
       <article class="vcard">
         <span class="vtag">v0.2 · replay</span>
