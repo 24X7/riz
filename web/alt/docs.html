@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>riz — Documentation: riz.toml, endpoints, CLI, lifecycle</title>
+  <meta name="description" content="Curated riz reference: configuration (functions, routes, MCP schemas, guards, capability broker, gateway, auth), the /_riz/* endpoint surface, CLI commands, and the process lifecycle."/>
+  <!-- agents: this is the curated reference. Field tables below are authoritative for config keys. Machine path: /llms.txt -->
+  <link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt"/>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="alt.css"/>
+</head>
+<body>
+<div class="gridbg"></div>
+
+<nav>
+  <div class="nav-in">
+    <a class="mark" href="index.html">riz<span class="cur">▮</span></a>
+    <div class="nav-links">
+      <a href="agents.html">Agents</a>
+      <a href="sandbox.html">Sandbox</a>
+      <a href="gateway.html">Gateway</a>
+      <a href="compare.html">Compare</a>
+      <a href="start.html">Start</a>
+      <a href="docs.html" class="on">Docs</a>
+      <a href="examples.html">Examples</a>
+    </div>
+    <div class="nav-right">
+      <a class="agent-chip" href="/llms.txt">AGENT? →</a>
+      <a class="gh-btn" href="https://github.com/24X7/riz" target="_blank">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<div class="doc-shell">
+  <aside class="doc-side">
+    <span class="grp">Setup</span>
+    <a href="#install" class="on">Install</a>
+    <a href="#config">riz.toml</a>
+    <span class="grp">Surfaces</span>
+    <a href="#mcp">MCP tools</a>
+    <a href="#guards">Guards</a>
+    <a href="#broker">Capability broker</a>
+    <a href="#gateway">LLM gateway</a>
+    <span class="grp">Operate</span>
+    <a href="#endpoints">Endpoints</a>
+    <a href="#cli">CLI</a>
+    <a href="#lifecycle">Lifecycle</a>
+  </aside>
+
+  <main class="doc-main">
+    <h1>Documentation</h1>
+    <p class="lede">
+      The curated reference — enough to configure and operate riz without reading source.
+      For exhaustive depth, the <a href="https://github.com/24X7/riz" target="_blank" style="color:var(--acid);text-decoration:underline dotted">repository docs</a>
+      and the 900+ tests are the ground truth this page is pinned to.
+    </p>
+
+    <h2 id="install">Install</h2>
+    <p>One static binary for Linux/macOS (x86_64 + aarch64). Runtime dependencies are per-language:
+    Bun for TypeScript, <code>node</code>, <code>python3</code>; Rust handlers are compiled binaries; WASM needs nothing (wasmtime is embedded).</p>
+    <div class="well">
+      <div class="well-hd"><b>shell</b></div>
+      <pre>$ curl -fsSL https://riz.dev/install | sh        <span class="c"># release binary</span>
+$ cargo install --git https://github.com/24X7/riz <span class="c"># from source</span>
+$ riz doctor                                      <span class="c"># pre-flight check</span></pre>
+    </div>
+
+    <h2 id="config">riz.toml</h2>
+    <p>One file declares the fleet. One <code>[function.&lt;name&gt;]</code> block = one warm process pool = N routes,
+    mirroring AWS Lambda + API Gateway v2. Omit <code>routes</code> and the function serves <code>ANY /&lt;name&gt;</code>.</p>
+    <div class="well">
+      <div class="well-hd"><b>riz.toml</b><span>validated by the real config code in CI</span></div>
+      <pre data-riz-toml><span class="k">[server]</span>
+port = <span class="n">3000</span>
+host = <span class="s">"127.0.0.1"</span>
+
+<span class="k">[function.api]</span>
+runtime = <span class="s">"bun"</span>            <span class="c"># bun | node | python | rust | wasm</span>
+handler = <span class="s">"src/index.handler"</span>  <span class="c"># AWS file.export resolution</span>
+timeout_ms = <span class="n">30000</span>         <span class="c"># handler kill + respawn deadline</span>
+concurrency = <span class="n">10</span>           <span class="c"># pool size = max in-flight</span>
+
+<span class="k">[[function.api.routes]]</span>
+path = <span class="s">"/accounts/{id}"</span>    <span class="c"># AWS syntax: {param}, {proxy+}</span>
+method = <span class="s">"GET"</span></pre>
+    </div>
+    <h3>Function fields</h3>
+    <table>
+      <tr><th>key</th><th>default</th><th>what it does</th></tr>
+      <tr><td><code>runtime</code></td><td>—</td><td><code>bun</code> · <code>node</code> · <code>python</code> · <code>rust</code> · <code>wasm</code></td></tr>
+      <tr><td><code>handler</code></td><td>—</td><td>AWS-style <code>file.export</code>; for rust/wasm, a path to the artifact</td></tr>
+      <tr><td><code>timeout_ms</code></td><td>30000</td><td>handler deadline — exceeded = child killed + respawned</td></tr>
+      <tr><td><code>integration_timeout_ms</code></td><td>30000</td><td>gateway wait — exceeded = 504 to the client</td></tr>
+      <tr><td><code>concurrency</code></td><td>1</td><td>worker processes in the pool (≥ 1 enforced)</td></tr>
+      <tr><td><code>memory_mb</code> / <code>cpu_time_secs</code></td><td>off</td><td>opt-in RLIMIT_AS / RLIMIT_CPU caps</td></tr>
+      <tr><td><code>allowed_paths</code></td><td>off</td><td>Linux Landlock filesystem allowlist (WASI preopens for wasm)</td></tr>
+      <tr><td><code>authorizer</code></td><td>off</td><td><code>"fnName"</code> (REQUEST), <code>"none"</code>, or an inline JWT block</td></tr>
+      <tr><td><code>guard_in</code> / <code>guard_out</code></td><td>off</td><td>.wasm policy modules — see <a href="#guards">Guards</a></td></tr>
+      <tr><td><code>capabilities</code></td><td>off</td><td>broker grants (wasm only) — see <a href="#broker">Broker</a></td></tr>
+      <tr><td><code>mcp</code></td><td>off</td><td>tool description / typed query params / body schema — see <a href="#mcp">MCP</a></td></tr>
+    </table>
+
+    <h2 id="mcp">MCP tools</h2>
+    <p>Every function is a tool at <code>/_riz/mcp</code> (JSON-RPC 2.0 over Streamable HTTP, spec <b>2025-11-25</b>,
+    negotiates down to 2024-11-05). Path params are typed + required from the route template automatically.
+    The optional block sharpens the rest:</p>
+    <div class="well">
+      <div class="well-hd"><b>riz.toml</b><span>validated in CI</span></div>
+      <pre data-riz-toml><span class="k">[function.search]</span>
+runtime = <span class="s">"bun"</span>
+handler = <span class="s">"./index.search"</span>
+
+<span class="k">[function.search.mcp]</span>
+description = <span class="s">"Search the catalog."</span>
+
+<span class="k">[function.search.mcp.query.limit]</span>
+type = <span class="s">"integer"</span>      <span class="c"># string | integer | number | boolean</span>
+description = <span class="s">"Max results"</span>
+required = <span class="n">true</span></pre>
+    </div>
+    <ul>
+      <li><b>Validation:</b> missing required params / type mismatches → JSON-RPC <code>-32602</code> naming the parameter.</li>
+      <li><b>Streaming:</b> POST with <code>Accept: text/event-stream</code> → SSE frames; GET opens the server channel; <code>Mcp-Session-Id</code> honored; notification-only POSTs → 202.</li>
+      <li><b>Progress:</b> send <code>params._meta.progressToken</code> on a slow call → spec <code>notifications/progress</code> frames until the result.</li>
+      <li><b>Auth:</b> <code>Authorization: Bearer</code> when a token is configured.</li>
+    </ul>
+
+    <h2 id="guards">Guards</h2>
+    <p>A guard is a <code>wasm32-wasip1</code> module run as a sibling pool. <code>guard_in</code> sees every event before the
+    handler; <code>guard_out</code> sees every response before bytes leave. One module can serve both. <b>Failures fail closed.</b></p>
+    <div class="well">
+      <div class="well-hd"><b>verdict contract</b><span>one JSON line per input</span></div>
+      <pre>{<span class="s">"action"</span>:<span class="s">"allow"</span>}                          <span class="c"># pass through</span>
+{<span class="s">"action"</span>:<span class="s">"allow"</span>, <span class="s">"event"</span>:{…}}            <span class="c"># guard_in: mutated event</span>
+{<span class="s">"action"</span>:<span class="s">"allow"</span>, <span class="s">"response"</span>:{…}}         <span class="c"># guard_out: replaced response</span>
+{<span class="s">"action"</span>:<span class="s">"deny"</span>, <span class="s">"statusCode"</span>:<span class="n">451</span>, <span class="s">"body"</span>:<span class="s">"…"</span>}</pre>
+    </div>
+    <ul>
+      <li>Guard budget is 2s per call, non-configurable — policy must be fast.</li>
+      <li>Per-guard timing appears in <code>/_riz/health</code> as <code>fn::guard_in</code> / <code>fn::guard_out</code> entries.</li>
+      <li>A guard that can't spawn is a <b>startup error</b> — a configured policy is never silently absent.</li>
+    </ul>
+
+    <h2 id="broker">Capability broker</h2>
+    <p>WASM-only in v1. Resources are declared once (credentials host-side via env names); grants reference them per function.
+    The guest calls <code>pg_query(grant, request)</code> via host imports — no sockets, no DSNs in guest memory.</p>
+    <table>
+      <tr><th>grant key</th><th>default</th><th>enforces</th></tr>
+      <tr><td><code>type</code> / <code>resource</code></td><td>—</td><td>v1: <code>"pg"</code> → a declared <code>[resources.pg.&lt;name&gt;]</code></td></tr>
+      <tr><td><code>mode</code></td><td>read-write</td><td><code>read-only</code> runs inside a genuine <code>READ ONLY</code> transaction</td></tr>
+      <tr><td><code>max_inflight</code></td><td>4</td><td>concurrency cap — excess rejected (<code>throttled</code>), never queued</td></tr>
+      <tr><td><code>rate_per_sec</code></td><td>∞</td><td>token-bucket rate limit</td></tr>
+      <tr><td><code>call_timeout_ms</code></td><td>1500</td><td>per-call deadline — a stalled backend is cut, host unaffected</td></tr>
+      <tr><td><code>max_request_bytes</code> / <code>max_response_bytes</code></td><td>64 KiB / 1 MiB</td><td>payload caps both directions</td></tr>
+    </table>
+    <div class="callout"><b>Error codes the guest can match on:</b>
+    <code>denied</code> · <code>throttled</code> · <code>timeout</code> · <code>too_large</code> · <code>bad_request</code> · <code>backend</code> — a closed set, always JSON, never a trap.</div>
+
+    <h2 id="gateway">LLM gateway</h2>
+    <p>Enable with a <code>[gateway]</code> block (see the <a href="gateway.html" style="color:var(--acid);text-decoration:underline dotted">gateway page</a> for a full example).
+    Providers: <code>openai</code>, <code>anthropic</code>, <code>ollama</code>, <code>mock</code>. Routing by model prefix, then <code>default_provider</code>, then the fallback chain.</p>
+    <table>
+      <tr><th>endpoint</th><th>does</th></tr>
+      <tr><td><code>POST /_riz/v1/chat/completions</code></td><td>OpenAI shape; SSE on <code>stream: true</code></td></tr>
+      <tr><td><code>POST /_riz/v1/embeddings</code></td><td>embeddings, same routing</td></tr>
+      <tr><td><code>GET /_riz/v1/models</code></td><td>configured providers/models</td></tr>
+      <tr><td><code>GET /_riz/v1/usage</code></td><td>cumulative cost + tokens per provider</td></tr>
+    </table>
+    <p><code>budget_usd</code> breach → HTTP 412. Unknown models bill at the most expensive tier (the cap fails closed); <code>ollama/*</code> is known-free. All <code>/_riz/v1/*</code> routes are bearer-gated when a token is configured.</p>
+
+    <h2 id="endpoints">Endpoint surface</h2>
+    <table>
+      <tr><th>endpoint</th><th>auth</th><th>does</th></tr>
+      <tr><td><code>GET /health</code> · <code>GET /ready</code></td><td>open</td><td>liveness / readiness probes</td></tr>
+      <tr><td><code>GET /_riz/health</code></td><td>open</td><td>per-function health, percentiles, guard timing</td></tr>
+      <tr><td><code>GET /_riz/metrics</code></td><td>bearer</td><td>Prometheus text format</td></tr>
+      <tr><td><code>GET /_riz/registry</code></td><td>bearer</td><td>function + route inventory</td></tr>
+      <tr><td><code>POST /_riz/mcp</code></td><td>bearer</td><td>MCP JSON-RPC (SSE when negotiated)</td></tr>
+      <tr><td><code>GET /_riz/connections</code> · <code>/_riz/connections/{id}</code></td><td>bearer</td><td>WebSocket @connections management</td></tr>
+      <tr><td><code>/_riz/v1/*</code></td><td>bearer</td><td>the LLM gateway</td></tr>
+      <tr><td><code>POST /deploy</code></td><td><code>deploy_key</code> + CIDR allowlist</td><td>S3 hot-swap with health-check auto-rollback</td></tr>
+      <tr><td><code>POST /cache/invalidate</code></td><td>bearer</td><td>evict cached responses by key or prefix</td></tr>
+    </table>
+    <p>"bearer" = gated when <code>RIZ_AUTH_BEARER_TOKEN</code> / <code>[auth] bearer_token</code> is set (constant-time compare); open for local dev when unset.</p>
+
+    <h2 id="cli">CLI</h2>
+    <table>
+      <tr><th>command</th><th>does</th></tr>
+      <tr><td><code>riz run [--dev]</code></td><td>boot; <code>--dev</code> adds the live Ratatui dashboard</td></tr>
+      <tr><td><code>riz init &lt;template&gt; [dir] [--git]</code></td><td>scaffold (7 templates; <code>--list</code> to see them)</td></tr>
+      <tr><td><code>riz validate</code> · <code>riz routes</code></td><td>config check · route table</td></tr>
+      <tr><td><code>riz deploy &lt;fn&gt; &lt;bucket&gt; &lt;key&gt;</code></td><td>S3 hot-swap from the CLI</td></tr>
+      <tr><td><code>riz mcp inspect [--url] [--bearer]</code></td><td>initialize + tools/list + typed params + SSE probe, one screen</td></tr>
+      <tr><td><code>riz doctor</code></td><td>pre-flight: config, runtimes on PATH, handler files, port, MCP ping</td></tr>
+    </table>
+
+    <h2 id="lifecycle">Lifecycle</h2>
+    <ul>
+      <li><b>Boot:</b> one warm pool per function, <code>concurrency</code> workers each, cold-started once. Every child gets the always-on safety profile (<code>RLIMIT_CORE=0</code>, NOFILE/FSIZE/NPROC caps, dies-with-host, no-new-privs).</li>
+      <li><b>Steady state:</b> no per-request cold start. A child that crashes or hangs is detected by the liveness watcher and respawned; your route stays up.</li>
+      <li><b>Change:</b> edit <code>riz.toml</code> or handler source → debounced hot-reload swaps the pool. <code>POST /deploy</code> pulls from S3, drains in-flight work over 30s, promotes atomically, and auto-rolls-back on a failed health check.</li>
+      <li><b>Shutdown:</b> SIGTERM/SIGINT → graceful 30s drain, then children are killed as a group — nothing orphaned.</li>
+    </ul>
+
+    <div class="cta-row" style="margin-top:3rem">
+      <a class="cta pri" href="start.html">Back to getting started →</a>
+      <a class="cta sec" href="https://github.com/24X7/riz" target="_blank">Source &amp; deep docs ↗</a>
+    </div>
+  </main>
+</div>
+
+<footer>
+  <div class="foot-in">
+    <div class="grp">
+      <span class="foot-mark">riz<span class="cur">▮</span></span>
+      <p class="foot-note">The self-hosted Lambda runtime where every function is an agent's tool. One binary. Apache-2.0.</p>
+    </div>
+    <div class="grp">
+      <h5>Product</h5>
+      <a href="agents.html">Agent layer</a>
+      <a href="sandbox.html">Sandbox &amp; broker</a>
+      <a href="gateway.html">LLM gateway</a>
+      <a href="compare.html">Compare</a>
+    </div>
+    <div class="grp">
+      <h5>Build</h5>
+      <a href="start.html">Getting started</a>
+      <a href="docs.html">Documentation</a>
+      <a href="examples.html">Examples</a>
+      <a href="https://github.com/24X7/riz/releases" target="_blank">Releases ↗</a>
+    </div>
+    <div class="grp">
+      <h5>Project</h5>
+      <a href="https://github.com/24X7/riz" target="_blank">GitHub ↗</a>
+      <a href="https://github.com/24X7/riz/blob/main/tests/claims/registry.toml" target="_blank">Claims registry ↗</a>
+      <a href="https://github.com/24X7/riz/blob/main/LICENSE" target="_blank">Apache-2.0 ↗</a>
+    </div>
+  </div>
+  <div class="agent-block">
+    <div class="inner">
+      <b>// FOR AGENTS</b> — machine-readable surface:
+      <a href="/llms.txt">/llms.txt</a> ·
+      <a href="/.well-known/riz.json">/.well-known/riz.json</a> ·
+      MCP endpoint on any running instance: <b>&lt;host&gt;/_riz/mcp</b>.
+      The config-key tables on this page are authoritative for riz.toml.
+    </div>
+  </div>
+  <div class="foot-base">
+    <div class="foot-base-in">
+      <span>© 2026 · built by <a href="https://linkedin.com/in/ship247" style="text-decoration:underline dotted">Chris Rizzuto</a> · chris@riz.dev</span>
+      <span>every claim on this site maps to a passing test</span>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

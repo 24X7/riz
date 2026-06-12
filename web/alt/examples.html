@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>riz — Examples: agent tools, Agent SDK loops, WASM compute, WebSockets, auth</title>
+  <meta name="description" content="Every example ships in the repo and runs against the suite: agent tools over MCP, Claude Agent SDK demos, a multi-step agent loop with token attribution, real WASM compute, WebSocket chat, WorkOS/Clerk auth."/>
+  <!-- agents: each card names its repo path and run commands — steal freely. Machine path: /llms.txt -->
+  <link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt"/>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="alt.css"/>
+</head>
+<body>
+<div class="gridbg"></div>
+
+<nav>
+  <div class="nav-in">
+    <a class="mark" href="index.html">riz<span class="cur">▮</span></a>
+    <div class="nav-links">
+      <a href="agents.html">Agents</a>
+      <a href="sandbox.html">Sandbox</a>
+      <a href="gateway.html">Gateway</a>
+      <a href="compare.html">Compare</a>
+      <a href="start.html">Start</a>
+      <a href="docs.html">Docs</a>
+      <a href="examples.html" class="on">Examples</a>
+    </div>
+    <div class="nav-right">
+      <a class="agent-chip" href="/llms.txt">AGENT? →</a>
+      <a class="gh-btn" href="https://github.com/24X7/riz" target="_blank">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<header class="page-hero">
+  <div class="wrap">
+    <div class="kicker">examples · <b>everything below ships in the repo</b> · most are CI-tested</div>
+    <h1>Don't start from zero.<br/><em>Start from working.</em></h1>
+    <p class="sub">
+      Each card names its repo path and how to run it. The agent examples use a deterministic
+      mock LLM provider where possible, so they run in CI with no keys — the parts that need a
+      real key say so.
+    </p>
+  </div>
+</header>
+
+<section style="padding-top:3rem">
+  <div class="wrap">
+    <div class="caps">
+
+      <a class="cap" href="https://github.com/24X7/riz/tree/main/examples/lambdas/agent-tools" target="_blank">
+        <div class="cap-glyph">[mcp]</div>
+        <h3>Agent tools, zero glue</h3>
+        <p class="claim">Three plain functions — <code style="font-family:var(--mono);font-size:.85em">lookup_order</code>, <code style="font-family:var(--mono);font-size:.85em">list_inventory</code>, <code style="font-family:var(--mono);font-size:.85em">create_ticket</code> — that auto-become typed MCP tools, including a typed JSON-Schema body.</p>
+        <ul class="facts">
+          <li><code>riz --config examples/riz.agent.toml run</code></li>
+          <li>Order 1042 is seeded delayed — the canonical demo path</li>
+        </ul>
+        <div class="cap-foot">
+          <div class="proof"><b>✓</b> CI: agent_tools_are_mcp_tools_and_callable_over_riz_mcp</div>
+          <span class="cap-go">examples/lambdas/agent-tools →</span>
+        </div>
+      </a>
+
+      <a class="cap" href="https://github.com/24X7/riz/tree/main/examples/agent-sdk" target="_blank">
+        <div class="cap-glyph">[sdk]</div>
+        <h3>Claude Agent SDK, single task</h3>
+        <p class="claim">A Python Agent SDK script that discovers riz tools over MCP and completes a conditional task — look up an order, open a ticket if it's delayed.</p>
+        <ul class="facts">
+          <li>Needs <code>ANTHROPIC_API_KEY</code> + a running riz</li>
+          <li>The riz side is just the config above — no SDK code</li>
+        </ul>
+        <div class="cap-foot">
+          <div class="proof"><b>✓</b> substrate proven in CI; the live run needs a key</div>
+          <span class="cap-go">examples/agent-sdk →</span>
+        </div>
+      </a>
+
+      <a class="cap" href="https://github.com/24X7/riz/tree/main/examples/agent-loop" target="_blank">
+        <div class="cap-glyph">[loop]</div>
+        <h3>Multi-step loop + token cost</h3>
+        <p class="claim">An agent loops over a batch of orders, chaining tool calls — the case where "what did this request cost in tokens?" stops being trivial.</p>
+        <ul class="facts">
+          <li>Token usage rolls up the OTel span tree per request</li>
+          <li>Same totals live in the <code>--dev</code> Tokens panel</li>
+        </ul>
+        <div class="cap-foot">
+          <div class="proof"><b>✓</b> CI: multi_hop_agent_chain_rolls_up_token_usage_across_the_tree</div>
+          <span class="cap-go">examples/agent-loop →</span>
+        </div>
+      </a>
+
+      <a class="cap" href="https://github.com/24X7/riz/tree/main/examples/lambdas/orders-wasm" target="_blank">
+        <div class="cap-glyph">[wasi]</div>
+        <h3>Real compute in the sandbox</h3>
+        <p class="claim">A <code style="font-family:var(--mono);font-size:.85em">wasm32-wasip1</code> handler that validates and prices an order entirely under WASI — deny-by-default, sub-ms cold start, not an echo toy.</p>
+        <ul class="facts">
+          <li>Integer-cents pricing, deterministic across hosts</li>
+          <li>422 with a structured error on invalid orders</li>
+        </ul>
+        <div class="cap-foot">
+          <div class="proof"><b>✓</b> CI: wasm_orders_prices_a_valid_order</div>
+          <span class="cap-go">examples/lambdas/orders-wasm →</span>
+        </div>
+      </a>
+
+      <a class="cap" href="https://github.com/24X7/riz/tree/main/examples/lambdas" target="_blank">
+        <div class="cap-glyph">[par]</div>
+        <h3>The parity set</h3>
+        <p class="claim">The same echo handler in Bun, Node, Python, Rust, and WASM — the fixture set behind the cross-runtime parity matrix, and the cleanest "how do I write a handler in X" reference.</p>
+        <ul class="facts">
+          <li>echo-bun · echo-node · echo-python · echo-rust · echo-wasm</li>
+          <li>Plus chat variants for WebSocket runtimes</li>
+        </ul>
+        <div class="cap-foot">
+          <div class="proof"><b>✓</b> CI: the runtime_parity_* test family</div>
+          <span class="cap-go">examples/lambdas →</span>
+        </div>
+      </a>
+
+      <a class="cap" href="https://github.com/24X7/riz/tree/main/examples" target="_blank">
+        <div class="cap-glyph">[cfg]</div>
+        <h3>Config cookbook</h3>
+        <p class="claim">Working riz.toml files for every posture — every one parsed and validated by the test suite, so the cookbook can't rot.</p>
+        <ul class="facts">
+          <li><code>riz.agent.toml</code> — the MCP/agent demo fleet</li>
+          <li><code>riz.prod.toml</code> — telemetry, auth, deploy gating</li>
+          <li><code>riz.workos.toml</code> · <code>riz.clerk.toml</code> · <code>riz.jwt.toml</code> — JWT/JWKS auth recipes</li>
+        </ul>
+        <div class="cap-foot">
+          <div class="proof"><b>✓</b> CI: every_example_config_parses_and_validates</div>
+          <span class="cap-go">examples/*.toml →</span>
+        </div>
+      </a>
+
+    </div>
+
+    <div class="ledger">
+      <span class="tag">the rule</span>
+      <span>If an example stops working, CI fails — the cookbook is part of the suite,
+      not documentation that rots. <a href="https://github.com/24X7/riz/tree/main/examples" target="_blank">Browse all examples ↗</a></span>
+    </div>
+
+    <div class="cta-row" style="margin-top:2.6rem">
+      <a class="cta pri" href="start.html">Scaffold your own →</a>
+      <a class="cta sec" href="docs.html">Configuration reference</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="foot-in">
+    <div class="grp">
+      <span class="foot-mark">riz<span class="cur">▮</span></span>
+      <p class="foot-note">The self-hosted Lambda runtime where every function is an agent's tool. One binary. Apache-2.0.</p>
+    </div>
+    <div class="grp">
+      <h5>Product</h5>
+      <a href="agents.html">Agent layer</a>
+      <a href="sandbox.html">Sandbox &amp; broker</a>
+      <a href="gateway.html">LLM gateway</a>
+      <a href="compare.html">Compare</a>
+    </div>
+    <div class="grp">
+      <h5>Build</h5>
+      <a href="start.html">Getting started</a>
+      <a href="docs.html">Documentation</a>
+      <a href="examples.html">Examples</a>
+      <a href="https://github.com/24X7/riz/releases" target="_blank">Releases ↗</a>
+    </div>
+    <div class="grp">
+      <h5>Project</h5>
+      <a href="https://github.com/24X7/riz" target="_blank">GitHub ↗</a>
+      <a href="https://github.com/24X7/riz/blob/main/tests/claims/registry.toml" target="_blank">Claims registry ↗</a>
+      <a href="https://github.com/24X7/riz/blob/main/LICENSE" target="_blank">Apache-2.0 ↗</a>
+    </div>
+  </div>
+  <div class="agent-block">
+    <div class="inner">
+      <b>// FOR AGENTS</b> — machine-readable surface:
+      <a href="/llms.txt">/llms.txt</a> ·
+      <a href="/.well-known/riz.json">/.well-known/riz.json</a> ·
+      MCP endpoint on any running instance: <b>&lt;host&gt;/_riz/mcp</b>.
+      Each card above names its repo path — clone and adapt freely (Apache-2.0).
+    </div>
+  </div>
+  <div class="foot-base">
+    <div class="foot-base-in">
+      <span>© 2026 · built by <a href="https://linkedin.com/in/ship247" style="text-decoration:underline dotted">Chris Rizzuto</a> · chris@riz.dev</span>
+      <span>every claim on this site maps to a passing test</span>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
