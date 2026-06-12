@@ -87,50 +87,90 @@ pub fn build_app(state: Arc<AppState>) -> AxumRouter {
     }
 
     // Mount the OpenAI-compatible endpoint (/_riz/v1/*) when [gateway] is set.
+    // Bearer-gated like every other /_riz/* surface: these routes spend real
+    // provider money — they must never be the one unauthenticated door. The
+    // token is resolved once at mount time (same lifecycle as the MCP
+    // handler's); changing it requires a restart.
     if let Ok(cfg) = state.config.try_read() {
         if cfg.gateway.enabled() {
+            let bearer = cfg.effective_bearer_token();
             match crate::llm::Gateway::from_config(&cfg.gateway) {
                 Ok(gw) => {
                     let gw = Arc::new(gw);
                     let gw_chat = gw.clone();
                     let chat_telemetry = state.telemetry.clone();
                     let chat_riz_state = state.riz_state.clone();
+                    let tok = bearer.clone();
                     app = app.route(
                         "/_riz/v1/chat/completions",
-                        post(move |body: Json<crate::llm::ChatRequest>| {
-                            let gw = gw_chat.clone();
-                            let telemetry = chat_telemetry.clone();
-                            let riz_state = chat_riz_state.clone();
+                        post(
+                            move |headers: axum::http::HeaderMap,
+                                  body: Json<crate::llm::ChatRequest>| {
+                                let gw = gw_chat.clone();
+                                let telemetry = chat_telemetry.clone();
+                                let riz_state = chat_riz_state.clone();
+                                let tok = tok.clone();
+                                async move {
+                                    if let Some(resp) = bearer_reject(&headers, tok.as_deref()) {
+                                        return resp;
+                                    }
+                                    crate::system::openai_compat::chat_completions(
+                                        gw, telemetry, riz_state, body,
+                                    )
+                                    .await
+                                    .into_response()
+                                }
+                            },
+                        ),
+                    );
+                    let gw_embed = gw.clone();
+                    let tok = bearer.clone();
+                    app = app.route(
+                        "/_riz/v1/embeddings",
+                        post(
+                            move |headers: axum::http::HeaderMap,
+                                  body: Json<crate::llm::EmbeddingsRequest>| {
+                                let gw = gw_embed.clone();
+                                let tok = tok.clone();
+                                async move {
+                                    if let Some(resp) = bearer_reject(&headers, tok.as_deref()) {
+                                        return resp;
+                                    }
+                                    crate::system::openai_compat::embeddings(gw, body)
+                                        .await
+                                        .into_response()
+                                }
+                            },
+                        ),
+                    );
+                    let gw_models = gw.clone();
+                    let tok = bearer.clone();
+                    app = app.route(
+                        "/_riz/v1/models",
+                        get(move |headers: axum::http::HeaderMap| {
+                            let gw = gw_models.clone();
+                            let tok = tok.clone();
                             async move {
-                                crate::system::openai_compat::chat_completions(
-                                    gw, telemetry, riz_state, body,
-                                )
-                                .await
+                                if let Some(resp) = bearer_reject(&headers, tok.as_deref()) {
+                                    return resp;
+                                }
+                                crate::system::openai_compat::models(gw).await.into_response()
                             }
                         }),
                     );
-                    let gw_embed = gw.clone();
-                    app = app.route(
-                        "/_riz/v1/embeddings",
-                        post(move |body: Json<crate::llm::EmbeddingsRequest>| {
-                            let gw = gw_embed.clone();
-                            async move { crate::system::openai_compat::embeddings(gw, body).await }
-                        }),
-                    );
-                    let gw_models = gw.clone();
-                    app = app.route(
-                        "/_riz/v1/models",
-                        get(move || {
-                            let gw = gw_models.clone();
-                            async move { crate::system::openai_compat::models(gw).await }
-                        }),
-                    );
                     let gw_usage = gw.clone();
+                    let tok = bearer.clone();
                     app = app.route(
                         "/_riz/v1/usage",
-                        get(move || {
+                        get(move |headers: axum::http::HeaderMap| {
                             let gw = gw_usage.clone();
-                            async move { crate::system::openai_compat::usage(gw).await }
+                            let tok = tok.clone();
+                            async move {
+                                if let Some(resp) = bearer_reject(&headers, tok.as_deref()) {
+                                    return resp;
+                                }
+                                crate::system::openai_compat::usage(gw).await.into_response()
+                            }
                         }),
                     );
                     info!("LLM gateway enabled — OpenAI-compatible endpoint at /_riz/v1");
@@ -879,8 +919,15 @@ pub struct InvalidateResponse {
 
 async fn cache_invalidate(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<InvalidateRequest>,
-) -> impl IntoResponse {
+) -> Response {
+    // Admin surface: bearer-gated like the other /_riz/* admin endpoints.
+    // An attacker who can flush the cache can manufacture load.
+    let expected = { state.config.read().await.effective_bearer_token() };
+    if let Some(resp) = bearer_reject(&headers, expected.as_deref()) {
+        return resp;
+    }
     let evicted = if let Some(keys) = &body.keys {
         state.cache.invalidate_keys(keys).await
     } else if let Some(prefix) = &body.prefix {
@@ -888,7 +935,35 @@ async fn cache_invalidate(
     } else {
         0
     };
-    Json(InvalidateResponse { evicted })
+    Json(InvalidateResponse { evicted }).into_response()
+}
+
+/// Shared bearer gate for axum-level (non-Lambda-envelope) routes: the LLM
+/// gateway (`/_riz/v1/*` — the endpoints that SPEND MONEY upstream) and
+/// admin actions. Returns `Some(401)` when a token is configured and the
+/// request's Authorization header doesn't match (constant-time compare);
+/// `None` means proceed. No token configured → open, matching the
+/// documented local-dev default for the rest of `/_riz/*`.
+fn bearer_reject(
+    headers: &axum::http::HeaderMap,
+    expected: Option<&str>,
+) -> Option<Response> {
+    let expected = expected?;
+    let auth = headers
+        .get(http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+    if crate::auth::bearer::validate_bearer(auth, expected) {
+        None
+    } else {
+        Some(
+            (
+                StatusCode::UNAUTHORIZED,
+                [("content-type", "application/json")],
+                r#"{"error":"unauthorized"}"#,
+            )
+                .into_response(),
+        )
+    }
 }
 
 #[cfg(test)]

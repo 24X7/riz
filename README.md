@@ -279,7 +279,9 @@ your handler code and the stdin/stdout bridge to it. Methodology + caveats in
 
 - `riz run` is headless by default — JSON logs to stdout (Datadog/CloudWatch
   ready). `--dev` boots the TUI.
-- `RIZ_AUTH_BEARER_TOKEN` gates `/_riz/*`; `/_riz/health` stays open for probes.
+- `RIZ_AUTH_BEARER_TOKEN` gates `/_riz/*` — including the LLM gateway at
+  `/_riz/v1/*` (the endpoints that spend provider budget) and
+  `/cache/invalidate`; `/_riz/health` stays open for probes.
 - Hot-swap: `POST /_riz/deploy` `{"lambda":"name","s3_bucket":"...","s3_key":"..."}` — in-flight requests drain over 30s, new requests hit the new pool atomically.
 - Prometheus `/_riz/metrics` works with the Datadog Agent's OpenMetrics integration.
 

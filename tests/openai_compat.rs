@@ -251,3 +251,118 @@ async fn streaming_returns_openai_sse_chunks() {
     assert!(body.contains("\"finish_reason\":\"stop\""), "got: {body}");
     assert!(body.contains("[DONE]"), "must end with [DONE]; got: {body}");
 }
+
+// ───────────────────────── Bearer gating (money endpoints) ─────────────────
+// The gateway endpoints spend real provider budget — when a bearer token is
+// configured they MUST 401 without it, exactly like the rest of /_riz/*.
+
+const GATEWAY_CFG_WITH_BEARER: &str = r#"
+[server]
+port = 0
+host = "127.0.0.1"
+
+[auth]
+bearer_token = "gw-sekrit"
+
+[gateway]
+default_provider = "mock"
+fallback_chain = ["mock"]
+
+[gateway.providers.mock]
+kind = "mock"
+"#;
+
+#[tokio::test]
+async fn gateway_endpoints_return_401_without_token_when_configured() {
+    let addr = boot(GATEWAY_CFG_WITH_BEARER).await;
+    let base = format!("http://{addr}");
+    wait_ready(&base).await;
+    let client = reqwest::Client::new();
+
+    let chat = client
+        .post(format!("{base}/_riz/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": "mock",
+            "messages": [{"role": "user", "content": "hi"}]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(chat.status(), 401, "chat/completions must be gated");
+
+    let embeddings = client
+        .post(format!("{base}/_riz/v1/embeddings"))
+        .json(&serde_json::json!({"model": "mock", "input": "hi"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(embeddings.status(), 401, "embeddings must be gated");
+
+    let models = client
+        .get(format!("{base}/_riz/v1/models"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(models.status(), 401, "models must be gated");
+
+    let usage = client
+        .get(format!("{base}/_riz/v1/usage"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(usage.status(), 401, "usage must be gated");
+
+    // Wrong token is as unauthorized as no token.
+    let wrong = client
+        .get(format!("{base}/_riz/v1/models"))
+        .header("authorization", "Bearer wrong")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(wrong.status(), 401, "wrong token must be rejected");
+}
+
+#[tokio::test]
+async fn gateway_accepts_the_configured_bearer() {
+    let addr = boot(GATEWAY_CFG_WITH_BEARER).await;
+    let base = format!("http://{addr}");
+    wait_ready(&base).await;
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/_riz/v1/chat/completions"))
+        .header("authorization", "Bearer gw-sekrit")
+        .json(&serde_json::json!({
+            "model": "mock",
+            "messages": [{"role": "user", "content": "hi"}]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["object"], "chat.completion");
+}
+
+#[tokio::test]
+async fn cache_invalidate_is_bearer_gated() {
+    let addr = boot(GATEWAY_CFG_WITH_BEARER).await;
+    let base = format!("http://{addr}");
+    wait_ready(&base).await;
+    let client = reqwest::Client::new();
+
+    let no_token = client
+        .post(format!("{base}/cache/invalidate"))
+        .json(&serde_json::json!({"prefix": "/"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(no_token.status(), 401, "cache flush must be gated");
+
+    let with_token = client
+        .post(format!("{base}/cache/invalidate"))
+        .header("authorization", "Bearer gw-sekrit")
+        .json(&serde_json::json!({"prefix": "/"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(with_token.status(), 200);
+}
