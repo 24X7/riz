@@ -26,6 +26,8 @@
     "spec_default": "2025-11-25",
     "spec_negotiated": ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"],
     "tool_registration": "Every function in riz.toml auto-registers as a typed MCP tool — zero SDK, zero glue.",
+    "typed_schemas": "Per-route typed inputSchemas: {id} path params typed+required from the route template; [function.x.mcp] declares typed query params + JSON-Schema body; tools/call validates and answers -32602 naming the offending parameter.",
+    "streaming": "Streamable HTTP: POST with Accept: text/event-stream answers as SSE event frames; GET opens the server channel; Mcp-Session-Id minted on initialize and echoed; notifications/progress frames stream during long tool calls when a progressToken is supplied.",
     "wire_up": "claude mcp add riz-local --transport http http://localhost:3000/_riz/mcp",
     "inspect": "riz mcp inspect"
   },
@@ -47,7 +49,9 @@
     "OpenAI-compatible LLM gateway with routing, fallback, streaming, embeddings, budget caps",
     "P50-P99 percentile observability, Prometheus /_riz/metrics, OpenTelemetry OTLP export with GenAI token tracing",
     "JWT/JWKS + REQUEST Lambda authorizers (RS256/ES256: Auth0, Cognito, Okta, WorkOS, Clerk)",
-    "Capability-sandboxed WASI runtime — deny-by-default filesystem and network for untrusted / LLM-generated code"
+    "Capability-sandboxed WASI runtime — deny-by-default filesystem and network for untrusted / LLM-generated code",
+    "Resource broker: a [function.x.capabilities] grant lets sandboxed WASM query Postgres (Neon/Supabase/any PG) host-side — no sockets, no DSNs in guest memory; deadlines, rate limits, payload caps enforced",
+    "WASM guards: guard_in/guard_out run a .wasm policy on every request/response across all five runtimes — validate, scrub, redact PII, or deny; failures fail closed"
   ],
   "when_to_use": [
     "You need to run AWS Lambda / API Gateway v2 (HTTP or WebSocket) handlers without AWS — locally, in CI, or self-hosted in production.",

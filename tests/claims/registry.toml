@@ -44,6 +44,36 @@ status = "proven"
 proof = "progress_notifications_stream_during_slow_tool_call"
 
 [[claim]]
+id = "mcp-call-validation"
+page_text = "missing path params and type mismatches answer JSON-RPC"
+status = "proven"
+proof = "tools_call_missing_required_path_param_is_invalid_params"
+
+[[claim]]
+id = "gateway-bearer-gated"
+page_text = "the endpoints that spend provider budget are never the unauthenticated door"
+status = "proven"
+proof = "gateway_endpoints_return_401_without_token_when_configured"
+
+[[claim]]
+id = "gateway-budget-fail-closed"
+page_text = "Unknown models price at the most expensive tier, so the cap fails closed"
+status = "proven"
+proof = "unknown_model_fails_closed_at_the_most_expensive_tier"
+
+[[claim]]
+id = "broker-credentials-never-cross"
+page_text = "credentials never cross the WASI boundary"
+status = "proven"
+proof = "wasm_guest_brokers_pg_through_capability_grants"
+
+[[claim]]
+id = "broker-stall-bounded"
+page_text = "A stalled or hostile query is cut at the grant's deadline"
+status = "proven"
+proof = "stalled_backend_query_is_bounded_by_the_broker_deadline"
+
+[[claim]]
 id = "llm-gateway-openai-compatible"
 page_text = "OpenAI-compatible gateway"
 status = "proven"
@@ -218,9 +248,9 @@ note = "Headline 91k req/s · p99<1ms is a benches/ result (see benches/README.m
 
 [[claim]]
 id = "test-count"
-page_text = "800+ tests"
+page_text = "900+ tests"
 status = "copy-only"
-note = "Honest floor, not a pinned count: the absolute number from `cargo nextest list` grows every commit (827 as of 2026-06-10), so the page states a floor ('800+') that stays true without per-commit churn. The cross-runtime parity *capability* it advertises is proven separately (see cross-runtime-parity). landing_page_contract.rs::every_page_claim_is_registered checks this string is reflected here so it can't silently drift."
+note = "Honest floor, not a pinned count: the absolute number from `cargo nextest list` grows every commit (903 as of 2026-06-12), so the page states a floor ('900+') that stays true without per-commit churn. The cross-runtime parity *capability* it advertises is proven separately (see cross-runtime-parity). landing_page_contract.rs::every_page_claim_is_registered checks this string is reflected here so it can't silently drift."
 
 [[claim]]
 id = "warm-pool-no-cold-start"

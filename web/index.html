@@ -38,8 +38,12 @@
       "S3 hot-swap deploys with health-check and automatic rollback",
       "riz.toml and handler-source hot-reload on save",
       "Every function auto-exposed as a typed MCP tool at /_riz/mcp (spec 2025-11-25)",
+      "Per-route typed MCP tool schemas — path params typed from route templates, validated on call",
+      "MCP Streamable HTTP with SSE response frames, sessions, and notifications/progress during tool calls",
       "Five runtimes: Bun, Node.js, Python, Rust, and capability-sandboxed WASI/WASM",
-      "OpenAI-compatible LLM gateway with provider routing, SSE streaming, embeddings, and budget caps",
+      "OpenAI-compatible LLM gateway with provider routing, SSE streaming, embeddings, and bearer-gated budget caps",
+      "Resource broker: sandboxed WASM queries Postgres (Neon/Supabase/any PG) via capability grants — no sockets, no DSNs in guest memory",
+      "WASM guards (guard_in/guard_out): one .wasm policy validates, scrubs, or redacts across all five runtimes, fail-closed",
       "Real percentile observability (P50–P99 over a 5-min window) + Prometheus at /_riz/metrics",
       "OpenTelemetry OTLP/HTTP export with token-aware GenAI tracing",
       "JWT/JWKS Lambda authorizers (RS256/ES256) — Auth0, Cognito, Okta, WorkOS, Clerk",
@@ -896,6 +900,59 @@
       background:transparent;
       border:1px solid var(--ink3);
     }
+
+    /* ── AI-centric buckets — cyan→violet identity so the agent surface
+       reads as its own product layer, not one bullet list among many. ── */
+    .bucket.ai{
+      border-color:rgba(34,211,238,0.22);
+      background:
+        linear-gradient(180deg, rgba(34,211,238,0.045), rgba(167,139,250,0.03) 60%, transparent),
+        var(--bg3);
+    }
+    .bucket.ai::after{
+      content:'';position:absolute;left:0;top:10%;bottom:10%;width:2px;
+      background:linear-gradient(180deg,var(--cyan),var(--violet));
+      border-radius:2px;opacity:.7;
+    }
+    .bucket.ai h4{color:var(--cyan)}
+    .status-col:nth-child(1) .bucket.ai li::before{
+      background:var(--cyan);
+      box-shadow:0 0 0 3px rgba(34,211,238,0.15);
+    }
+
+    /* ── Proof chips — the riz signature: a bucket's headline capability is
+       pinned to the literal test function that proves it in CI. ── */
+    .bucket .proof{
+      display:flex;align-items:center;gap:.45rem;
+      margin-top:1rem;padding-top:.8rem;
+      border-top:1px dashed var(--border);
+      font-family:var(--mono);font-size:.66rem;letter-spacing:.01em;
+      color:var(--ink4);white-space:nowrap;overflow:hidden;
+    }
+    .bucket .proof .pf-ok{color:var(--green,#34d399);flex:none}
+    .bucket .proof code{
+      color:var(--ink3);background:rgba(255,255,255,0.04);
+      border:1px solid var(--border);border-radius:4px;
+      padding:.1rem .4rem;overflow:hidden;text-overflow:ellipsis;
+    }
+
+    /* ── Claims ledger — the audit strip above the feature grid. ── */
+    .ledger{
+      display:flex;align-items:center;gap:.9rem;flex-wrap:wrap;
+      margin:1.6rem 0 2.6rem;
+      padding:.85rem 1.1rem;
+      border:1px solid rgba(34,211,238,0.25);
+      border-left:3px solid var(--cyan);
+      border-radius:6px;
+      background:linear-gradient(90deg, rgba(34,211,238,0.06), transparent 70%);
+      font-family:var(--mono);font-size:.78rem;color:var(--ink2);
+    }
+    .ledger .ldg-badge{
+      flex:none;font-weight:700;color:var(--cyan);
+      letter-spacing:.06em;text-transform:uppercase;font-size:.68rem;
+    }
+    .ledger a{color:var(--ink3);text-decoration:underline dotted}
+    .ledger a:hover{color:var(--cyan)}
 
     /* Bucket-card top accent — single amber edge on hover for both sections */
     .status-col:nth-child(1) .bucket::before,
@@ -1928,6 +1985,12 @@ $ claude mcp add riz-local \
       WASM, hot-reload, real percentiles. No Docker, no per-request container,
       no per-request cold start, no cloud bill.
     </p>
+    <div class="ledger">
+      <span class="ldg-badge">claims-as-code</span>
+      <span>Every capability sentence on this page is pinned to a passing test — a
+      <a href="https://github.com/24X7/riz/blob/main/tests/claims/registry.toml" target="_blank">claims registry</a>
+      maps claim&nbsp;→&nbsp;proof and CI fails if the copy drifts from the code. Marketing that can't lie.</span>
+    </div>
     <div class="status-grid">
 
       <!-- ───────── FEATURES (was "Works now") ───────── -->
@@ -1935,27 +1998,49 @@ $ claude mcp add riz-local \
         <h3>Features</h3>
         <p class="h3-sub">v0.1 · in production</p>
 
-          <article class="bucket">
+          <article class="bucket ai">
             <h4>Agent &amp; AI Integration</h4>
             <ul>
               <li>MCP server at <code>/_riz/mcp</code> — every function is a tool, automatically, spec 2025-11-25</li>
               <li>The flywheel: an agent writes a plain function, and the instant riz boots it's a callable, production-grade tool — zero glue</li>
               <li>Zero SDK code — point any MCP client at riz, your APIs become agent-callable</li>
+              <li>Claude Agent SDK demo drives riz functions as tools — proven by an example</li>
+            </ul>
+            <div class="proof"><span class="pf-ok">✓</span> proof: <code>mcp_inspect_against_running_riz_lists_tools_and_spec_version</code></div>
+          </article>
+
+          <article class="bucket ai">
+            <h4>MCP Tool Quality</h4>
+            <ul>
               <li>Per-route typed tool schemas — <code>{id}</code> path params typed from the route template, declared query params typed via <code>[function.x.mcp]</code>, validated on call</li>
               <li>Streamable HTTP transport — POST answers stream as SSE event frames, GET opens the server channel, <code>Mcp-Session-Id</code> honored</li>
               <li>Progress notifications — a long tool call streams <code>notifications/progress</code> frames while it runs (progressToken echoed, progress increasing)</li>
-              <li>Claude Agent SDK demo drives riz functions as tools — proven by an example</li>
+              <li>Wrong calls fail well — missing path params and type mismatches answer JSON-RPC <code>-32602</code> naming the offending parameter, so an agent self-corrects</li>
               <li>Bearer-token gating on <code>/_riz/mcp</code> for shared-secret access control</li>
             </ul>
+            <div class="proof"><span class="pf-ok">✓</span> proof: <code>tools_list_types_path_params_from_route_template</code></div>
           </article>
 
-          <article class="bucket">
+          <article class="bucket ai">
             <h4>LLM Gateway</h4>
             <ul>
               <li>OpenAI-compatible gateway at <code>/_riz/v1/*</code> — provider routing, fallback, SSE streaming, embeddings</li>
               <li>Route across OpenAI, Anthropic, and local Ollama by model prefix</li>
-              <li>Budget caps + per-provider cost telemetry — AI-FinOps where you already watch latency</li>
+              <li>Budget caps + per-provider cost telemetry — AI-FinOps where you already watch latency. Unknown models price at the most expensive tier, so the cap fails closed</li>
+              <li>Bearer-gated like the rest of <code>/_riz/*</code> — the endpoints that spend provider budget are never the unauthenticated door</li>
             </ul>
+            <div class="proof"><span class="pf-ok">✓</span> proof: <code>gateway_endpoints_return_401_without_token_when_configured</code></div>
+          </article>
+
+          <article class="bucket ai">
+            <h4>Sandboxed Data Plane</h4>
+            <ul>
+              <li>Capability broker — a <code>[function.x.capabilities]</code> grant lets sandboxed WASM query Postgres through the host; Neon, Supabase, or any PG is one config row</li>
+              <li>The guest never opens a socket and credentials never cross the WASI boundary — it names a grant, it gets rows</li>
+              <li>Host owns the blast radius — deny-by-default, per-call deadlines, concurrency caps, rate limits, payload caps, audit trail</li>
+              <li>A stalled or hostile query is cut at the grant's deadline; the host is structurally unaffected</li>
+            </ul>
+            <div class="proof"><span class="pf-ok">✓</span> proof: <code>wasm_guest_brokers_pg_through_capability_grants</code></div>
           </article>
 
           <article class="bucket">
@@ -2004,7 +2089,6 @@ $ claude mcp add riz-local \
               <li>Real percentiles, not yours to wire — P50/P75/P90/P95/P99 over a 5-min window in the terminal dashboard, free with the harness</li>
               <li>OpenTelemetry export — OTLP/HTTP JSON, one pipeline fanning out to Datadog and CloudWatch/X-Ray</li>
               <li>Token-aware GenAI tracing on that single OTLP path — prompt/completion token attrs roll up per request</li>
-              <li>MCP server — spec 2025-11-25 (also negotiates 2024-11-05 / 2025-03-26 / 2025-06-18). JSON-RPC 2.0, full lifecycle.</li>
             </ul>
           </article>
 
@@ -2025,7 +2109,7 @@ $ claude mcp add riz-local \
               <li>JWT/JWKS signature validation (RS256/ES256) — drop in Auth0, Cognito, Okta, WorkOS, or Clerk</li>
               <li>WorkOS &amp; Clerk proven end-to-end — Clerk's no-<code>aud</code> default session token works out of the box</li>
               <li>CORS auto-preflight — OPTIONS → 204, <code>Access-Control-Allow-*</code> headers</li>
-              <li>Bearer-token auth on <code>/_riz/*</code> (<code>/_riz/health</code> stays open)</li>
+              <li>Bearer-token auth on <code>/_riz/*</code> — including the LLM gateway and cache flush (<code>/_riz/health</code> stays open)</li>
             </ul>
           </article>
 
@@ -2039,7 +2123,7 @@ $ claude mcp add riz-local \
             </ul>
           </article>
 
-          <article class="bucket">
+          <article class="bucket ai">
             <h4>WASM Guards</h4>
             <ul>
               <li>Pre-invoke guards (<code>guard_in</code>) — a <code>.wasm</code> policy sees every event before the handler: allow, mutate (scrubbed payload), or deny with your status — handler never runs on deny</li>
@@ -2048,12 +2132,13 @@ $ claude mcp add riz-local \
               <li>Guard failures fail closed — a policy that can't run never silently allows traffic</li>
               <li>Per-guard timing in <code>/_riz/health</code> (<code>fn::guard_in</code> entries)</li>
             </ul>
+            <div class="proof"><span class="pf-ok">✓</span> proof: <code>one_wasm_guard_protects_every_runtime</code></div>
           </article>
 
           <article class="bucket">
             <h4>Proof</h4>
             <ul>
-              <li>800+ tests (<code>cargo nextest run</code>) — cross-runtime parity matrix on every HTTP capability</li>
+              <li>900+ tests (<code>cargo nextest run</code>) — cross-runtime parity matrix on every HTTP capability</li>
               <li>Production-readiness bug tracker closed, with regression-gate tests for the fixed bugs</li>
             </ul>
           </article>
@@ -2117,11 +2202,11 @@ $ claude mcp add riz-local \
           </article>
 
           <article class="bucket coming-soon" data-claim="roadmap-otel-tracing">
-            <h4>Event Sources &amp; Tracing</h4>
+            <h4>Tracing &amp; Agent Memory</h4>
             <ul>
-              <li>Non-HTTP event sources (SQS, SNS, S3, EventBridge)</li>
               <li>W3C Trace Context propagation across services + X-Ray segment mapping</li>
               <li>Stateful agent memory — <code>/_riz/memory/{agent_id}</code> KV + vector blob store</li>
+              <li>Broker verbs beyond Postgres — <code>kv_get/put</code>, <code>s3_get/put</code>, allow-listed <code>http_fetch</code></li>
             </ul>
             <span class="ribbon">coming soon</span>
           </article>
