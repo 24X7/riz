@@ -148,6 +148,44 @@ fn agent_tools_are_mcp_tools_and_callable_over_riz_mcp() {
         );
     }
 
+    // (a2) Typed schemas (v1 roadmap #13) surface from the example config:
+    //      lookup_order's {id} path param is typed + required straight from
+    //      the route template, and create_ticket carries the declared body
+    //      schema + description override from [function.create_ticket.mcp].
+    let lookup = tools.iter().find(|t| t["name"] == "lookup_order").unwrap();
+    let schema = &lookup["inputSchema"];
+    assert_eq!(
+        schema["properties"]["pathParams"]["properties"]["id"]["type"], "string",
+        "lookup_order must type the id path param; got {schema}"
+    );
+    assert!(
+        schema["properties"]["pathParams"]["required"]
+            .as_array()
+            .map(|a| a.iter().any(|v| v == "id"))
+            .unwrap_or(false),
+        "id must be required; got {schema}"
+    );
+    let ticket = tools.iter().find(|t| t["name"] == "create_ticket").unwrap();
+    assert!(
+        ticket["description"]
+            .as_str()
+            .unwrap_or("")
+            .contains("support ticket"),
+        "create_ticket must carry its mcp description override; got {ticket:?}"
+    );
+    let body_schema = &ticket["inputSchema"]["properties"]["body"];
+    assert_eq!(
+        body_schema["properties"]["orderId"]["type"], "string",
+        "create_ticket body schema must type orderId; got {body_schema}"
+    );
+    assert!(
+        body_schema["required"]
+            .as_array()
+            .map(|a| a.iter().any(|v| v == "orderId"))
+            .unwrap_or(false),
+        "orderId must be required in the body schema; got {body_schema}"
+    );
+
     // (b) tools/call on lookup_order returns the expected structured result.
     //     Order 1042 is the canonical delayed order — this is exactly the
     //     call the Agent SDK demo makes first.
@@ -174,6 +212,33 @@ fn agent_tools_are_mcp_tools_and_callable_over_riz_mcp() {
         "order 1042 must report delayed:true so the agent opens a ticket; got {order:?}"
     );
     assert_eq!(call["result"]["isError"], false);
+
+    // (b2) Typed body call: the schema invites a JSON OBJECT body — riz must
+    //      serialize it into the Lambda event's string body and the real bun
+    //      handler must read it. End-to-end proof the typed schema is
+    //      actually callable, not just listable.
+    let ticket_call = mcp_call(
+        &client,
+        &url,
+        serde_json::json!({
+            "jsonrpc":"2.0","id":3,"method":"tools/call",
+            "params":{"name":"create_ticket","arguments":{
+                "body": {"orderId": "1042", "reason": "order delayed 9 days"}
+            }}
+        }),
+    );
+    let structured = &ticket_call["result"]["structuredContent"];
+    assert_eq!(
+        structured["statusCode"], 201,
+        "create_ticket with an object body must succeed; got {ticket_call:?}"
+    );
+    let inner_body = structured["body"].as_str().expect("ticket body string");
+    let created: serde_json::Value =
+        serde_json::from_str(inner_body).expect("create_ticket body is JSON");
+    assert_eq!(
+        created["ticket"]["orderId"], "1042",
+        "handler must have parsed the serialized object body; got {created}"
+    );
 
     // (c) The AI path: the gateway mock provider round-trips a chat
     //     completion — deterministic, no key. This is the model side the

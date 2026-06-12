@@ -6,9 +6,6 @@ host = "127.0.0.1"
 default_ttl_secs = 0
 max_size_mb = 128
 
-[datadog]
-enabled = false
-
 # Function-centric config matches AWS Lambda + API Gateway v2.
 # One function = one process pool. One function can serve N routes,
 # including AWS-style {param} captures and {proxy+} greedy wildcards.

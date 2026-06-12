@@ -32,6 +32,12 @@ concurrency = 4
 path = "/orders/{id}"
 method = "GET"
 
+# Typed MCP tool schema (v1 roadmap #13). The {id} path param is typed and
+# required automatically from the route template; this block just sharpens
+# the description the agent reads on tools/list.
+[function.lookup_order.mcp]
+description = "Look up an order by id. Returns the item, status (processing/shipped/delivered/delayed), a `delayed` flag, and ETA in days. Try ids 1041-1043; 1042 is delayed."
+
 [function.list_inventory]
 runtime = "bun"
 handler = "./examples/lambdas/agent-tools/index.listInventory"
@@ -42,6 +48,9 @@ concurrency = 4
 path = "/inventory"
 method = "GET"
 
+[function.list_inventory.mcp]
+description = "List current inventory: sku, name, and inStock count for every item. Takes no parameters."
+
 [function.create_ticket]
 runtime = "bun"
 handler = "./examples/lambdas/agent-tools/index.createTicket"
@@ -51,3 +60,21 @@ concurrency = 4
 [[function.create_ticket.routes]]
 path = "/tickets"
 method = "POST"
+
+# Typed body schema: agents send a JSON object (riz serializes it into the
+# Lambda event's string body). Mirrors exactly what the handler reads —
+# orderId is required, reason is optional.
+[function.create_ticket.mcp]
+description = "Open a support ticket for an order. Send orderId (required) and an optional reason; returns the created ticket with its id."
+
+[function.create_ticket.mcp.body]
+type = "object"
+required = ["orderId"]
+
+[function.create_ticket.mcp.body.properties.orderId]
+type = "string"
+description = "The order id the ticket is about, e.g. \"1042\""
+
+[function.create_ticket.mcp.body.properties.reason]
+type = "string"
+description = "Short reason for the ticket"
