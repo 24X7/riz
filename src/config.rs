@@ -355,7 +355,62 @@ pub struct FunctionConfig {
     /// confine the lambda to its own directory + scratch space.
     #[serde(default)]
     pub allowed_paths: Option<Vec<PathBuf>>,
+    /// Optional MCP tool tuning — `[function.X.mcp]`. Lets a function refine
+    /// the tool surface agents see on `tools/list`: a custom description,
+    /// typed query parameters, and a JSON Schema for the request body.
+    /// Path params are always typed automatically from the route templates;
+    /// this block is for what templates can't express. Absent → the generic
+    /// envelope schema (back-compat).
+    #[serde(default)]
+    pub mcp: Option<McpToolConfig>,
 }
+
+/// `[function.X.mcp]` — per-function MCP tool schema tuning.
+///
+/// Precise input schemas measurably improve LLM tool-calling accuracy
+/// (v1 roadmap #13); this block is how a function declares the parts riz
+/// can't infer from the route template alone.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct McpToolConfig {
+    /// Overrides the auto-generated tool description on `tools/list`.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Typed query parameters: `[function.X.mcp.query.limit]` with
+    /// `type` / `description` / `required`. Declared params surface as typed
+    /// fields in the tool's `inputSchema.properties.queryParams`; undeclared
+    /// params remain accepted (HTTP query strings are open-world).
+    #[serde(default)]
+    pub query: indexmap::IndexMap<String, McpParamSpec>,
+    /// Verbatim JSON Schema for the request body. When present it replaces
+    /// the generic `{"type":"string"}` body property so agents send a typed
+    /// JSON object; riz serializes it into the Lambda event's string body.
+    #[serde(default)]
+    pub body: Option<serde_json::Value>,
+}
+
+/// One typed parameter inside `[function.X.mcp.query]`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct McpParamSpec {
+    /// JSON Schema scalar type: `string` (default) | `integer` | `number` |
+    /// `boolean`. Validated at config load — anything else is a startup error.
+    #[serde(rename = "type", default = "default_param_type")]
+    pub kind: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Required params land in the schema's `required` array and tools/call
+    /// rejects requests missing them with JSON-RPC -32602.
+    #[serde(default)]
+    pub required: bool,
+}
+
+fn default_param_type() -> String {
+    "string".to_string()
+}
+
+/// Scalar types permitted in `McpParamSpec::kind`. Query-string values are
+/// strings on the wire, so only types riz can validate from a string form
+/// are allowed.
+pub const MCP_PARAM_TYPES: &[&str] = &["string", "integer", "number", "boolean"];
 
 impl FunctionConfig {
     /// Effective routes: the declared ones, or the implicit `ANY /<name>`
@@ -645,6 +700,29 @@ impl Config {
                 // validation is skipped (required for Clerk's default session
                 // token, which has no `aud`). When set, it is enforced in
                 // src/auth/jwt.rs (WorkOS and most OAuth IdPs).
+            }
+            // [function.X.mcp] — typed tool-schema block. Reject unknown
+            // scalar types and non-object body schemas at startup so a typo
+            // surfaces as a clear config error, not a silently-wrong schema
+            // served to agents.
+            if let Some(mcp) = &func.mcp {
+                for (pname, spec) in &mcp.query {
+                    if !MCP_PARAM_TYPES.contains(&spec.kind.as_str()) {
+                        return Err(format!(
+                            "function '{name}' [function.{name}.mcp.query.{pname}] has \
+                             type = \"{}\" — must be one of {MCP_PARAM_TYPES:?}",
+                            spec.kind
+                        ));
+                    }
+                }
+                if let Some(body) = &mcp.body {
+                    if !body.is_object() {
+                        return Err(format!(
+                            "function '{name}' [function.{name}.mcp] body must be a JSON Schema \
+                             object (e.g. {{ type = \"object\", ... }})"
+                        ));
+                    }
+                }
             }
         }
         // Gateway: validate provider kinds + that default/fallback names exist.
@@ -1032,6 +1110,7 @@ handler = "./h.ts"
             memory_mb: None,
             cpu_time_secs: None,
             allowed_paths: None,
+            mcp: None,
         }
     }
 

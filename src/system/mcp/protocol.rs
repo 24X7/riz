@@ -97,14 +97,61 @@ pub(super) struct ToolArguments {
     /// routes. If omitted, the first declared route is used.
     #[serde(default)]
     pub(super) route: Option<String>,
-    #[serde(default)]
+    /// Request body. Typed body schemas invite clients to send a JSON object;
+    /// non-string values are serialized into the Lambda event's string body.
+    #[serde(default, deserialize_with = "de_body_string")]
     pub(super) body: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_scalar_string_map")]
     pub(super) headers: HashMap<String, String>,
-    #[serde(default, rename = "queryParams")]
+    #[serde(default, rename = "queryParams", deserialize_with = "de_scalar_string_map")]
     pub(super) query_params: HashMap<String, String>,
-    #[serde(default, rename = "pathParams")]
+    #[serde(default, rename = "pathParams", deserialize_with = "de_scalar_string_map")]
     pub(super) path_params: HashMap<String, String>,
     #[serde(default, rename = "isBase64Encoded")]
     pub(super) is_base64_encoded: bool,
+}
+
+/// Accept scalar JSON values (string / number / bool) for param maps and
+/// coerce them to the wire strings the Lambda event carries. Typed schemas
+/// declare e.g. `limit: integer`, so a well-behaved client sends `10`, not
+/// `"10"` — rejecting that at deserialization would make the typed schema
+/// self-defeating. Nested objects/arrays are still rejected.
+fn de_scalar_string_map<'de, D>(deserializer: D) -> Result<HashMap<String, String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let raw: HashMap<String, serde_json::Value> = HashMap::deserialize(deserializer)?;
+    raw.into_iter()
+        .map(|(k, v)| {
+            let s = match v {
+                serde_json::Value::String(s) => s,
+                serde_json::Value::Number(n) => n.to_string(),
+                serde_json::Value::Bool(b) => b.to_string(),
+                other => {
+                    return Err(D::Error::custom(format!(
+                        "parameter '{k}' must be a scalar (string/number/boolean), got {other}"
+                    )))
+                }
+            };
+            Ok((k, s))
+        })
+        .collect()
+}
+
+/// Body: a string passes through; any other JSON value (object, array,
+/// number, bool) is serialized to its compact JSON text.
+fn de_body_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let raw: Option<serde_json::Value> = Option::deserialize(deserializer)?;
+    match raw {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(s)) => Ok(Some(s)),
+        Some(other) => serde_json::to_string(&other)
+            .map(Some)
+            .map_err(D::Error::custom),
+    }
 }

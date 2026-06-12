@@ -8,9 +8,8 @@ use crate::gateway::{
 use crate::state::FunctionKind;
 use http::{HeaderMap, HeaderValue, Method};
 
-use super::encoding::{
-    generic_envelope_schema, lambda_response_envelope_schema, substitute_path_params, urlencode,
-};
+use super::encoding::{lambda_response_envelope_schema, substitute_path_params, urlencode};
+use super::schema::{path_param_names, tool_input_schema};
 use super::protocol::{
     JsonRpcError, Tool, ToolContent, ToolsCallParams, ToolsCallResult, ToolsListResult,
 };
@@ -54,19 +53,24 @@ impl McpHandler {
             // MCP tool name = function name directly (no transformation needed
             // now that we're function-centric).
             let name = f.name.clone();
-            let description = match &f.config {
-                Some(c) => format!(
-                    "Invoke function `{}` ({} runtime). Routes: [{}]",
-                    f.name,
-                    c.runtime.as_str(),
-                    f.routes.join(", "),
-                ),
-                None => format!("Invoke {}", f.name),
+            let mcp_cfg = f.config.as_ref().and_then(|c| c.mcp.as_ref());
+            // [function.X.mcp] description wins; otherwise the generated one.
+            let description = match mcp_cfg.and_then(|m| m.description.clone()) {
+                Some(d) => d,
+                None => match &f.config {
+                    Some(c) => format!(
+                        "Invoke function `{}` ({} runtime). Routes: [{}]",
+                        f.name,
+                        c.runtime.as_str(),
+                        f.routes.join(", "),
+                    ),
+                    None => format!("Invoke {}", f.name),
+                },
             };
             tools.push(Tool {
                 name,
                 description,
-                input_schema: generic_envelope_schema(),
+                input_schema: tool_input_schema(&f.routes, mcp_cfg),
                 output_schema: Some(lambda_response_envelope_schema()),
             });
         }
@@ -89,7 +93,7 @@ impl McpHandler {
         // Tool name == function name. Look up the function and pick a route
         // to dispatch to: use the caller-supplied `route` arg if present,
         // otherwise default to the function's first declared route.
-        let (_function_name, method, path) = {
+        let (_function_name, method, path, mcp_query_specs) = {
             let functions = self.riz_state.functions.read().await;
             let f = functions
                 .get(&parsed.name)
@@ -125,9 +129,65 @@ impl McpHandler {
                 code: -32603,
                 message: format!("malformed route entry: {chosen}"),
             })?;
-            (f.name.clone(), m.to_string(), p.to_string())
+            let specs = f
+                .config
+                .as_ref()
+                .and_then(|c| c.mcp.as_ref())
+                .map(|mcp| mcp.query.clone())
+                .unwrap_or_default();
+            (f.name.clone(), m.to_string(), p.to_string(), specs)
         };
         let route_key = format!("{} {}", method, path);
+
+        // ── Typed-schema validation (v1 roadmap #13) ─────────────────────
+        // Once a route is chosen, every {param} in its template is required —
+        // an unsubstituted segment can only dispatch to a 404. Reject up
+        // front with the param named so the agent can self-correct.
+        let missing: Vec<String> = path_param_names(&path)
+            .into_iter()
+            .filter(|p| !parsed.arguments.path_params.contains_key(p))
+            .collect();
+        if !missing.is_empty() {
+            return Err(JsonRpcError {
+                code: -32602,
+                message: format!(
+                    "missing required path parameter(s) for route '{route_key}': {}",
+                    missing.join(", ")
+                ),
+            });
+        }
+        // Declared query params: required ones must be present; provided
+        // values must parse as their declared scalar type. (Values arrive as
+        // wire strings — scalar JSON args were already coerced at
+        // deserialization.)
+        for (pname, spec) in &mcp_query_specs {
+            match parsed.arguments.query_params.get(pname) {
+                None if spec.required => {
+                    return Err(JsonRpcError {
+                        code: -32602,
+                        message: format!("missing required query parameter '{pname}'"),
+                    });
+                }
+                None => {}
+                Some(value) => {
+                    let ok = match spec.kind.as_str() {
+                        "integer" => value.parse::<i64>().is_ok(),
+                        "number" => value.parse::<f64>().is_ok(),
+                        "boolean" => matches!(value.as_str(), "true" | "false"),
+                        _ => true, // string — anything goes
+                    };
+                    if !ok {
+                        return Err(JsonRpcError {
+                            code: -32602,
+                            message: format!(
+                                "query parameter '{pname}' must be a {} (got '{value}')",
+                                spec.kind
+                            ),
+                        });
+                    }
+                }
+            }
+        }
 
         // Build an AWS v2 event. If the matched route is a pattern like
         // `/accounts/{id}`, substitute `{id}` with the caller-supplied

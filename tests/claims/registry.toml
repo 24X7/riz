@@ -26,6 +26,12 @@ status = "proven"
 proof = "agent_tools_are_mcp_tools_and_callable_over_riz_mcp"
 
 [[claim]]
+id = "mcp-typed-schemas"
+page_text = "path params typed from the route template, declared query params typed via"
+status = "proven"
+proof = "tools_list_types_path_params_from_route_template"
+
+[[claim]]
 id = "llm-gateway-openai-compatible"
 page_text = "OpenAI-compatible gateway"
 status = "proven"
@@ -254,7 +260,7 @@ roadmap = "Phase 2 — eval harness + prompt versioning"
 
 [[claim]]
 id = "roadmap-smarter-mcp"
-page_text = "Per-route MCP tool schemas"
+page_text = "MCP over WebSocket — streaming tool results for long-running calls"
 status = "coming-soon"
 data_claim = "roadmap-smarter-mcp"
 roadmap = "Phase 2 — typed/federated MCP, MCP over WebSocket"

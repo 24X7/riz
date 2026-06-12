@@ -33,6 +33,7 @@ fn bun_fn(handler: &str, concurrency: usize, ttl: Option<u64>) -> FunctionConfig
         memory_mb: None,
         cpu_time_secs: None,
         allowed_paths: None,
+        mcp: None,
     }
 }
 

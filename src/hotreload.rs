@@ -378,6 +378,7 @@ mod tests {
             memory_mb: None,
             cpu_time_secs: None,
             allowed_paths: None,
+            mcp: None,
         }
     }
 

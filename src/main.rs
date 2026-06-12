@@ -487,6 +487,9 @@ async fn run_mcp_inspect(url: &str, bearer: Option<&str>) -> anyhow::Result<()> 
             "    inputSchema:   {}",
             schema_summary(&tool["inputSchema"])
         );
+        if let Some(typed) = typed_params_summary(&tool["inputSchema"]) {
+            println!("    typed params:  {typed}");
+        }
         if has_output_schema {
             println!(
                 "    outputSchema:  {} (MCP 2025-06-18+ structured output)",
@@ -837,6 +840,38 @@ fn strip_handler_export(handler: &std::path::Path) -> std::path::PathBuf {
 }
 
 /// One-line summary of a JSON Schema fragment for the inspect report.
+/// One-line summary of the typed path/query params a tool's `inputSchema`
+/// declares (v1 roadmap #13) — `path { id: string* }, query { limit: integer }`
+/// (`*` = required). None when the tool has only the generic envelope.
+fn typed_params_summary(schema: &serde_json::Value) -> Option<String> {
+    let section = |key: &str| -> Option<String> {
+        let obj = &schema["properties"][key];
+        let props = obj["properties"].as_object()?;
+        let required: Vec<&str> = obj["required"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
+        let fields: Vec<String> = props
+            .iter()
+            .map(|(name, spec)| {
+                let kind = spec["type"].as_str().unwrap_or("any");
+                let star = if required.contains(&name.as_str()) { "*" } else { "" };
+                format!("{name}: {kind}{star}")
+            })
+            .collect();
+        Some(format!("{} {{ {} }}", key.trim_end_matches("Params"), fields.join(", ")))
+    };
+    let parts: Vec<String> = ["pathParams", "queryParams"]
+        .iter()
+        .filter_map(|k| section(k))
+        .collect();
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(", "))
+    }
+}
+
 fn schema_summary(schema: &serde_json::Value) -> String {
     let kind = schema["type"].as_str().unwrap_or("any");
     let props: Vec<&str> = schema["properties"]

@@ -365,6 +365,7 @@ fn validate_rejects_jwt_authorizer_with_wrong_type() {
                     memory_mb: None,
                     cpu_time_secs: None,
                     allowed_paths: None,
+                    mcp: None,
                 },
             );
             m

@@ -39,21 +39,6 @@ pub(super) fn jsonrpc_error_value(
     })
 }
 
-/// Schema describing the generic envelope every MCP tool accepts.
-pub(super) fn generic_envelope_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type": "object",
-        "properties": {
-            "route": {"type": "string", "description": "Optional \"METHOD /path\" selector when the function declares multiple routes. Omit to use the first declared route."},
-            "body": {"type": "string", "description": "Request body. Set isBase64Encoded:true for binary."},
-            "headers": {"type": "object", "additionalProperties": {"type": "string"}},
-            "queryParams": {"type": "object", "additionalProperties": {"type": "string"}},
-            "pathParams": {"type": "object", "additionalProperties": {"type": "string"}},
-            "isBase64Encoded": {"type": "boolean", "default": false}
-        }
-    })
-}
-
 /// MCP `outputSchema` for every Riz tool: the AWS Lambda API Gateway v2
 /// response envelope. Returning this on `tools/list` lets MCP 2025-06-18+
 /// clients validate `structuredContent` on `tools/call` responses without

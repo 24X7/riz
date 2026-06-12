@@ -184,6 +184,7 @@ async fn request_authorizer_allows_valid_token() {
             memory_mb: None,
             cpu_time_secs: None,
             allowed_paths: None,
+            mcp: None,
         },
     );
     functions.insert(
@@ -206,6 +207,7 @@ async fn request_authorizer_allows_valid_token() {
             memory_mb: None,
             cpu_time_secs: None,
             allowed_paths: None,
+            mcp: None,
         },
     );
 
@@ -281,6 +283,7 @@ async fn request_authorizer_rejects_invalid_token() {
             memory_mb: None,
             cpu_time_secs: None,
             allowed_paths: None,
+            mcp: None,
         },
     );
     functions.insert(
@@ -303,6 +306,7 @@ async fn request_authorizer_rejects_invalid_token() {
             memory_mb: None,
             cpu_time_secs: None,
             allowed_paths: None,
+            mcp: None,
         },
     );
 
@@ -376,6 +380,7 @@ async fn authorizer_none_opt_out_allows_any_request() {
             memory_mb: None,
             cpu_time_secs: None,
             allowed_paths: None,
+            mcp: None,
         },
     );
 

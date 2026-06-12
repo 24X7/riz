@@ -22,6 +22,7 @@
 
 mod encoding;
 mod protocol;
+mod schema;
 mod tools;
 
 use crate::auth::bearer::validate_bearer;
@@ -293,6 +294,7 @@ mod tests {
             memory_mb: None,
             cpu_time_secs: None,
             allowed_paths: None,
+            mcp: None,
         };
         FunctionState::user("api", c, "$default", 0)
     }
