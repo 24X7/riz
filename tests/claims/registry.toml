@@ -38,6 +38,12 @@ status = "proven"
 proof = "post_with_sse_accept_streams_the_response"
 
 [[claim]]
+id = "mcp-progress-notifications"
+page_text = "frames while it runs (progressToken echoed, progress increasing)"
+status = "proven"
+proof = "progress_notifications_stream_during_slow_tool_call"
+
+[[claim]]
 id = "llm-gateway-openai-compatible"
 page_text = "OpenAI-compatible gateway"
 status = "proven"

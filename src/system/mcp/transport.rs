@@ -65,9 +65,15 @@ pub async fn entry(
     }
 }
 
+/// Cadence of `notifications/progress` frames while a tool call runs.
+const PROGRESS_TICK: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// POST in SSE mode: dispatch the JSON-RPC body through the Router (bearer
 /// auth, parsing, batching all live in McpHandler::invoke) and re-frame a
-/// successful response as a one-event SSE stream. Errors (401 etc.) and
+/// successful response as a one-event SSE stream. A tools/call carrying
+/// `params._meta.progressToken` additionally receives `notifications/progress`
+/// frames while the handler runs (spec `notifications/progress`: token echoed
+/// verbatim, `progress` strictly increasing). Errors (401 etc.) and
 /// notification-only requests (202) pass through as plain HTTP — the spec
 /// only streams successful JSON-RPC responses.
 async fn sse_post(
@@ -82,6 +88,7 @@ async fn sse_post(
         Err(_) => return (StatusCode::PAYLOAD_TOO_LARGE, "body too large").into_response(),
     };
     let body = String::from_utf8_lossy(&body_bytes).to_string();
+    let parsed: Option<serde_json::Value> = serde_json::from_str(&body).ok();
 
     // Session correlation: echo a client-supplied id; mint one on initialize.
     let session_id = headers
@@ -89,11 +96,22 @@ async fn sse_post(
         .and_then(|v| v.to_str().ok())
         .map(str::to_string)
         .or_else(|| {
-            let is_initialize = serde_json::from_str::<serde_json::Value>(&body)
-                .ok()
+            let is_initialize = parsed
+                .as_ref()
                 .is_some_and(|v| v.get("method").and_then(|m| m.as_str()) == Some("initialize"));
             is_initialize.then(|| uuid::Uuid::new_v4().to_string())
         });
+
+    // Progress streaming: only for a single tools/call that opted in with a
+    // progressToken (spec: requests without the token get no notifications).
+    let progress_token = parsed
+        .as_ref()
+        .filter(|v| v.get("method").and_then(|m| m.as_str()) == Some("tools/call"))
+        .and_then(|v| v.pointer("/params/_meta/progressToken"))
+        .cloned();
+    if let Some(token) = progress_token {
+        return sse_post_with_progress(state, peer, headers, body, token, session_id).await;
+    }
 
     let event = make_mcp_event(&headers, &peer, body);
     let inner = {
@@ -144,6 +162,111 @@ async fn sse_post(
                 .into_response()
         }
     };
+    if let Some(sid) = session_id {
+        if let Ok(v) = http::HeaderValue::from_str(&sid) {
+            resp.headers_mut().insert(SESSION_HEADER, v);
+        }
+    }
+    resp
+}
+
+/// tools/call with a progressToken: stream `notifications/progress` frames at
+/// PROGRESS_TICK cadence while the handler runs, then the response frame, then
+/// end the stream. The producer task races the dispatch future against a
+/// ticker; the SSE body is fed from the channel so frames flush as they're
+/// produced (real streaming, not a buffered replay).
+async fn sse_post_with_progress(
+    state: Arc<AppState>,
+    peer: SocketAddr,
+    headers: HeaderMap,
+    body: String,
+    token: serde_json::Value,
+    session_id: Option<String>,
+) -> Response {
+    // Auth must be settled BEFORE the stream opens — once we answer 200 SSE
+    // we can't turn it into a 401. (McpHandler re-checks internally; this
+    // transport-level check exists so unauthorized callers never see frames.)
+    let expected = { state.config.read().await.effective_bearer_token() };
+    if let Some(expected) = expected {
+        let auth = headers
+            .get(http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok());
+        if !crate::auth::bearer::validate_bearer(auth, &expected) {
+            return (
+                StatusCode::UNAUTHORIZED,
+                [("content-type", "application/json")],
+                r#"{"error":"unauthorized"}"#,
+            )
+                .into_response();
+        }
+    }
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<Event>(64);
+    tokio::spawn(async move {
+        let started = std::time::Instant::now();
+        let event = make_mcp_event(&headers, &peer, body);
+        let dispatch = async {
+            let router = state.router.read().await;
+            match router.dispatch(event).await {
+                Ok(outcome) => outcome.response,
+                Err(e) => e.to_response(),
+            }
+        };
+        tokio::pin!(dispatch);
+        let mut ticker = tokio::time::interval(PROGRESS_TICK);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        ticker.tick().await; // consume the immediate first tick
+        let mut progress = 0u64;
+        let inner = loop {
+            tokio::select! {
+                resp = &mut dispatch => break resp,
+                _ = ticker.tick() => {
+                    progress += 1;
+                    let notif = serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "method": "notifications/progress",
+                        "params": {
+                            "progressToken": token,
+                            "progress": progress,
+                            "message": format!(
+                                "tool call running ({:.1}s elapsed)",
+                                started.elapsed().as_secs_f32()
+                            ),
+                        }
+                    });
+                    let frame = Event::default().event("message").data(notif.to_string());
+                    if tx.send(frame).await.is_err() {
+                        return; // client hung up — stop ticking; dispatch task ends
+                    }
+                }
+            }
+        };
+        state
+            .riz_state
+            .record_invocation(
+                "_riz_mcp",
+                started.elapsed().as_secs_f64() * 1000.0,
+                inner.status_code < 500,
+                false,
+            )
+            .await;
+        let payload = match inner.body {
+            Some(aws_lambda_events::encodings::Body::Text(s)) => s,
+            Some(aws_lambda_events::encodings::Body::Binary(v)) => {
+                String::from_utf8_lossy(&v).into_owned()
+            }
+            _ => String::new(),
+        };
+        let _ = tx
+            .send(Event::default().event("message").data(payload))
+            .await;
+        // tx drops here → rx ends → the SSE stream closes after the response.
+    });
+
+    let stream = stream::unfold(rx, |mut rx| async move {
+        rx.recv().await.map(|ev| (Ok::<_, Infallible>(ev), rx))
+    });
+    let mut resp = Sse::new(stream).into_response();
     if let Some(sid) = session_id {
         if let Ok(v) = http::HeaderValue::from_str(&sid) {
             resp.headers_mut().insert(SESSION_HEADER, v);
