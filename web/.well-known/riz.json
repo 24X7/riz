@@ -8,7 +8,7 @@
   "license": "Apache-2.0",
   "repo": "https://github.com/24X7/riz",
   "homepage": "https://riz.dev",
-  "binary_size": "~10 MB single static Rust binary",
+  "binary_size": "~35 MB single static Rust binary (wasmtime embedded)",
   "operating_systems": ["Linux", "macOS"],
   "architectures": ["x86_64", "aarch64"],
   "install_one_liner": "cargo install --git https://github.com/24X7/riz",

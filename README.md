@@ -9,7 +9,7 @@
 > auto-rollback, P50–P99 observability). Every function auto-becomes a typed
 > **MCP tool** an agent can call the moment riz boots — *zero glue*. A built-in
 > **OpenAI-compatible LLM gateway** sits on the same binary, so the model calls
-> your handlers make are routed, governed, and costed too. One ~10 MB Rust
+> your handlers make are routed, governed, and costed too. One ~35 MB Rust
 > binary, **no per-request cold start**, no Docker, no AWS bill. Apache-2.0.
 >
 > **Scope, up front:** riz runs **HTTP API Gateway v2 + WebSocket handlers**. It
@@ -229,7 +229,7 @@ clean `412`; cost surfaces next to latency in the same operator view.
 - Prometheus `/_riz/metrics`, rich `/_riz/health`, `/_riz/registry`, plus a live **terminal dashboard** (`--dev`) with P50–P99 latency; hand-rolled **OpenTelemetry** OTLP/HTTP-JSON span export (one path → Datadog and CloudWatch/X-Ray) from an isolated telemetry child
 - Process pool with semaphore-bounded concurrency, liveness watcher, auto-respawn on crash/timeout, two-phase graceful shutdown
 - `riz init` (7 templates), `riz doctor` (preflight), `riz routes`, `riz validate`, `riz mcp inspect`
-- **Single ~10 MB Rust binary** — no GC pauses, no Docker, no per-request container
+- **Single ~35 MB Rust binary** — no GC pauses, no Docker, no per-request container
 
 ---
 

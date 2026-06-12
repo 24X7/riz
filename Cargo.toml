@@ -65,6 +65,13 @@ reqwest = { version = "0.12", features = ["json", "blocking", "stream"] }
 # capability sandbox; the .wasm runs in the `riz __wasm-host` subprocess.
 wasmtime = "45"
 wasmtime-wasi = "45"
+# WASM resource broker (pg_query capability): Postgres-wire client + TLS.
+# tokio-postgres covers Neon / Supabase / RDS / any PG; rustls (ring) +
+# webpki-roots keep the single-static-binary story (no system TLS dependency).
+tokio-postgres = { version = "0.7", features = ["with-serde_json-1", "with-uuid-1", "with-chrono-0_4"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio-postgres-rustls = "0.13"
+webpki-roots = "0.26"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4"

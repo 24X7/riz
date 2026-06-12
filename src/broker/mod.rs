@@ -30,6 +30,8 @@
 //! Error codes are a closed set the guest can match on: `denied`,
 //! `throttled`, `timeout`, `too_large`, `bad_request`, `backend`.
 
+pub mod pg;
+
 use crate::config::CapabilityGrant;
 use std::collections::HashMap;
 use std::sync::Arc;
