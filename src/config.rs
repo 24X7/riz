@@ -170,7 +170,7 @@ pub struct Config {
 
 /// `[resources]` — named backends the broker may reach on behalf of granted
 /// functions. Declared once; referenced by `capabilities` grants.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, serde::Serialize)]
 pub struct ResourcesConfig {
     /// `[resources.pg.<name>]` — Postgres-wire backends. One config row
     /// covers Neon, Supabase, RDS, or any self-hosted PG: only the DSN
@@ -180,11 +180,7 @@ pub struct ResourcesConfig {
 }
 
 /// One named Postgres backend.
-// dead_code: consumed by the broker (lib target + tests) today; the bin
-// target wires it into the __wasm-host in broker v1 Phase B, at which point
-// this allow comes off.
-#[allow(dead_code)]
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct PgResourceConfig {
     /// Env var holding the connection string (read host-side at spawn; the
     /// DSN itself never appears in config or guest memory).
@@ -202,11 +198,7 @@ fn default_pg_statement_timeout_ms() -> u64 {
 /// NAME (the toml key) is what the guest passes to broker verbs; it is an
 /// opaque handle, never a DSN or credential. Deny-by-default: a function
 /// with no capabilities block has zero brokered access.
-// dead_code: limit fields are read by the broker dispatcher (lib target +
-// tests); the bin target consumes them via the __wasm-host wiring in broker
-// v1 Phase B, at which point this allow comes off.
-#[allow(dead_code)]
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct CapabilityGrant {
     /// Capability class. v1: `"pg"` only.
     pub r#type: String,

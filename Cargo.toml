@@ -7,7 +7,7 @@ members = [
 ]
 # echo-wasm is built for wasm32-wasip1, not the host target — keep it out of the
 # host workspace so `cargo build` / `cargo nextest` don't try to compile it.
-exclude = ["examples/lambdas/echo-wasm"]
+exclude = ["examples/lambdas/echo-wasm", "tests/fixtures/broker-wasm"]
 
 [package]
 name = "riz"

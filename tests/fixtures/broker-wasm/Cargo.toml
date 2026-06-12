@@ -1,0 +1,15 @@
+# Independent workspace root — built for wasm32-wasip1, not part of the host workspace.
+[workspace]
+
+[package]
+name = "broker-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "Broker e2e guest: calls the riz_broker pg_query host import from inside the WASI sandbox"
+
+[dependencies]
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+strip = true

@@ -92,6 +92,12 @@ status = "proven"
 proof = "child_with_allowlist_can_read_allowed_path_only"
 
 [[claim]]
+id = "wasm-resource-broker"
+page_text = "the sandboxed guest reaches Postgres through the host broker — the guest never opens a socket and never sees a DSN"
+status = "proven"
+proof = "wasm_guest_brokers_pg_through_capability_grants"
+
+[[claim]]
 id = "websocket-management-api"
 page_text = "management API at"
 status = "proven"

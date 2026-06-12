@@ -1,4 +1,5 @@
 mod auth;
+mod broker;
 mod cache;
 mod config;
 mod cors;
@@ -1032,6 +1033,16 @@ async fn async_main() -> anyhow::Result<()> {
     config
         .validate()
         .map_err(|e| anyhow::anyhow!("invalid config: {e}"))?;
+
+    // Resource broker: hand the [resources] definitions to wasm pool children
+    // through the process environment. Children inherit this plus the DSN env
+    // vars the resources name — grants travel per-function in argv (see
+    // WasmRuntime::spawn_command); credentials never appear in argv or config.
+    if config.functions.values().any(|f| !f.capabilities.is_empty()) {
+        if let Ok(json) = serde_json::to_string(&config.resources) {
+            std::env::set_var("RIZ_BROKER_RESOURCES", json);
+        }
+    }
 
     match &cli.command {
         Some(Commands::Validate) => {

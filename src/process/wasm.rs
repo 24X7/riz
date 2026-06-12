@@ -70,6 +70,15 @@ impl LambdaRuntime for WasmRuntime {
         for (k, v) in &cfg.stage_variables {
             cmd.arg("--env").arg(format!("{k}={v}"));
         }
+        // Broker capability grants (resource broker v1). The grants are limit
+        // config only — resource definitions ride the RIZ_BROKER_RESOURCES
+        // env var (set at startup) and DSNs resolve from the child's own
+        // inherited environment. No credential ever appears in argv.
+        if !cfg.capabilities.is_empty() {
+            if let Ok(json) = serde_json::to_string(&cfg.capabilities) {
+                cmd.arg("--broker-grants").arg(json);
+            }
+        }
         cmd
     }
 
@@ -90,10 +99,23 @@ pub fn run_host(args: &[String]) -> anyhow::Result<()> {
     run_host_inner(args).map_err(|e| anyhow::anyhow!("{e:?}"))
 }
 
+/// Store data for the wasm host: the WASI context plus the broker seam.
+struct HostCtx {
+    wasi: wasmtime_wasi::p1::WasiP1Ctx,
+    /// Armed when the function has `[function.x.capabilities]` grants.
+    broker: Option<std::sync::Arc<crate::broker::Broker>>,
+    /// Current-thread tokio runtime driving the broker's async I/O. The
+    /// guest is blocked inside its own host call while this runs — no
+    /// reentrancy.
+    rt: Option<std::sync::Arc<tokio::runtime::Runtime>>,
+    /// Response bytes from the last broker call, awaiting `read_response`.
+    stash: Vec<u8>,
+}
+
 fn run_host_inner(args: &[String]) -> wasmtime::Result<()> {
     use wasmtime::error::Context as _;
     use wasmtime::{bail, Engine, Linker, Module, Store};
-    use wasmtime_wasi::p1::{self, WasiP1Ctx};
+    use wasmtime_wasi::p1;
     use wasmtime_wasi::{DirPerms, FilePerms, I32Exit, WasiCtxBuilder};
 
     let Some(module_path) = args.first() else {
@@ -102,6 +124,7 @@ fn run_host_inner(args: &[String]) -> wasmtime::Result<()> {
 
     let mut dirs: Vec<String> = Vec::new();
     let mut envs: Vec<(String, String)> = Vec::new();
+    let mut broker_grants_json: Option<String> = None;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -121,17 +144,51 @@ fn run_host_inner(args: &[String]) -> wasmtime::Result<()> {
                 }
                 i += 2;
             }
+            "--broker-grants" => {
+                let Some(json) = args.get(i + 1) else {
+                    bail!("__wasm-host: --broker-grants requires a JSON argument");
+                };
+                broker_grants_json = Some(json.clone());
+                i += 2;
+            }
             other => bail!("__wasm-host: unexpected argument {other:?}"),
         }
     }
+
+    // ── Resource broker (capability grants) ─────────────────────────────
+    // Grants arrive in argv (limit config only); [resources] definitions ride
+    // RIZ_BROKER_RESOURCES in the inherited env; DSNs resolve from the env
+    // vars the resources name. Failures here are startup errors — a granted
+    // function that can't arm its broker must not come up half-armed.
+    let (broker, rt) = match broker_grants_json {
+        None => (None, None),
+        Some(json) => {
+            let grants: indexmap::IndexMap<String, crate::config::CapabilityGrant> =
+                serde_json::from_str(&json).context("--broker-grants is not valid JSON")?;
+            let resources_json = std::env::var("RIZ_BROKER_RESOURCES")
+                .context("--broker-grants given but RIZ_BROKER_RESOURCES is not set")?;
+            let resources: crate::config::ResourcesConfig =
+                serde_json::from_str(&resources_json)
+                    .context("RIZ_BROKER_RESOURCES is not valid JSON")?;
+            let backends = crate::broker::pg::backends_for_function(&grants, &resources)
+                .map_err(|e| wasmtime::format_err!("broker backend setup failed: {e}"))?;
+            let broker = std::sync::Arc::new(crate::broker::Broker::new(&grants, backends));
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .context("failed to build broker runtime")?;
+            (Some(broker), Some(std::sync::Arc::new(rt)))
+        }
+    };
 
     let engine = Engine::default();
     let module = Module::from_file(&engine, module_path)
         .with_context(|| format!("failed to load wasm module {module_path}"))?;
 
-    let mut linker: Linker<WasiP1Ctx> = Linker::new(&engine);
-    p1::add_to_linker_sync(&mut linker, |t| t)
+    let mut linker: Linker<HostCtx> = Linker::new(&engine);
+    p1::add_to_linker_sync(&mut linker, |t: &mut HostCtx| &mut t.wasi)
         .context("failed to wire WASIp1 into the linker")?;
+    add_broker_imports(&mut linker).context("failed to wire broker imports")?;
 
     let mut builder = WasiCtxBuilder::new();
     builder.inherit_stdin().inherit_stdout().inherit_stderr();
@@ -145,7 +202,15 @@ fn run_host_inner(args: &[String]) -> wasmtime::Result<()> {
     }
     let wasi = builder.build_p1();
 
-    let mut store = Store::new(&engine, wasi);
+    let mut store = Store::new(
+        &engine,
+        HostCtx {
+            wasi,
+            broker,
+            rt,
+            stash: Vec::new(),
+        },
+    );
     let instance = linker
         .instantiate(&mut store, &module)
         .context("failed to instantiate wasm module")?;
@@ -167,4 +232,83 @@ fn run_host_inner(args: &[String]) -> wasmtime::Result<()> {
             Err(e).context("wasm guest trapped")
         }
     }
+}
+
+/// The guest-facing broker ABI (import module `riz_broker`), v1:
+///
+/// - `pg_query(grant_ptr, grant_len, req_ptr, req_len) -> i32`
+///   Runs the brokered call; the response (success or error envelope, always
+///   JSON) is stashed host-side. Returns the stashed length, or -1 for an
+///   ABI-level fault (out-of-bounds pointers). With no grants armed this
+///   still answers — with a `denied` envelope, never a trap.
+/// - `read_response(dst_ptr, dst_cap) -> i32`
+///   Copies the stashed response into guest memory and clears the stash;
+///   returns the length. If `dst_cap` is too small, copies nothing and
+///   returns the needed length (stash persists; call again with a bigger
+///   buffer). 0 when nothing is stashed.
+fn add_broker_imports(linker: &mut wasmtime::Linker<HostCtx>) -> wasmtime::Result<()> {
+    linker.func_wrap(
+        "riz_broker",
+        "pg_query",
+        |mut caller: wasmtime::Caller<'_, HostCtx>,
+         grant_ptr: i32,
+         grant_len: i32,
+         req_ptr: i32,
+         req_len: i32|
+         -> i32 {
+            let Some(wasmtime::Extern::Memory(memory)) = caller.get_export("memory") else {
+                return -1;
+            };
+            let mut grant_buf = vec![0u8; grant_len.max(0) as usize];
+            let mut req_buf = vec![0u8; req_len.max(0) as usize];
+            if memory.read(&caller, grant_ptr as usize, &mut grant_buf).is_err()
+                || memory.read(&caller, req_ptr as usize, &mut req_buf).is_err()
+            {
+                return -1;
+            }
+            let grant = String::from_utf8_lossy(&grant_buf).into_owned();
+            let (broker, rt) = {
+                let ctx = caller.data();
+                (ctx.broker.clone(), ctx.rt.clone())
+            };
+            let response = match (broker, rt) {
+                (Some(broker), Some(rt)) => rt.block_on(broker.pg_query(&grant, &req_buf)),
+                // No grants armed: deny-by-default, as an envelope the guest
+                // can parse — never a trap.
+                _ => serde_json::json!({
+                    "ok": false,
+                    "error": {"code": "denied", "message": "function has no capability grants"}
+                })
+                .to_string()
+                .into_bytes(),
+            };
+            let len = response.len() as i32;
+            caller.data_mut().stash = response;
+            len
+        },
+    )?;
+    linker.func_wrap(
+        "riz_broker",
+        "read_response",
+        |mut caller: wasmtime::Caller<'_, HostCtx>, dst_ptr: i32, dst_cap: i32| -> i32 {
+            let stash_len = caller.data().stash.len() as i32;
+            if stash_len == 0 {
+                return 0;
+            }
+            if dst_cap < stash_len {
+                return stash_len; // tell the guest how much room it needs
+            }
+            let Some(wasmtime::Extern::Memory(memory)) = caller.get_export("memory") else {
+                return -1;
+            };
+            let stash = std::mem::take(&mut caller.data_mut().stash);
+            if memory.write(&mut caller, dst_ptr as usize, &stash).is_err() {
+                // Restore so the guest can retry with a valid pointer.
+                caller.data_mut().stash = stash;
+                return -1;
+            }
+            stash_len
+        },
+    )?;
+    Ok(())
 }
