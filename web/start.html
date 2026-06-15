@@ -54,17 +54,18 @@
 
 <section style="padding-top:3rem">
   <div class="wrap">
-    <div class="steps">
+    <!-- no-JS / reduced-motion fallback: reveal all panels, drop the sticky -->
+    <noscript><style>
+      .scrolly-sticky{position:static!important}
+      .scrolly-panel{display:block!important;margin-bottom:1.4rem}
+      .scrolly-step{opacity:1!important}
+    </style></noscript>
 
-      <div class="step">
-        <div class="step-n"></div>
-        <div>
-          <h3>Install the binary</h3>
-          <p>One static binary, no Docker. The installer drops <code>riz</code> on your PATH;
-          or build from source with cargo; or grab a release artifact directly.</p>
-        </div>
-        <div class="well">
-          <div class="well-hd"><b>shell</b><span>pick one</span></div>
+    <div class="scrolly" id="scrolly">
+      <!-- sticky code column (DOM-first so it pins to top on mobile) -->
+      <div class="scrolly-sticky preinit" id="scrollySticky" aria-hidden="true">
+        <div class="well scrolly-panel" data-panel="0">
+          <div class="well-hd"><b><span class="step-tag">01</span> · shell</b><span>pick one</span></div>
           <pre><span class="c"># installer (release binaries)</span>
 $ curl -fsSL https://riz.dev/install | sh
 
@@ -73,55 +74,24 @@ $ cargo install --git https://github.com/24X7/riz
 
 <span class="c"># or: github.com/24X7/riz/releases</span></pre>
         </div>
-      </div>
-
-      <div class="step">
-        <div class="step-n"></div>
-        <div>
-          <h3>Scaffold a working project</h3>
-          <p>Seven templates: <code>typescript-http</code>, <code>nodejs-http</code>, <code>python-http</code>,
-          <code>rust-http</code>, plus WebSocket variants for TS, Python, and Rust.
-          Each is a handler + <code>riz.toml</code> that boots first try.</p>
-        </div>
-        <div class="well">
-          <div class="well-hd"><b>shell</b></div>
+        <div class="well scrolly-panel" data-panel="1">
+          <div class="well-hd"><b><span class="step-tag">02</span> · shell</b></div>
           <pre>$ riz init typescript-http my-app
 $ cd my-app
 
 <span class="c"># see all templates:</span>
 $ riz init --list</pre>
         </div>
-      </div>
-
-      <div class="step">
-        <div class="step-n"></div>
-        <div>
-          <h3>Boot it</h3>
-          <p><code>riz run</code> is headless (JSON logs, production-shaped).
-          Add <code>--dev</code> for the live terminal dashboard — requests, logs, and
-          P50–P99 percentiles as you work. Edit the handler, save, the next request
-          hits the new code.</p>
-        </div>
-        <div class="well">
-          <div class="well-hd"><b>shell</b></div>
+        <div class="well scrolly-panel" data-panel="2">
+          <div class="well-hd"><b><span class="step-tag">03</span> · shell</b></div>
           <pre>$ riz run --dev
 
 <span class="c"># http API + MCP server are both live:</span>
 <span class="c">#   http://localhost:3000/api</span>
 <span class="c">#   http://localhost:3000/_riz/mcp</span></pre>
         </div>
-      </div>
-
-      <div class="step">
-        <div class="step-n"></div>
-        <div>
-          <h3>Hit it like API Gateway</h3>
-          <p>Same payloads AWS sends — path params, query strings, headers, cookies,
-          binary bodies. If your handler ran on Lambda, it runs here; if it runs here,
-          it'll run on Lambda.</p>
-        </div>
-        <div class="well">
-          <div class="well-hd"><b>shell</b></div>
+        <div class="well scrolly-panel" data-panel="3">
+          <div class="well-hd"><b><span class="step-tag">04</span> · shell</b></div>
           <pre>$ curl localhost:3000/api
 {"message":"hello from riz"}
 
@@ -129,18 +99,8 @@ $ riz init --list</pre>
 $ curl localhost:3000/_riz/health
 $ curl localhost:3000/_riz/metrics</pre>
         </div>
-      </div>
-
-      <div class="step">
-        <div class="step-n"></div>
-        <div>
-          <h3>Point an agent at it</h3>
-          <p>This is the step other runtimes don't have. Your function is already a typed
-          MCP tool — wire up a client and ask it to call your API. Verify the whole
-          surface first with <code>riz mcp inspect</code>.</p>
-        </div>
-        <div class="well">
-          <div class="well-hd"><b>shell</b></div>
+        <div class="well scrolly-panel" data-panel="4">
+          <div class="well-hd"><b><span class="step-tag">05</span> · shell</b></div>
           <pre>$ claude mcp add riz --transport http \
     http://localhost:3000/_riz/mcp
 
@@ -152,6 +112,54 @@ $ riz mcp inspect
         </div>
       </div>
 
+      <!-- the narrative steps that drive the panel -->
+      <div class="scrolly-steps">
+        <div class="scrolly-step" data-step="0">
+          <div class="sn"></div>
+          <div>
+            <h3>Install the binary</h3>
+            <p>One static binary, no Docker. The installer drops <code>riz</code> on your PATH;
+            or build from source with cargo; or grab a release artifact directly.</p>
+          </div>
+        </div>
+        <div class="scrolly-step" data-step="1">
+          <div class="sn"></div>
+          <div>
+            <h3>Scaffold a working project</h3>
+            <p>Seven templates: <code>typescript-http</code>, <code>nodejs-http</code>, <code>python-http</code>,
+            <code>rust-http</code>, plus WebSocket variants for TS, Python, and Rust.
+            Each is a handler + <code>riz.toml</code> that boots first try.</p>
+          </div>
+        </div>
+        <div class="scrolly-step" data-step="2">
+          <div class="sn"></div>
+          <div>
+            <h3>Boot it</h3>
+            <p><code>riz run</code> is headless (JSON logs, production-shaped).
+            Add <code>--dev</code> for the live terminal dashboard — requests, logs, and
+            P50–P99 percentiles as you work. Edit the handler, save, the next request
+            hits the new code.</p>
+          </div>
+        </div>
+        <div class="scrolly-step" data-step="3">
+          <div class="sn"></div>
+          <div>
+            <h3>Hit it like API Gateway</h3>
+            <p>Same payloads AWS sends — path params, query strings, headers, cookies,
+            binary bodies. If your handler ran on Lambda, it runs here; if it runs here,
+            it'll run on Lambda.</p>
+          </div>
+        </div>
+        <div class="scrolly-step" data-step="4">
+          <div class="sn"></div>
+          <div>
+            <h3>Point an agent at it</h3>
+            <p>This is the step other runtimes don't have. Your function is already a typed
+            MCP tool — wire up a client and ask it to call your API. Verify the whole
+            surface first with <code>riz mcp inspect</code>.</p>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="callout" style="max-width:none;margin-top:2.6rem">
@@ -238,6 +246,42 @@ $ riz mcp inspect
     </div>
   </div>
 </footer>
+
+<script>
+// Scrollytelling: the sticky code panel follows the step in view. Progressive
+// enhancement — without this the <noscript> block shows every panel inline.
+(function () {
+  var sticky = document.getElementById('scrollySticky');
+  if (!sticky || !('IntersectionObserver' in window)) return;
+  var steps = Array.prototype.slice.call(document.querySelectorAll('.scrolly-step'));
+  var panels = Array.prototype.slice.call(document.querySelectorAll('.scrolly-panel'));
+  if (!steps.length || !panels.length) return;
+
+  sticky.classList.remove('preinit');
+  var current = -1;
+  function activate(i) {
+    if (i === current) return;
+    current = i;
+    steps.forEach(function (s, idx) { s.classList.toggle('active', idx === i); });
+    panels.forEach(function (p, idx) { p.classList.toggle('show', idx === i); });
+  }
+  activate(0);
+
+  // Activate the step whose center is nearest the viewport middle.
+  var obs = new IntersectionObserver(function (entries) {
+    // Pick the most-visible intersecting step.
+    var best = null, bestRatio = 0;
+    entries.forEach(function (e) {
+      if (e.isIntersecting && e.intersectionRatio > bestRatio) {
+        best = e.target; bestRatio = e.intersectionRatio;
+      }
+    });
+    if (best) activate(parseInt(best.getAttribute('data-step'), 10));
+  }, { rootMargin: '-45% 0px -45% 0px', threshold: [0, 0.5, 1] });
+
+  steps.forEach(function (s) { obs.observe(s); });
+})();
+</script>
 
 </body>
 </html>

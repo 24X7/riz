@@ -412,6 +412,50 @@ footer{border-top:1px solid var(--line);margin-top:4rem;background:var(--ink-2)}
   font-family:var(--mono);font-size:.7rem;color:var(--t-low);
 }
 
+/* ════════ SCROLLYTELLING (getting started) ════════
+   DOM order is sticky-panel FIRST, steps SECOND — so on mobile the panel pins
+   to the top and the steps scroll under it (and on desktop grid placement puts
+   steps left, panel right). IntersectionObserver swaps the panel to match the
+   step in view (adds .active / .show; see start.html). Degrades without JS via
+   the <noscript> override on the page. */
+.scrolly{
+  display:grid;grid-template-columns:1fr 1.04fr;gap:3.4rem;
+  margin-top:2.4rem;align-items:start;
+}
+.scrolly-steps{grid-column:1;grid-row:1;display:flex;flex-direction:column;counter-reset:sstep}
+.scrolly-sticky{grid-column:2;grid-row:1;position:sticky;top:88px;height:fit-content}
+.scrolly-step{
+  position:relative;
+  display:grid;grid-template-columns:60px 1fr;gap:1.5rem;
+  padding:2.9rem 0;border-top:1px solid var(--line);
+  opacity:.4;transition:opacity .35s ease;
+}
+.scrolly-step:first-child{border-top:none}
+.scrolly-step.active{opacity:1}
+.scrolly-step.active::before{
+  content:'';position:absolute;left:-1px;top:2.9rem;bottom:2.9rem;width:2px;
+  background:var(--acid);
+}
+.scrolly-step .sn{
+  counter-increment:sstep;
+  font-family:var(--mono);font-weight:700;font-size:1.9rem;line-height:1;
+  color:var(--line-2);transition:color .35s ease;
+}
+.scrolly-step .sn::before{content:'0' counter(sstep)}
+.scrolly-step.active .sn{color:var(--acid)}
+.scrolly-step h3{font-size:1.32rem;color:var(--t-max);letter-spacing:-0.02em;margin-bottom:.5rem}
+.scrolly-step p{font-size:.97rem;color:var(--t-mid)}
+.scrolly-step p code{
+  font-size:.82em;color:var(--t-hi);background:var(--ink-3);
+  border:1px solid var(--line);padding:.06rem .32rem;border-radius:3px;
+}
+.scrolly-panel{display:none}
+.scrolly-panel.show{display:block;animation:panelin .4s ease}
+/* first paint, before JS: show panel one so the column is never empty */
+.scrolly-sticky.preinit .scrolly-panel:first-child{display:block}
+@keyframes panelin{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.scrolly-panel .well-hd .step-tag{color:var(--acid);font-weight:700}
+
 /* ════════ RESPONSIVE ════════ */
 @media (max-width: 980px){
   .caps{grid-template-columns:repeat(2,1fr)}
@@ -421,6 +465,12 @@ footer{border-top:1px solid var(--line);margin-top:4rem;background:var(--ink-2)}
   .doc-shell{grid-template-columns:1fr}
   .doc-side{position:static;flex-direction:row;flex-wrap:wrap;border-left:none;gap:.4rem}
   .foot-in{grid-template-columns:1fr 1fr}
+  /* one column: the code panel pins to the top, steps scroll beneath it */
+  .scrolly{display:block}
+  .scrolly-sticky{position:sticky;top:62px;z-index:5;margin-bottom:1.6rem;
+    background:var(--ink);padding-bottom:.4rem}
+  .scrolly-step{opacity:1;padding:2.2rem 0}
+  .scrolly-step.active::before{display:none}
 }
 @media (max-width: 640px){
   .caps{grid-template-columns:1fr}
