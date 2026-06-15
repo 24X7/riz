@@ -17,6 +17,52 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"/>
   <link rel="stylesheet" href="site.css"/>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "riz",
+    "description": "Self-hosted AWS Lambda runtime in one Rust binary. Write a plain AWS-Lambda-shaped handler — no web framework to pick — and the runtime makes it production-grade: always-on safety profile, supervised crash-respawn, graceful in-flight drain, real percentile observability, and warm pre-spawned pools (no per-request cold start). Every function becomes a typed MCP tool an agent can call the moment it boots. Five runtimes: Bun, Node.js, Python, Rust, and capability-sandboxed WASM, with a resource broker and fail-closed WASM guards. OpenAI-compatible LLM gateway built in.",
+    "url": "https://riz.dev",
+    "sameAs": ["https://github.com/24X7/riz"],
+    "applicationCategory": "DeveloperApplication",
+    "applicationSubCategory": "Serverless Runtime",
+    "operatingSystem": "Linux, macOS",
+    "softwareVersion": "0.1",
+    "license": "https://www.apache.org/licenses/LICENSE-2.0",
+    "codeRepository": "https://github.com/24X7/riz",
+    "programmingLanguage": ["TypeScript","JavaScript","Python","Rust","WebAssembly"],
+    "keywords": ["AWS Lambda","serverless","MCP","Model Context Protocol","agent tools","LLM gateway","WASM","WASI","Rust","self-hosted","runtime"],
+    "featureList": [
+      "Every function auto-exposed as a typed MCP tool at /_riz/mcp (spec 2025-11-25) — zero SDK, zero glue",
+      "Per-route typed MCP tool schemas — path params typed from route templates, validated on call (-32602 names the bad param)",
+      "MCP Streamable HTTP with SSE response frames, sessions, and notifications/progress during long tool calls",
+      "Exact AWS API Gateway v2 HTTP + WebSocket payloads — handlers move between AWS and riz unchanged",
+      "Warm pre-spawned process pool per function — no per-request cold start",
+      "Five runtimes: Bun, Node.js, Python, Rust, and capability-sandboxed WASI/WASM — cross-runtime parity tested",
+      "Resource broker: sandboxed WASM queries Postgres (Neon/Supabase/any PG) via capability grants — no sockets, no DSNs in guest memory",
+      "WASM guards (guard_in/guard_out): one .wasm policy validates, scrubs, or redacts across all five runtimes, fail-closed",
+      "OpenAI-compatible LLM gateway with provider routing, SSE streaming, embeddings, and bearer-gated budget caps that fail closed",
+      "Always-on per-child safety profile: RLIMIT_CORE=0, NOFILE=4096, FSIZE=100MiB, NPROC=256, PR_SET_PDEATHSIG=SIGKILL, NO_NEW_PRIVS",
+      "Supervised crash-respawn with a liveness watcher and a graceful 30s in-flight drain",
+      "S3 hot-swap deploys with health-check and automatic rollback; riz.toml + handler-source hot-reload",
+      "Real percentile observability (P50–P99) + Prometheus at /_riz/metrics + OpenTelemetry OTLP export with token-aware GenAI tracing",
+      "JWT/JWKS + REQUEST Lambda authorizers (RS256/ES256) — Auth0, Cognito, Okta, WorkOS, Clerk"
+    ],
+    "author": {
+      "@type": "Person",
+      "name": "Chris Rizzuto",
+      "email": "chris@riz.dev",
+      "url": "https://linkedin.com/in/ship247"
+    },
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD",
+      "category": "Free, open-source"
+    }
+  }
+  </script>
 </head>
 <body>
 <div class="gridbg"></div>

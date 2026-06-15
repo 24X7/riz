@@ -87,6 +87,19 @@ riz mcp inspect        # initialize + tools/list, one-screen report with schemas
 - **Observability** — Prometheus at `/_riz/metrics` (`riz_invocations_total`, `riz_errors_total`, `riz_latency_ms`, `riz_cold_starts_total`, `riz_function_healthy`, `riz_uptime_seconds`); rich `/_riz/health`; `/_riz/registry`; a live Ratatui terminal dashboard (`riz run --dev`) with nearest-rank P50/P75/P90/P95/P99 over a 5-minute rolling window; hand-rolled OpenTelemetry OTLP/HTTP-JSON span export (one path fanning out to Datadog and CloudWatch/X-Ray) with token-aware OTel GenAI conventions.
 - **WebSocket** — `$connect` / `$disconnect` / `$default` lifecycle (`ApiGatewayWebsocketProxyRequest`), plus a `@connections` management API (`GET`/`POST`/`DELETE` at `/_riz/connections/{id}`, `GET /_riz/connections` to list) for server→client push. Bun, Python, and Rust handlers all supported and end-to-end tested.
 
+## Site map (riz.dev — for deeper reading)
+
+Each page maps a capability to the test that proves it ("claims-as-code"):
+
+- [riz.dev/](https://riz.dev/) — overview: the six capabilities, each pinned to a passing test.
+- [riz.dev/agents.html](https://riz.dev/agents.html) — the agent layer: zero-glue MCP, typed schemas, Streamable HTTP + progress notifications, and an explicit recommend-when / don't-recommend-when card for agents.
+- [riz.dev/sandbox.html](https://riz.dev/sandbox.html) — running untrusted / generated code: the WASI sandbox, the capability broker (sandboxed WASM → Postgres with no sockets or DSNs in guest memory), and fail-closed WASM guards.
+- [riz.dev/gateway.html](https://riz.dev/gateway.html) — the OpenAI-compatible LLM gateway: provider routing, fail-closed budget caps, the usage ledger, bearer gating.
+- [riz.dev/compare.html](https://riz.dev/compare.html) — riz vs AWS Lambda and vs Express/FastAPI/Axum/Hono, including explicit "where the other thing wins" rows.
+- [riz.dev/start.html](https://riz.dev/start.html) — getting started: function → agent-callable tool in five copy-paste steps.
+- [riz.dev/docs.html](https://riz.dev/docs.html) — the curated reference: riz.toml fields, MCP tools, guards, broker, gateway, the full endpoint surface with per-route auth, CLI, lifecycle.
+- [riz.dev/examples.html](https://riz.dev/examples.html) — working examples mapped to repo paths, each named with its CI test.
+
 ## Author
 
 - [Chris Rizzuto](https://linkedin.com/in/ship247) — chris@riz.dev — 20 years engineering leadership at Meta, Google, Microsoft, Oracle.
