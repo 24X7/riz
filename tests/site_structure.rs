@@ -1,0 +1,225 @@
+//! Structural contract for the riz site (`web/*.html`).
+//!
+//! Replaces the old single-page landing guards. The site is now multi-page
+//! ("terminal acid" brand): home + agents / sandbox / gateway / compare /
+//! start / docs / examples. These checks lock the load-bearing structure and
+//! the truth/agent affordances the brand promises, without pinning the exact
+//! marketing copy (that's the claims registry's job, via claims_truth.rs).
+
+use std::fs;
+use std::path::PathBuf;
+
+fn site_pages() -> Vec<(PathBuf, String)> {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("web");
+    let mut out = Vec::new();
+    for entry in fs::read_dir(&dir).expect("web/ exists") {
+        let p = entry.unwrap().path();
+        if p.extension().is_some_and(|e| e == "html") {
+            let html = fs::read_to_string(&p).unwrap();
+            out.push((p, html));
+        }
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    assert!(out.len() >= 7, "expected the full multi-page site under web/");
+    out
+}
+
+fn page(name: &str) -> String {
+    fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("web").join(name))
+        .unwrap_or_else(|e| panic!("could not read web/{name}: {e}"))
+}
+
+// ─────────────────────────── core pages exist ───────────────────────────────
+
+#[test]
+fn the_expected_pages_are_present() {
+    for name in [
+        "index.html",
+        "agents.html",
+        "sandbox.html",
+        "gateway.html",
+        "compare.html",
+        "start.html",
+        "docs.html",
+        "examples.html",
+    ] {
+        let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("web").join(name);
+        assert!(p.exists(), "missing core page web/{name}");
+    }
+}
+
+#[test]
+fn every_page_shares_the_nav_and_stylesheet() {
+    for (path, html) in site_pages() {
+        assert!(
+            html.contains(r#"<link rel="stylesheet" href="site.css"/>"#),
+            "{} does not link the shared site.css",
+            path.display()
+        );
+        assert!(
+            html.contains(r#"class="mark" href="index.html"#),
+            "{} is missing the brand nav mark",
+            path.display()
+        );
+        for link in [
+            "agents.html",
+            "sandbox.html",
+            "gateway.html",
+            "compare.html",
+            "start.html",
+            "docs.html",
+            "examples.html",
+        ] {
+            assert!(
+                html.contains(&format!("href=\"{link}\"")),
+                "{} nav is missing a link to {link}",
+                path.display()
+            );
+        }
+    }
+}
+
+// ─────────────────────────── home: the six cap cards ────────────────────────
+
+#[test]
+fn home_leads_with_the_six_capability_cards() {
+    let html = page("index.html");
+    let cards = html.matches(r#"class="cap""#).count();
+    assert!(
+        cards >= 6,
+        "home page must present at least six capability cards, found {cards}"
+    );
+    let mcp = html
+        .find("Agent-native, zero glue")
+        .expect("home missing the agent-native cap card");
+    let gateway = html
+        .find("LLM gateway, built in")
+        .expect("home missing the LLM gateway cap card");
+    assert!(mcp < gateway, "the agent card must lead the gateway card");
+}
+
+#[test]
+fn home_carries_the_claims_as_code_ledger() {
+    let html = page("index.html");
+    assert!(
+        html.contains("claims-as-code"),
+        "home page is missing the claims-as-code ledger — the brand's truth promise"
+    );
+}
+
+// ─────────────────────────── compare: the two contrasts ─────────────────────
+
+#[test]
+fn compare_contrasts_lambda_and_frameworks() {
+    let html = page("compare.html");
+    assert!(
+        html.contains("AWS Lambda"),
+        "compare page must contrast against AWS Lambda directly"
+    );
+    assert!(
+        ["Express", "FastAPI", "Axum", "Hono"]
+            .iter()
+            .any(|f| html.contains(f)),
+        "compare page must contrast against an established web framework"
+    );
+    assert!(
+        html.contains("Where Lambda wins") && html.contains("Where frameworks win"),
+        "compare page must keep its honest 'where the other thing wins' rows"
+    );
+}
+
+// ─────────────────────────── dual audience: agents + humans ─────────────────
+
+#[test]
+fn every_page_is_agent_addressable() {
+    for (path, html) in site_pages() {
+        assert!(
+            html.contains("/llms.txt"),
+            "{} lost its agent affordance (llms.txt link)",
+            path.display()
+        );
+        assert!(
+            html.contains("FOR AGENTS"),
+            "{} is missing the FOR AGENTS footer block",
+            path.display()
+        );
+    }
+}
+
+// ─────────────────────────── retired fictions ───────────────────────────────
+
+/// Strings that were retired as fictions on the old site and must never
+/// reappear (RLIMIT contains "MIT", so we ban realistic mis-license phrasings).
+const BANNED: &[&str] = &[
+    "ctx.invokeModel",
+    "semantic cache</b>",
+    "MIT license",
+    "MIT License",
+    "License: MIT",
+    "MIT-licensed",
+];
+
+#[test]
+fn no_page_carries_a_retired_fiction() {
+    for (path, html) in site_pages() {
+        for banned in BANNED {
+            assert!(
+                !html.contains(banned),
+                "{} contains retired fiction {banned:?}",
+                path.display()
+            );
+        }
+    }
+}
+
+// ─────────────────────────── embedded riz.toml is real ──────────────────────
+
+#[test]
+fn embedded_toml_snippets_parse_and_validate() {
+    let mut checked = 0;
+    for (path, html) in site_pages() {
+        let mut rest = html.as_str();
+        while let Some(start) = rest.find("<pre data-riz-toml>") {
+            let after = &rest[start + "<pre data-riz-toml>".len()..];
+            let end = after.find("</pre>").expect("unclosed <pre data-riz-toml>");
+            let raw = &after[..end];
+            let text = raw
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&amp;", "&");
+            let text = regex::Regex::new(r"<[^>]+>")
+                .unwrap()
+                .replace_all(&text, "")
+                .to_string();
+            let cfg: riz::config::Config = toml::from_str(&text).unwrap_or_else(|e| {
+                panic!("{}: embedded riz.toml does not parse: {e}\n{text}", path.display())
+            });
+            cfg.validate().unwrap_or_else(|e| {
+                panic!("{}: embedded riz.toml fails validation: {e}", path.display())
+            });
+            checked += 1;
+            rest = &after[end..];
+        }
+    }
+    assert!(
+        checked >= 3,
+        "expected several CI-validated riz.toml snippets on the site, found {checked}"
+    );
+}
+
+// ─────────────────────────── test-count floor matches registry ──────────────
+
+#[test]
+fn test_count_floor_matches_registry() {
+    let registry = fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/claims/registry.toml"),
+    )
+    .unwrap();
+    let html = page("index.html");
+    if html.contains("900+") {
+        assert!(
+            registry.contains("page_text = \"900+\""),
+            "the site states a 900+ test floor but the registry test-count claim doesn't match"
+        );
+    }
+}

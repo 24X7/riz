@@ -6,9 +6,12 @@
 
 #[test]
 fn landing_page_contract_suite_runs() {
-    // Presence of tests/landing_page_contract.rs proves this acceptance.
-    // We assert here just so this file isn't empty.
-    assert!(std::path::Path::new("tests/landing_page_contract.rs").exists());
+    // The drift-prevention acceptance: the site's structure + claims are
+    // machine-guarded. The single-page landing_page_contract.rs / landing_
+    // structure.rs were retired when the site went multi-page; their guards
+    // now live in site_structure.rs and claims_truth.rs.
+    assert!(std::path::Path::new("tests/site_structure.rs").exists());
+    assert!(std::path::Path::new("tests/claims_truth.rs").exists());
 }
 
 #[test]

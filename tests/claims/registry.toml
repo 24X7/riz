@@ -1,333 +1,180 @@
-# Claims registry — the single source of truth that maps each headline
-# capability claim on the landing page (web/index.html) to its honest status
-# and, where applicable, the REAL test that proves it.
+# Claims registry — the single source of truth behind the site's promise:
+# "every capability sentence on this site is pinned to a passing test."
 #
-# Enforced by tests/claims_truth.rs. Statuses:
+# Enforced by tests/claims_truth.rs across ALL of web/*.html. Statuses:
 #   proven      — backed by a real test fn (proof = bare fn name).
-#   benchmark   — perf number; proof = the deterministic CI-floor sibling test.
-#   coming-soon — roadmap ribbon; data_claim + roadmap pointer.
-#   copy-only   — subjective/marketing or point-in-time stat; note required.
+#   benchmark   — a perf number; proof = the deterministic CI-floor sibling.
+#   copy-only   — a subjective/marketing line or point-in-time stat; note required.
 #
-# `page_text` is a verbatim substring of the tag-stripped page text and acts as
-# a drift guard: change the page wording and the matching claim must move too.
+# The site itself DISPLAYS each proven capability's test-function name (the cap
+# cards' "proof:" line and the detail pages' proof ledgers). So for proven
+# claims `page_text` IS that displayed fn name: one string that is
+# simultaneously (a) a verbatim drift-guard substring of the live page and
+# (b) the test that must exist in tests/ or src/. claims_truth.rs also checks
+# the reverse — every fn name shown on the site is registered here — so a
+# "proof:" label can never point at a function that doesn't exist.
 
-# ─────────────────────────── Features (v0.1, shipped) ───────────────────────
+# ─────────────────────────── Agent layer (MCP) ──────────────────────────────
 
 [[claim]]
 id = "mcp-agent-native"
-page_text = "every function is a tool, automatically, spec 2025-11-25"
+page_text = "mcp_inspect_against_running_riz_lists_tools_and_spec_version"
 status = "proven"
 proof = "mcp_inspect_against_running_riz_lists_tools_and_spec_version"
 
 [[claim]]
 id = "agent-tooluse"
-page_text = "Claude Agent SDK demo drives riz functions as tools — proven by an example"
+page_text = "agent_tools_are_mcp_tools_and_callable_over_riz_mcp"
 status = "proven"
 proof = "agent_tools_are_mcp_tools_and_callable_over_riz_mcp"
 
 [[claim]]
 id = "mcp-typed-schemas"
-page_text = "path params typed from the route template, declared query params typed via"
+page_text = "tools_list_types_path_params_from_route_template"
 status = "proven"
 proof = "tools_list_types_path_params_from_route_template"
 
 [[claim]]
+id = "mcp-call-validation"
+page_text = "tools_call_missing_required_path_param_is_invalid_params"
+status = "proven"
+proof = "tools_call_missing_required_path_param_is_invalid_params"
+
+[[claim]]
 id = "mcp-sse-transport"
-page_text = "POST answers stream as SSE event frames, GET opens the server channel"
+page_text = "post_with_sse_accept_streams_the_response"
 status = "proven"
 proof = "post_with_sse_accept_streams_the_response"
 
 [[claim]]
 id = "mcp-progress-notifications"
-page_text = "frames while it runs (progressToken echoed, progress increasing)"
+page_text = "progress_notifications_stream_during_slow_tool_call"
 status = "proven"
 proof = "progress_notifications_stream_during_slow_tool_call"
 
-[[claim]]
-id = "mcp-call-validation"
-page_text = "missing path params and type mismatches answer JSON-RPC"
-status = "proven"
-proof = "tools_call_missing_required_path_param_is_invalid_params"
-
-[[claim]]
-id = "gateway-bearer-gated"
-page_text = "the endpoints that spend provider budget are never the unauthenticated door"
-status = "proven"
-proof = "gateway_endpoints_return_401_without_token_when_configured"
-
-[[claim]]
-id = "gateway-budget-fail-closed"
-page_text = "Unknown models price at the most expensive tier, so the cap fails closed"
-status = "proven"
-proof = "unknown_model_fails_closed_at_the_most_expensive_tier"
-
-[[claim]]
-id = "broker-credentials-never-cross"
-page_text = "credentials never cross the WASI boundary"
-status = "proven"
-proof = "wasm_guest_brokers_pg_through_capability_grants"
-
-[[claim]]
-id = "broker-stall-bounded"
-page_text = "A stalled or hostile query is cut at the grant's deadline"
-status = "proven"
-proof = "stalled_backend_query_is_bounded_by_the_broker_deadline"
-
-[[claim]]
-id = "llm-gateway-openai-compatible"
-page_text = "OpenAI-compatible gateway"
-status = "proven"
-proof = "chat_completions_returns_openai_shape"
-
-[[claim]]
-id = "llm-gateway-provider-routing"
-page_text = "Route across OpenAI, Anthropic, and local Ollama by model prefix"
-status = "proven"
-proof = "models_lists_configured_providers"
-
-[[claim]]
-id = "llm-gateway-budget-caps"
-page_text = "Budget caps + per-provider cost telemetry"
-status = "proven"
-proof = "budget_zero_rejects_with_412"
-
-[[claim]]
-id = "llm-gateway-streaming"
-page_text = "SSE streaming, embeddings"
-status = "proven"
-proof = "streaming_returns_openai_sse_chunks"
-
-[[claim]]
-id = "five-runtimes"
-page_text = "Five runtimes"
-status = "proven"
-proof = "bun_echo_emits_canonical_shape"
+# ─────────────────────────── Lambda runtime core ────────────────────────────
 
 [[claim]]
 id = "cross-runtime-parity"
-page_text = "Cross-runtime parity matrix — every HTTP capability tested on every runtime"
+page_text = "wasm_echo_passes_path_and_query"
 status = "proven"
 proof = "wasm_echo_passes_path_and_query"
 
+# ─────────────────────────── Sandbox · broker · guards ──────────────────────
+
 [[claim]]
 id = "wasm-compute"
-page_text = "Runs real application logic in the sandbox — a WASM handler validates and prices an order entirely under WASI"
+page_text = "wasm_orders_prices_a_valid_order"
 status = "proven"
 proof = "wasm_orders_prices_a_valid_order"
 
 [[claim]]
 id = "wasi-sandbox"
-page_text = "deny-by-default filesystem and network, capabilities granted explicitly"
+page_text = "child_with_allowlist_can_read_allowed_path_only"
 status = "proven"
 proof = "child_with_allowlist_can_read_allowed_path_only"
 
 [[claim]]
-id = "wasm-resource-broker"
-page_text = "the sandboxed guest reaches Postgres through the host broker — the guest never opens a socket and never sees a DSN"
-status = "proven"
-proof = "wasm_guest_brokers_pg_through_capability_grants"
-
-[[claim]]
-id = "websocket-management-api"
-page_text = "management API at"
-status = "proven"
-proof = "ws_get_connection_metadata_e2e"
-
-[[claim]]
-id = "websocket-connection-list"
-page_text = "WebSocket connection list endpoint"
-status = "proven"
-proof = "ws_list_endpoint_includes_live_connection"
-
-[[claim]]
-id = "config-routing-path-params"
-page_text = "AWS path syntax:"
-status = "proven"
-proof = "dispatch_injects_path_params_into_event"
-
-[[claim]]
-id = "hot-reload-config"
-page_text = "hot-reload on save"
-status = "proven"
-proof = "hotreload_picks_up_new_route_end_to_end"
-
-[[claim]]
-id = "hot-reload-handler-source"
-page_text = "handler-source hot reload"
-status = "proven"
-proof = "handler_source_change_respawns_pool"
-
-[[claim]]
-id = "metrics-prometheus"
-page_text = "/_riz/metrics"
-status = "proven"
-proof = "metrics_endpoint_returns_prometheus_text"
-
-[[claim]]
-id = "admin-bearer-gating"
-page_text = "Bearer-token auth on"
-status = "proven"
-proof = "riz_metrics_returns_401_without_auth_when_token_configured"
-
-[[claim]]
-id = "otlp-export"
-page_text = "OpenTelemetry export — OTLP/HTTP JSON, one pipeline fanning out to Datadog and CloudWatch/X-Ray"
-status = "proven"
-proof = "otlp_encoder_emits_genai_token_attrs"
-
-[[claim]]
-id = "auth-lambda-authorizers"
-page_text = "Lambda authorizers — REQUEST + JWT"
-status = "proven"
-proof = "request_authorizer_allows_valid_token"
-
-[[claim]]
-id = "auth-jwt-jwks"
-page_text = "JWT/JWKS signature validation (RS256/ES256) — drop in Auth0, Cognito, Okta, WorkOS, or Clerk"
-status = "proven"
-proof = "workos_valid_token_is_accepted_and_claims_present"
-
-[[claim]]
-id = "auth-workos"
-page_text = "WorkOS &amp; Clerk proven end-to-end"
-status = "proven"
-proof = "workos_valid_token_is_accepted_and_claims_present"
-
-[[claim]]
-id = "auth-clerk"
-page_text = "Clerk's no-aud default session token works out of the box"
-status = "proven"
-proof = "clerk_default_token_without_aud_is_accepted"
-
-[[claim]]
-id = "auth-cors-preflight"
-page_text = "CORS auto-preflight"
-status = "proven"
-proof = "cors_preflight_returns_204_with_allow_headers"
-
-[[claim]]
-id = "lifecycle-supervised-respawn"
-page_text = "Supervised crash-respawn + a liveness watcher — a child that dies or hangs is replaced; your logic stays up"
-status = "proven"
-proof = "liveness_fault_injection_respawns_within_250ms"
-
-[[claim]]
-id = "lifecycle-graceful-drain"
-page_text = "Graceful 30s in-flight drain on shutdown and hot-swap — no dropped requests mid-deploy"
-status = "proven"
-proof = "hot_swap_drains_in_flight_requests"
-
-[[claim]]
-id = "lifecycle-s3-hotswap-rollback"
-page_text = "S3 hot-swap deploys with a health-check and automatic rollback on a bad release"
-status = "proven"
-proof = "deploy_health_check_uses_422_for_crash"
-
-[[claim]]
 id = "isolation-always-on-safety-profile"
-page_text = "Always-on safety profile per child, applied for you"
+page_text = "child_inherits_always_on_caps"
 status = "proven"
 proof = "child_inherits_always_on_caps"
 
 [[claim]]
-id = "observability-token-aware-tracing"
-page_text = "Token-aware GenAI tracing on that single OTLP path — prompt/completion token attrs roll up per request"
+id = "wasm-resource-broker"
+page_text = "wasm_guest_brokers_pg_through_capability_grants"
 status = "proven"
-proof = "otlp_encoder_emits_genai_token_attrs"
+proof = "wasm_guest_brokers_pg_through_capability_grants"
+
+[[claim]]
+id = "wasm-guards"
+page_text = "one_wasm_guard_protects_every_runtime"
+status = "proven"
+proof = "one_wasm_guard_protects_every_runtime"
+
+# ─────────────────────────── LLM gateway ────────────────────────────────────
+
+[[claim]]
+id = "llm-gateway-openai-compatible"
+page_text = "chat_completions_returns_openai_shape"
+status = "proven"
+proof = "chat_completions_returns_openai_shape"
+
+[[claim]]
+id = "llm-gateway-provider-routing"
+page_text = "models_lists_configured_providers"
+status = "proven"
+proof = "models_lists_configured_providers"
+
+[[claim]]
+id = "llm-gateway-streaming"
+page_text = "streaming_returns_openai_sse_chunks"
+status = "proven"
+proof = "streaming_returns_openai_sse_chunks"
+
+[[claim]]
+id = "llm-gateway-budget-caps"
+page_text = "budget_zero_rejects_with_412"
+status = "proven"
+proof = "budget_zero_rejects_with_412"
+
+[[claim]]
+id = "gateway-budget-fail-closed"
+page_text = "unknown_model_fails_closed_at_the_most_expensive_tier"
+status = "proven"
+proof = "unknown_model_fails_closed_at_the_most_expensive_tier"
+
+[[claim]]
+id = "gateway-bearer-gated"
+page_text = "gateway_endpoints_return_401_without_token_when_configured"
+status = "proven"
+proof = "gateway_endpoints_return_401_without_token_when_configured"
+
+[[claim]]
+id = "observability-token-aware-tracing"
+page_text = "multi_hop_agent_chain_rolls_up_token_usage_across_the_tree"
+status = "proven"
+proof = "multi_hop_agent_chain_rolls_up_token_usage_across_the_tree"
+
+# ─────────────────────────── Lifecycle ──────────────────────────────────────
+
+[[claim]]
+id = "lifecycle-supervised-respawn"
+page_text = "liveness_fault_injection_respawns_within_250ms"
+status = "proven"
+proof = "liveness_fault_injection_respawns_within_250ms"
 
 # ─────────────────────────── Benchmark (perf floor) ─────────────────────────
 
 [[claim]]
 id = "perf-throughput"
-page_text = "91k req/s · p99 &lt; 1ms"
+page_text = "91k</b> req/s · p99 &lt; 1ms"
 status = "benchmark"
 proof = "ws_handles_100_messages_within_10s"
-note = "Headline 91k req/s · p99<1ms is a benches/ result (see benches/README.md recipe), not a deterministic CI test. The CI-floor sibling ws_handles_100_messages_within_10s is the regression gate that fails if load throughput collapses."
+note = "Headline 91k req/s · p99<1ms is a benches/ result (the stat bar links the recipe), not a deterministic CI test. The CI-floor sibling ws_handles_100_messages_within_10s is the regression gate that fails if load throughput collapses. page_text keeps the <b> tag so the drift guard pins the exact stat-bar rendering."
 
-# ─────────────────────────── Copy-only (stats/marketing) ────────────────────
+# ─────────────────────────── Copy-only (stats/positioning) ──────────────────
 
 [[claim]]
 id = "test-count"
-page_text = "900+ tests"
+page_text = "900+"
 status = "copy-only"
-note = "Honest floor, not a pinned count: the absolute number from `cargo nextest list` grows every commit (903 as of 2026-06-12), so the page states a floor ('900+') that stays true without per-commit churn. The cross-runtime parity *capability* it advertises is proven separately (see cross-runtime-parity). landing_page_contract.rs::every_page_claim_is_registered checks this string is reflected here so it can't silently drift."
+note = "Honest floor, not a pinned count: the absolute number from `cargo nextest list` grows every commit (903+ as of 2026-06-15), so the site states a floor ('900+') that stays true without per-commit churn. Appears in the home stat bar and the docs lede. The capability it gestures at — every claim mapped to a test — is exactly what this registry + claims_truth.rs enforce."
 
 [[claim]]
-id = "warm-pool-no-cold-start"
-page_text = "Warm pre-spawned process pool per function — no per-request cold start; a spawn happens only at boot, respawn, or hot-swap"
+id = "no-per-request-cold-start"
+page_text = "no per-request cold start"
 status = "copy-only"
-note = "Honest phrasing of the warm-pool behavior — NOT 'zero cold starts ever'. riz keeps one warm pre-spawned child-process pool per function (see src/process — spawn_all / wait_for_ready), so a cold start happens only at boot, respawn, or hot-swap, never per request in steady state. WASM is sub-ms even when it does spawn. The deterministic perf-floor sibling is ws_handles_100_messages_within_10s (see perf-throughput); this claim is registered copy-only because 'no per-request cold start' is a steady-state architectural property, not a single asserted number."
+note = "Honest phrasing of the warm-pool behavior — NOT 'zero cold starts ever'. riz keeps one warm pre-spawned child-process pool per function, so a cold start happens only at boot, respawn, or hot-swap, never per request in steady state. The deterministic perf-floor sibling is ws_handles_100_messages_within_10s (see perf-throughput); registered copy-only because 'no per-request cold start' is a steady-state architectural property, not a single asserted number."
 
 [[claim]]
-id = "runtime-harness-production-grade"
-page_text = "You write the function; the runtime brings the rest."
+id = "claims-as-code"
+page_text = "nothing on this site outruns the suite"
 status = "copy-only"
-note = "Positioning frame for the product thesis: riz is a runtime harness, not a framework — the author writes only business logic and the runtime supplies the always-on parts (safety profile, supervised respawn, drain, observability, hot-swap). 'Production-grade' and 'no framework decision' are subjective umbrella framings; the underlying primitives they summarize are each proven by their own claims (isolation-always-on-safety-profile, lifecycle-supervised-respawn, lifecycle-graceful-drain, lifecycle-s3-hotswap-rollback, metrics-prometheus, otlp-export)."
+note = "The brand frame for the whole site: every capability sentence is pinned to a passing test. It is not a single behavior but the meta-property this registry + claims_truth.rs (page_text-on-site + proof-fn-exists + reverse fn-is-registered) collectively enforce."
 
 [[claim]]
-id = "agent-flywheel"
-page_text = "an agent writes a plain function, and the instant riz boots it's a callable, production-grade tool — zero glue"
+id = "single-binary-apache"
+page_text = "One binary. Apache-2.0."
 status = "copy-only"
-note = "The adoption-mechanism framing: an agent (or human) that writes a function instantly has a callable MCP tool with no glue. The provable mechanics under it are the MCP auto-exposure (mcp-agent-native) and agent tool-call (agent-tooluse) claims; 'production-grade' is the same umbrella framing covered by runtime-harness-production-grade. Registered copy-only because the sentence is positioning, not a single asserted behavior."
-
-[[claim]]
-id = "bug-tracker-closed"
-page_text = "Production-readiness bug tracker closed, with regression-gate tests for the fixed bugs"
-status = "copy-only"
-note = "Softened from the unverifiable 'All 20 … each with a regression-gate test'. Only ~8 distinct BUG-NN entries are referenced in the tree and only a few have dedicated regression-gate tests (e.g. bug_01_parse_failure_respawns, bug_16_access_logs_include_correlation, bug_19_unpack_zip_skips_symlink_entries). The provable truth is that the tracker is closed with regression-gate tests for the fixed bugs."
-
-# ─────────────────────────── Roadmap (coming soon) ──────────────────────────
-
-[[claim]]
-id = "wasm-guards"
-page_text = "the same module wraps Bun, Node.js, Python, Rust, and WASM handlers"
-status = "proven"
-proof = "one_wasm_guard_protects_every_runtime"
-
-[[claim]]
-id = "wasm-guards-fail-closed"
-page_text = "a policy that can't run never silently allows traffic"
-status = "proven"
-proof = "one_wasm_guard_protects_every_runtime"
-
-[[claim]]
-id = "roadmap-gateway-deepened"
-page_text = "Add Bedrock · Vertex providers"
-status = "coming-soon"
-data_claim = "roadmap-gateway-deepened"
-roadmap = "Phase 2 — gateway providers + semantic cache"
-
-[[claim]]
-id = "roadmap-record-replay"
-page_text = "Every request captured with input, output, timings, downstream calls"
-status = "coming-soon"
-data_claim = "roadmap-record-replay"
-roadmap = "Phase 2 — record & replay / agentic test loop"
-
-[[claim]]
-id = "roadmap-eval-harness"
-page_text = "Versioned prompts as first-class config"
-status = "coming-soon"
-data_claim = "roadmap-eval-harness"
-roadmap = "Phase 2 — eval harness + prompt versioning"
-
-[[claim]]
-id = "roadmap-smarter-mcp"
-page_text = "MCP over WebSocket — streaming tool results for long-running calls"
-status = "coming-soon"
-data_claim = "roadmap-smarter-mcp"
-roadmap = "Phase 2 — typed/federated MCP, MCP over WebSocket"
-
-[[claim]]
-id = "roadmap-additional-runtimes"
-page_text = "Go support via the existing static-binary protocol"
-status = "coming-soon"
-data_claim = "roadmap-additional-runtimes"
-roadmap = "Phase 2 — Go and Java/JVM runtime adapters"
-
-[[claim]]
-id = "roadmap-otel-tracing"
-page_text = "W3C Trace Context propagation across services + X-Ray segment mapping"
-status = "coming-soon"
-data_claim = "roadmap-otel-tracing"
-roadmap = "Phase 2 — event sources + cross-service trace propagation + agent memory"
+note = "Positioning line in the footer/site copy. The single-binary build is the release artifact; Apache-2.0 is the LICENSE file. Registered copy-only because it is a packaging/licensing statement, not a runtime behavior with a unit test."

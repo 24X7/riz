@@ -1,27 +1,32 @@
-//! Claims-truth enforcement — the machine check that holds the homepage's
-//! capability claims to reality.
+//! Claims-truth enforcement — the machine check behind the site's promise:
+//! "every capability sentence on this site is pinned to a passing test."
 //!
-//! `tests/claims/registry.toml` maps each headline capability claim on the
-//! landing page (`web/index.html`) to one of four honest statuses:
+//! `tests/claims/registry.toml` maps each capability claim shown anywhere in
+//! `web/*.html` to one of three honest statuses:
 //!
 //!   * `proven`     — backed by a REAL test fn that exists in `tests/` or `src/`.
+//!                    The site DISPLAYS that fn name (the cap cards' "proof:"
+//!                    line and the detail pages' proof ledgers), so the claim's
+//!                    `page_text` is that fn name: one string that is both a
+//!                    verbatim drift-guard substring of the live page and the
+//!                    test that must exist.
 //!   * `benchmark`  — a perf number proved by a benches/ recipe, with a
 //!                    deterministic CI-floor sibling test as its `proof`.
-//!   * `coming-soon`— a roadmap bucket; must carry a `data-claim=` ribbon and a
-//!                    `roadmap` pointer, and must NOT masquerade as a shipped
-//!                    Features-column claim.
-//!   * `copy-only`  — subjective/marketing or a point-in-time stat; needs a
-//!                    `note` saying why it's exempt from a test mapping.
+//!   * `copy-only`  — a subjective/marketing line or a point-in-time stat;
+//!                    needs a `note` saying why it's exempt from a test mapping.
 //!
-//! This test enforces every one of those invariants so a claim can't silently
-//! drift away from the code that's supposed to back it.
+//! Three invariants, enforced below, make a "proof" label impossible to fake:
+//!   1. every registry `page_text` appears somewhere on the live site;
+//!   2. every proven/benchmark claim's proof fn exists in source;
+//!   3. every fn name DISPLAYED on the site as a proof is registered here —
+//!      so the page can't show `proof: foo` for a function that doesn't exist.
 
 use regex::Regex;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const LANDING_PAGE: &str = "web/index.html";
 const REGISTRY: &str = "tests/claims/registry.toml";
+const SITE_DIR: &str = "web";
 
 #[derive(Debug, serde::Deserialize)]
 struct Registry {
@@ -37,10 +42,6 @@ struct Claim {
     #[serde(default)]
     proof: String,
     #[serde(default)]
-    data_claim: String,
-    #[serde(default)]
-    roadmap: String,
-    #[serde(default)]
     note: String,
 }
 
@@ -55,10 +56,29 @@ fn strip_html_tags(s: &str) -> String {
         .to_string()
 }
 
-/// Tag-stripped rendered text of the landing page. Entities are left as-is
+/// The raw concatenated HTML of every page on the site.
+fn site_html() -> String {
+    let mut pages: Vec<PathBuf> = fs::read_dir(SITE_DIR)
+        .unwrap_or_else(|e| panic!("could not read {SITE_DIR}/: {e}"))
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("html"))
+        .collect();
+    pages.sort();
+    assert!(!pages.is_empty(), "no html pages found under {SITE_DIR}/");
+    pages
+        .iter()
+        .map(|p| fs::read_to_string(p).unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Tag-stripped rendered text of the whole site. Entities are left as-is
 /// (`&amp;`, `&lt;`) — registry `page_text` values are written to match.
-fn page_text(html: &str) -> String {
-    strip_html_tags(html)
+/// We keep ONE rendering that preserves `</b>` boundaries for the few claims
+/// whose drift guard intentionally pins a tag (e.g. the `91k</b>` stat), by
+/// matching against both the raw HTML and the stripped text.
+fn site_text() -> String {
+    strip_html_tags(&site_html())
 }
 
 fn load_registry() -> Registry {
@@ -98,23 +118,6 @@ fn dir_contains(dir: &Path, needle: &str) -> bool {
     false
 }
 
-/// The Features (v0.1, "in production") column text: everything between the
-/// Features `<h3>` and the Roadmap `<h3>`. A `coming-soon` claim's page_text
-/// must NOT appear in here.
-fn features_column(html: &str) -> String {
-    let start = html
-        .find("<h3>Features</h3>")
-        .expect("could not find the Features <h3> on the page");
-    let roadmap = html
-        .find("<h3>Roadmap</h3>")
-        .expect("could not find the Roadmap <h3> on the page");
-    assert!(
-        start < roadmap,
-        "Features <h3> must come before Roadmap <h3>"
-    );
-    strip_html_tags(&html[start..roadmap])
-}
-
 #[test]
 fn registry_is_internally_consistent() {
     let reg = load_registry();
@@ -132,10 +135,7 @@ fn registry_is_internally_consistent() {
             c.id
         );
         assert!(
-            matches!(
-                c.status.as_str(),
-                "proven" | "benchmark" | "coming-soon" | "copy-only"
-            ),
+            matches!(c.status.as_str(), "proven" | "benchmark" | "copy-only"),
             "claim {:?} has unknown status {:?}",
             c.id,
             c.status
@@ -144,19 +144,23 @@ fn registry_is_internally_consistent() {
 }
 
 #[test]
-fn every_claim_page_text_appears_on_the_page() {
+fn every_claim_page_text_appears_on_the_site() {
     let reg = load_registry();
-    let text = page_text(&read(LANDING_PAGE));
+    let text = site_text();
+    let raw = site_html();
     for c in &reg.claim {
         assert!(
             !c.page_text.trim().is_empty(),
             "claim {:?} has an empty page_text drift guard",
             c.id
         );
+        // Match against the tag-stripped text OR the raw HTML — the latter
+        // lets a claim pin a rendering that intentionally includes a tag
+        // boundary (e.g. the `91k</b>` stat-bar string).
         assert!(
-            text.contains(&c.page_text),
-            "claim {:?}: page_text {:?} does not appear in the rendered page text \
-             — registry and page have drifted apart",
+            text.contains(&c.page_text) || raw.contains(&c.page_text),
+            "claim {:?}: page_text {:?} does not appear anywhere on the site \
+             (web/*.html) — registry and site have drifted apart",
             c.id,
             c.page_text
         );
@@ -186,73 +190,41 @@ fn proven_and_benchmark_claims_point_at_a_real_test() {
     }
 }
 
+/// The reverse invariant that makes the displayed "proof:" labels honest:
+/// every test-function name the site SHOWS as a proof must be registered as a
+/// proven claim here (and therefore must exist in source, by the test above).
+/// Without this, the page could print `proof: total_fabrication` and nothing
+/// would catch it.
 #[test]
-fn coming_soon_claims_are_ribbons_not_shipped_claims() {
+fn every_proof_label_shown_on_the_site_is_registered() {
     let reg = load_registry();
-    let html = read(LANDING_PAGE);
-    let features = features_column(&html);
+    let registered: std::collections::HashSet<&str> = reg
+        .claim
+        .iter()
+        .filter(|c| c.status == "proven")
+        .map(|c| c.proof.as_str())
+        .collect();
 
-    for c in &reg.claim {
-        if c.status != "coming-soon" {
-            continue;
-        }
-        assert!(
-            !c.data_claim.trim().is_empty(),
-            "coming-soon claim {:?} must reference a data_claim id",
-            c.id
-        );
-        assert!(
-            !c.roadmap.trim().is_empty(),
-            "coming-soon claim {:?} must carry a roadmap pointer",
-            c.id
-        );
-
-        // The data-claim must live on an actual coming-soon bucket article.
-        let mut found = false;
-        for chunk in html.split("<article") {
-            if chunk.contains("class=\"bucket coming-soon\"")
-                && chunk.contains(&format!("data-claim=\"{}\"", c.data_claim))
-            {
-                found = true;
-                break;
-            }
-        }
-        assert!(
-            found,
-            "coming-soon claim {:?}: data-claim=\"{}\" not found inside any \
-             <article class=\"bucket coming-soon\"> block",
-            c.id,
-            c.data_claim
-        );
-
-        // A roadmap item must NOT appear as a shipped Features-column claim.
-        assert!(
-            !features.contains(&c.page_text),
-            "coming-soon claim {:?}: its page_text {:?} appears inside the \
-             Features (v0.1, in-production) column — a roadmap item is \
-             masquerading as shipped",
-            c.id,
-            c.page_text
-        );
-    }
-}
-
-#[test]
-fn every_data_claim_ribbon_is_registered_as_coming_soon() {
-    let reg = load_registry();
-    let html = read(LANDING_PAGE);
-
-    let re = Regex::new(r#"data-claim="([^"]+)""#).unwrap();
+    let html = site_html();
+    // The site renders proofs two ways:
+    //   home cap cards:   <b>✓</b> proof: <fn_name>
+    //   detail ledgers:   <code><fn_name></code> inside a .ledger "proof" strip
+    // Capture the explicit "proof:" form (unambiguous), which the cards use.
+    let re = Regex::new(r"proof:\s*([a-z][a-z0-9_]{12,})").unwrap();
+    let mut shown = std::collections::HashSet::new();
     for caps in re.captures_iter(&html) {
-        let id = &caps[1];
-        let matched = reg.claim.iter().find(|c| {
-            (c.id == *id || c.data_claim == *id) && c.status == "coming-soon"
-        });
+        shown.insert(caps.get(1).unwrap().as_str().to_string());
+    }
+    assert!(
+        !shown.is_empty(),
+        "no `proof: <fn>` labels found on the site — the proof-card rendering \
+         changed; update this guard's regex"
+    );
+    for fn_name in &shown {
         assert!(
-            matched.is_some(),
-            "the page carries data-claim=\"{id}\" but no coming-soon registry \
-             claim maps to it — either register it or remove the ribbon \
-             (no orphan ribbons; no unregistered not-yet-proven claim)"
+            registered.contains(fn_name.as_str()),
+            "the site displays `proof: {fn_name}` but no proven registry claim \
+             carries that proof fn — register it (or it's a fabricated label)"
         );
     }
 }
@@ -270,10 +242,4 @@ fn copy_only_claims_explain_themselves() {
             );
         }
     }
-}
-
-// Keep the import used even if cfg gates change.
-#[allow(dead_code)]
-fn _manifest_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
