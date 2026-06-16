@@ -433,8 +433,8 @@ footer{border-top:1px solid var(--line);margin-top:4rem;background:var(--ink-2)}
 .scrolly-step:first-child{border-top:none}
 .scrolly-step.active{opacity:1}
 .scrolly-step.active::before{
-  content:'';position:absolute;left:-1px;top:2.9rem;bottom:2.9rem;width:2px;
-  background:var(--acid);
+  content:'';position:absolute;left:-1.5rem;top:2.9rem;bottom:2.9rem;width:2px;
+  background:var(--acid);border-radius:2px;
 }
 .scrolly-step .sn{
   counter-increment:sstep;

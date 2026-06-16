@@ -262,5 +262,40 @@ required = <span class="n">true</span></pre>
   </div>
 </footer>
 
+<script>
+// Docs scroll-spy: the sidebar's active item follows the section in view.
+// Progressive enhancement — the hardcoded .on stays as the no-JS default.
+(function () {
+  if (!('IntersectionObserver' in window)) return;
+  var links = Array.prototype.slice.call(document.querySelectorAll('.doc-side a[href^="#"]'));
+  if (!links.length) return;
+  var headings = links
+    .map(function (a) { return document.getElementById(a.getAttribute('href').slice(1)); })
+    .filter(Boolean);
+  if (!headings.length) return;
+
+  function setActive(id) {
+    links.forEach(function (a) {
+      a.classList.toggle('on', a.getAttribute('href') === '#' + id);
+    });
+  }
+
+  var visible = {};
+  var obs = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      visible[e.target.id] = e.isIntersecting;
+    });
+    // Activate the first section (in document order) whose heading is in the
+    // trigger band near the top; if none, keep the last active (you're reading
+    // a long section whose heading has scrolled past the band).
+    for (var i = 0; i < headings.length; i++) {
+      if (visible[headings[i].id]) { setActive(headings[i].id); return; }
+    }
+  }, { rootMargin: '-80px 0px -68% 0px', threshold: 0 });
+
+  headings.forEach(function (h) { obs.observe(h); });
+})();
+</script>
+
 </body>
 </html>
