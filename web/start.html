@@ -6,6 +6,7 @@
   <title>riz — Getting started: function to agent-callable tool in 3 minutes</title>
   <meta name="description" content="Install riz, scaffold a working handler, boot it, curl it, and point an agent at it — the full path in five steps. Then verify with riz doctor and riz mcp inspect."/>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%230A0A0B'/><rect x='28' y='20' width='44' height='60' fill='%23CFFF04'/></svg>"/>
+  <link rel="apple-touch-icon" href="apple-touch-icon.png"/>
   <meta property="og:type" content="website"/>
   <meta property="og:site_name" content="riz"/>
   <meta property="og:title" content="riz — Getting started: function to agent-callable tool in 3 minutes"/>
@@ -256,14 +257,23 @@ $ riz mcp inspect
 <script>
 // Scrollytelling: the sticky code panel follows the step in view. Progressive
 // enhancement — without this the <noscript> block shows every panel inline.
+//
+// Selection is GEOMETRIC, not ratio-based: at any scroll position we activate
+// the step whose vertical midpoint is nearest a reference line ~40% down the
+// viewport. That is continuous — exactly one step is always closest and the
+// active step transitions 0→1→2→3→4 smoothly without skipping (the old thin
+// center-band + highest-ratio approach could skip short, closely-spaced steps).
+// The IntersectionObserver is only a cheap trigger to recompute; its many
+// thresholds make recomputation frequent, and it is GC'd on Turbo navigation
+// (no leaked scroll listener).
 (function () {
   var sticky = document.getElementById('scrollySticky');
-  if (!sticky || !('IntersectionObserver' in window)) return;
   var steps = Array.prototype.slice.call(document.querySelectorAll('.scrolly-step'));
   var panels = Array.prototype.slice.call(document.querySelectorAll('.scrolly-panel'));
-  if (!steps.length || !panels.length) return;
-
+  if (!sticky || !steps.length || !panels.length) return;
   sticky.classList.remove('preinit');
+  if (!('IntersectionObserver' in window)) { panels[0].classList.add('show'); return; }
+
   var current = -1;
   function activate(i) {
     if (i === current) return;
@@ -271,21 +281,37 @@ $ riz mcp inspect
     steps.forEach(function (s, idx) { s.classList.toggle('active', idx === i); });
     panels.forEach(function (p, idx) { p.classList.toggle('show', idx === i); });
   }
-  activate(0);
 
-  // Activate the step whose center is nearest the viewport middle.
-  var obs = new IntersectionObserver(function (entries) {
-    // Pick the most-visible intersecting step.
-    var best = null, bestRatio = 0;
-    entries.forEach(function (e) {
-      if (e.isIntersecting && e.intersectionRatio > bestRatio) {
-        best = e.target; bestRatio = e.intersectionRatio;
-      }
-    });
-    if (best) activate(parseInt(best.getAttribute('data-step'), 10));
-  }, { rootMargin: '-45% 0px -45% 0px', threshold: [0, 0.5, 1] });
+  function pick() {
+    var line = window.innerHeight * 0.4;   // reference line, 40% down the viewport
+    var best = 0, bestDist = Infinity;
+    for (var i = 0; i < steps.length; i++) {
+      var r = steps[i].getBoundingClientRect();
+      var dist = Math.abs((r.top + r.height / 2) - line);
+      if (dist < bestDist) { bestDist = dist; best = i; }
+    }
+    activate(best);                         // activate() no-ops if unchanged → one transition per boundary
+  }
 
-  steps.forEach(function (s) { obs.observe(s); });
+  // Scroll-driven so selection is truly continuous (no skipped steps), rAF-
+  // throttled so it stays smooth. activate() only changes when the nearest
+  // step changes, so it's one calm transition per boundary, not jittery.
+  var ticking = false;
+  function onScroll() {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(function () { pick(); ticking = false; });
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onScroll, { passive: true });
+  // Turbo re-runs this script per visit; drop the listeners when leaving so
+  // they don't accumulate across navigations.
+  document.addEventListener('turbo:before-cache', function cleanup() {
+    window.removeEventListener('scroll', onScroll);
+    window.removeEventListener('resize', onScroll);
+    document.removeEventListener('turbo:before-cache', cleanup);
+  });
+  pick();
 })();
 </script>
 

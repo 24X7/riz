@@ -99,7 +99,7 @@ fn every_page_shares_the_nav_and_stylesheet() {
         );
     }
     // The vendored runtime + generated/static deploy-root assets must exist.
-    for asset in ["turbo.min.js", "og.png", "favicon.svg", "robots.txt", "sitemap.xml", "llms.txt", ".well-known/riz.json"] {
+    for asset in ["turbo.min.js", "og.png", "favicon.svg", "apple-touch-icon.png", "robots.txt", "sitemap.xml", "llms.txt", ".well-known/riz.json"] {
         assert!(
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("web").join(asset).exists(),
             "web/{asset} (deploy-root asset) is missing"

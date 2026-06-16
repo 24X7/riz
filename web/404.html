@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>riz — 404, page not found</title>
+  <meta name="description" content="That page isn't here. Back to riz — the self-hosted Lambda runtime where every function is an agent's tool."/>
+  <meta name="robots" content="noindex"/>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%230A0A0B'/><rect x='28' y='20' width='44' height='60' fill='%23CFFF04'/></svg>"/>
+  <link rel="apple-touch-icon" href="apple-touch-icon.png"/>
+  <meta property="og:type" content="website"/>
+  <meta property="og:site_name" content="riz"/>
+  <meta property="og:title" content="riz — 404, page not found"/>
+  <meta property="og:description" content="That page isn't here. Back to riz — the self-hosted Lambda runtime where every function is an agent's tool."/>
+  <meta name="twitter:card" content="summary_large_image"/>
+  <meta property="og:image" content="https://riz.dev/og.png"/>
+  <meta property="og:image:width" content="1200"/>
+  <meta property="og:image:height" content="630"/>
+  <meta name="twitter:image" content="https://riz.dev/og.png"/>
+  <!-- agents: machine-readable entry points — /llms.txt · /.well-known/riz.json -->
+  <link rel="alternate" type="text/plain" href="llms.txt" data-turbo="false" title="llms.txt"/>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="site.css"/>
+  <!-- Turbo Drive: same-origin .html nav without full reloads. Self-hosted; routing/extensions unchanged. -->
+  <script src="turbo.min.js"></script>
+</head>
+<body>
+<div class="gridbg"></div>
+
+<nav>
+  <div class="nav-in">
+    <a class="mark" href="index.html">riz<span class="cur">▮</span></a>
+    <div class="nav-links">
+      <a href="agents.html">Agents</a>
+      <a href="sandbox.html">Sandbox</a>
+      <a href="gateway.html">Gateway</a>
+      <a href="compare.html">Compare</a>
+      <a href="start.html">Start</a>
+      <a href="examples.html">Examples</a>
+      <a href="docs.html">Docs</a>
+    </div>
+    <div class="nav-right">
+      <a class="agent-chip" href="llms.txt" data-turbo="false">AGENT? →</a>
+      <a class="gh-btn" href="https://github.com/24X7/riz" target="_blank">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<header class="page-hero" style="border-bottom:none">
+  <div class="wrap">
+    <div class="kicker">error · <b>404</b> · page not found</div>
+    <h1>This page<br/><em>404'd.</em></h1>
+    <p class="sub">
+      The URL you reached isn't part of the site. No drama — everything riz does is one
+      or two clicks away. (If you're an agent, the machine surface is below.)
+    </p>
+    <div class="cta-row" style="margin-top:2.2rem">
+      <a class="cta pri" href="index.html">Back to home →</a>
+      <a class="cta sec" href="docs.html">Documentation</a>
+    </div>
+    <p class="agent-aside" style="margin-top:1.6rem">
+      // looking for the machine surface? <a href="llms.txt" data-turbo="false">llms.txt</a> ·
+      <a href=".well-known/riz.json" data-turbo="false">.well-known/riz.json</a> ·
+      MCP at <b>&lt;host&gt;/_riz/mcp</b>
+    </p>
+  </div>
+</header>
+
+<footer>
+  <div class="foot-in">
+    <div class="grp">
+      <span class="foot-mark">riz<span class="cur">▮</span></span>
+      <p class="foot-note">The self-hosted Lambda runtime where every function is an agent's tool. One binary. Apache-2.0.</p>
+    </div>
+    <div class="grp">
+      <h5>Product</h5>
+      <a href="agents.html">Agent layer</a>
+      <a href="sandbox.html">Sandbox &amp; broker</a>
+      <a href="gateway.html">LLM gateway</a>
+      <a href="compare.html">Compare</a>
+    </div>
+    <div class="grp">
+      <h5>Build</h5>
+      <a href="start.html">Getting started</a>
+      <a href="docs.html">Documentation</a>
+      <a href="examples.html">Examples</a>
+      <a href="https://github.com/24X7/riz/releases" target="_blank">Releases ↗</a>
+    </div>
+    <div class="grp">
+      <h5>Project</h5>
+      <a href="https://github.com/24X7/riz" target="_blank">GitHub ↗</a>
+      <a href="https://github.com/24X7/riz/blob/main/tests/claims/registry.toml" target="_blank">Claims registry ↗</a>
+      <a href="https://github.com/24X7/riz/blob/main/LICENSE" target="_blank">Apache-2.0 ↗</a>
+    </div>
+  </div>
+  <div class="agent-block">
+    <div class="inner">
+      <b>// FOR AGENTS</b> — machine-readable surface:
+      <a href="llms.txt" data-turbo="false">/llms.txt</a> ·
+      <a href=".well-known/riz.json" data-turbo="false">/.well-known/riz.json</a> ·
+      MCP endpoint on any running instance: <b>&lt;host&gt;/_riz/mcp</b>.
+    </div>
+  </div>
+  <div class="foot-base">
+    <div class="foot-base-in">
+      <span>© 2026 · built by <a href="https://linkedin.com/in/ship247" style="text-decoration:underline dotted">Chris Rizzuto</a> · chris@riz.dev</span>
+      <span>every claim on this site maps to a passing test</span>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
