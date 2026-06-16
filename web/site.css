@@ -139,7 +139,7 @@ nav{
 .gh-btn:hover{background:var(--acid)}
 
 /* ════════ HERO ════════ */
-.hero{padding:7.5rem 0 5rem;position:relative}
+.hero{padding:5rem 0 5rem;position:relative}
 .kicker{
   font-family:var(--mono);font-size:.74rem;font-weight:700;color:var(--t-low);
   letter-spacing:.14em;text-transform:uppercase;margin-bottom:1.6rem;
@@ -403,8 +403,9 @@ h2.sec em{font-style:normal;color:var(--acid)}
 /* page hero for detail pages — consistent everywhere */
 .page-hero{padding:5rem 0 3.2rem;border-bottom:1px solid var(--line)}
 .page-hero h1{
-  font-size:clamp(2.6rem,5.5vw,4.4rem);font-weight:700;
-  letter-spacing:-0.04em;line-height:1;color:var(--t-max);
+  /* capped so long detail-page heroes break cleanly inside --maxw */
+  font-size:clamp(2.5rem,5.2vw,4.2rem);font-weight:700;
+  letter-spacing:-0.04em;line-height:1.02;color:var(--t-max);
 }
 .page-hero h1 em{font-style:normal;color:var(--acid)}
 .page-hero .sub{margin-top:1.2rem;max-width:680px;font-size:1.15rem;color:var(--t-mid)}
