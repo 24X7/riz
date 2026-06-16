@@ -98,8 +98,8 @@ fn non_html_links_opt_out_of_turbo() {
     // same-origin non-HTML link carries data-turbo="false".
     for (path, html) in site_pages() {
         for (needle, _label) in [
-            (r#"href="/llms.txt""#, "llms.txt"),
-            (r#"href="/.well-known/riz.json""#, "riz.json"),
+            (r#"href="llms.txt""#, "llms.txt"),
+            (r#"href=".well-known/riz.json""#, "riz.json"),
         ] {
             let mut from = 0;
             while let Some(i) = html[from..].find(needle) {
