@@ -76,6 +76,45 @@ fn every_page_shares_the_nav_and_stylesheet() {
                 path.display()
             );
         }
+        // Turbo Drive must load on every page so nav is a same-origin SPA swap
+        // (no full reload), and the vendored file must exist (self-hosted).
+        assert!(
+            html.contains(r#"<script src="turbo.min.js"></script>"#),
+            "{} does not load turbo.min.js (Turbo Drive nav)",
+            path.display()
+        );
+    }
+    assert!(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("web/turbo.min.js")
+            .exists(),
+        "web/turbo.min.js (vendored Turbo) is missing"
+    );
+}
+
+#[test]
+fn non_html_links_opt_out_of_turbo() {
+    // .txt / .json are not HTML — Turbo must not try to swap them in. Every
+    // same-origin non-HTML link carries data-turbo="false".
+    for (path, html) in site_pages() {
+        for (needle, _label) in [
+            (r#"href="/llms.txt""#, "llms.txt"),
+            (r#"href="/.well-known/riz.json""#, "riz.json"),
+        ] {
+            let mut from = 0;
+            while let Some(i) = html[from..].find(needle) {
+                let at = from + i;
+                // the data-turbo="false" attribute sits right after the href
+                let tail = &html[at..(at + needle.len() + 24).min(html.len())];
+                assert!(
+                    tail.contains(r#"data-turbo="false""#),
+                    "{}: a {needle} link is missing data-turbo=\"false\" (Turbo would \
+                     try to render the non-HTML resource)",
+                    path.display()
+                );
+                from = at + needle.len();
+            }
+        }
     }
 }
 

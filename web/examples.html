@@ -12,11 +12,13 @@
   <meta property="og:description" content="Every example ships in the repo and runs against the suite: agent tools over MCP, Claude Agent SDK demos, a multi-step agent loop with token attribution, real WASM compute, WebSocket chat, WorkOS/Clerk auth."/>
   <meta name="twitter:card" content="summary"/>
   <!-- agents: each card names its repo path and run commands — steal freely. Machine path: /llms.txt -->
-  <link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt"/>
+  <link rel="alternate" type="text/plain" href="/llms.txt" data-turbo="false" title="llms.txt"/>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"/>
   <link rel="stylesheet" href="site.css"/>
+  <!-- Turbo Drive: same-origin .html nav without full reloads. Self-hosted; routing/extensions unchanged. -->
+  <script src="turbo.min.js"></script>
 </head>
 <body>
 <div class="gridbg"></div>
@@ -34,7 +36,7 @@
       <a href="docs.html">Docs</a>
     </div>
     <div class="nav-right">
-      <a class="agent-chip" href="/llms.txt">AGENT? →</a>
+      <a class="agent-chip" href="/llms.txt" data-turbo="false">AGENT? →</a>
       <a class="gh-btn" href="https://github.com/24X7/riz" target="_blank">GitHub ↗</a>
     </div>
   </div>
@@ -186,8 +188,8 @@
   <div class="agent-block">
     <div class="inner">
       <b>// FOR AGENTS</b> — machine-readable surface:
-      <a href="/llms.txt">/llms.txt</a> ·
-      <a href="/.well-known/riz.json">/.well-known/riz.json</a> ·
+      <a href="/llms.txt" data-turbo="false">/llms.txt</a> ·
+      <a href="/.well-known/riz.json" data-turbo="false">/.well-known/riz.json</a> ·
       MCP endpoint on any running instance: <b>&lt;host&gt;/_riz/mcp</b>.
       Each card above names its repo path — clone and adapt freely (Apache-2.0).
     </div>

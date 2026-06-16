@@ -12,11 +12,13 @@
   <meta property="og:description" content="Every function in riz.toml is a typed MCP tool at /_riz/mcp the moment riz boots. Typed per-route schemas, Streamable HTTP + SSE, progress notifications, sessions, bearer auth. Zero SDK, zero glue."/>
   <meta name="twitter:card" content="summary"/>
   <!-- agents: this page describes how to call riz tools. Machine path: /llms.txt · /.well-known/riz.json · MCP at <host>/_riz/mcp -->
-  <link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt"/>
+  <link rel="alternate" type="text/plain" href="/llms.txt" data-turbo="false" title="llms.txt"/>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"/>
   <link rel="stylesheet" href="site.css"/>
+  <!-- Turbo Drive: same-origin .html nav without full reloads. Self-hosted; routing/extensions unchanged. -->
+  <script src="turbo.min.js"></script>
 </head>
 <body>
 <div class="gridbg"></div>
@@ -34,7 +36,7 @@
       <a href="docs.html">Docs</a>
     </div>
     <div class="nav-right">
-      <a class="agent-chip" href="/llms.txt">AGENT? →</a>
+      <a class="agent-chip" href="/llms.txt" data-turbo="false">AGENT? →</a>
       <a class="gh-btn" href="https://github.com/24X7/riz" target="_blank">GitHub ↗</a>
     </div>
   </div>
@@ -231,8 +233,8 @@ $ claude mcp add riz --transport http \
 $ riz mcp inspect</pre>
         </div>
         <p class="agent-aside" style="margin-top:1rem">
-          // machine surface: <a href="/llms.txt">/llms.txt</a> ·
-          <a href="/.well-known/riz.json">/.well-known/riz.json</a> ·
+          // machine surface: <a href="/llms.txt" data-turbo="false">/llms.txt</a> ·
+          <a href="/.well-known/riz.json" data-turbo="false">/.well-known/riz.json</a> ·
           bearer auth via <code>Authorization: Bearer</code> when configured
         </p>
       </div>
@@ -274,8 +276,8 @@ $ riz mcp inspect</pre>
   <div class="agent-block">
     <div class="inner">
       <b>// FOR AGENTS</b> — machine-readable surface:
-      <a href="/llms.txt">/llms.txt</a> ·
-      <a href="/.well-known/riz.json">/.well-known/riz.json</a> ·
+      <a href="/llms.txt" data-turbo="false">/llms.txt</a> ·
+      <a href="/.well-known/riz.json" data-turbo="false">/.well-known/riz.json</a> ·
       MCP endpoint on any running instance: <b>&lt;host&gt;/_riz/mcp</b> (Streamable HTTP, spec 2025-11-25).
     </div>
   </div>
