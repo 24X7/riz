@@ -12,9 +12,17 @@ use std::path::PathBuf;
 fn site_pages() -> Vec<(PathBuf, String)> {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("web");
     let mut out = Vec::new();
+    // Non-page HTML build assets (e.g. the og-image source card) are excluded —
+    // they are not part of the navigable site.
+    const NOT_A_PAGE: &[&str] = &["og-card.html"];
     for entry in fs::read_dir(&dir).expect("web/ exists") {
         let p = entry.unwrap().path();
-        if p.extension().is_some_and(|e| e == "html") {
+        let is_page_html = p.extension().is_some_and(|e| e == "html")
+            && !p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| NOT_A_PAGE.contains(&n));
+        if is_page_html {
             let html = fs::read_to_string(&p).unwrap();
             out.push((p, html));
         }
@@ -83,13 +91,20 @@ fn every_page_shares_the_nav_and_stylesheet() {
             "{} does not load turbo.min.js (Turbo Drive nav)",
             path.display()
         );
+        // Every page must carry a social-share image so links unfurl with a card.
+        assert!(
+            html.contains(r#"property="og:image""#) && html.contains("og.png"),
+            "{} is missing the og:image social-share tag",
+            path.display()
+        );
     }
-    assert!(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("web/turbo.min.js")
-            .exists(),
-        "web/turbo.min.js (vendored Turbo) is missing"
-    );
+    // The vendored runtime + generated/static deploy-root assets must exist.
+    for asset in ["turbo.min.js", "og.png", "favicon.svg", "robots.txt", "sitemap.xml", "llms.txt", ".well-known/riz.json"] {
+        assert!(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("web").join(asset).exists(),
+            "web/{asset} (deploy-root asset) is missing"
+        );
+    }
 }
 
 #[test]

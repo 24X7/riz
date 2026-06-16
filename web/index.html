@@ -10,7 +10,11 @@
   <meta property="og:site_name" content="riz"/>
   <meta property="og:title" content="riz — Write a function. Get an agent-ready API."/>
   <meta property="og:description" content="Self-hosted AWS Lambda runtime in one Rust binary. Every function becomes a typed MCP tool the moment it boots. Five runtimes, no per-request cold start, WASM sandbox with a capability broker, LLM gateway. 900+ tests. Apache-2.0."/>
-  <meta name="twitter:card" content="summary"/>
+  <meta name="twitter:card" content="summary_large_image"/>
+  <meta property="og:image" content="https://riz.dev/og.png"/>
+  <meta property="og:image:width" content="1200"/>
+  <meta property="og:image:height" content="630"/>
+  <meta name="twitter:image" content="https://riz.dev/og.png"/>
   <!-- agents: machine-readable entry points — /llms.txt · /.well-known/riz.json · MCP at /_riz/mcp on any running instance -->
   <link rel="alternate" type="text/plain" href="llms.txt" data-turbo="false" title="llms.txt"/>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
@@ -26,6 +30,7 @@
     "name": "riz",
     "description": "Self-hosted AWS Lambda runtime in one Rust binary. Write a plain AWS-Lambda-shaped handler — no web framework to pick — and the runtime makes it production-grade: always-on safety profile, supervised crash-respawn, graceful in-flight drain, real percentile observability, and warm pre-spawned pools (no per-request cold start). Every function becomes a typed MCP tool an agent can call the moment it boots. Five runtimes: Bun, Node.js, Python, Rust, and capability-sandboxed WASM, with a resource broker and fail-closed WASM guards. OpenAI-compatible LLM gateway built in.",
     "url": "https://riz.dev",
+    "image": "https://riz.dev/og.png",
     "sameAs": ["https://github.com/24X7/riz"],
     "applicationCategory": "DeveloperApplication",
     "applicationSubCategory": "Serverless Runtime",

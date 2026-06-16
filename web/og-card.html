@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<!-- Source for the social-share image. Regenerate web/og.png with:
+     chrome --headless --screenshot=web/og.png --window-size=1200,630 web/og-card.html -->
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"/>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:1200px;height:630px;overflow:hidden}
+  body{
+    background:#0A0A0B;color:#FAFAF6;font-family:'Space Grotesk',sans-serif;
+    padding:78px 84px;display:flex;flex-direction:column;justify-content:space-between;
+    position:relative;
+  }
+  .grid{
+    position:absolute;inset:0;z-index:0;
+    background-image:linear-gradient(#232329 1px,transparent 1px),linear-gradient(90deg,#232329 1px,transparent 1px);
+    background-size:60px 60px;opacity:.18;
+    -webkit-mask-image:radial-gradient(ellipse 80% 70% at 25% 0%,#000 30%,transparent 75%);
+  }
+  .top{display:flex;align-items:center;justify-content:space-between;position:relative;z-index:1}
+  .mark{font-family:'Space Mono',monospace;font-weight:700;font-size:46px;letter-spacing:-0.02em;display:flex;align-items:baseline}
+  .mark .cur{color:#CFFF04}
+  .kick{font-family:'Space Mono',monospace;font-size:18px;letter-spacing:.12em;text-transform:uppercase;color:#62626B}
+  .kick b{color:#CFFF04;font-weight:700}
+  h1{position:relative;z-index:1;font-size:92px;font-weight:700;line-height:.98;letter-spacing:-0.045em;max-width:1000px}
+  h1 em{font-style:normal;color:#CFFF04}
+  .facts{position:relative;z-index:1;display:flex;gap:38px;font-family:'Space Mono',monospace;font-size:21px;color:#9A9AA2}
+  .facts b{color:#FAFAF6;font-weight:700}
+  .facts .acid{color:#CFFF04}
+</style>
+</head>
+<body>
+  <div class="grid"></div>
+  <div class="top">
+    <div class="mark">riz<span class="cur">▮</span></div>
+    <div class="kick">self-hosted lambda · <b>every function is an mcp tool</b></div>
+  </div>
+  <h1>Write a function.<br/>Get an <em>agent-ready</em> API.</h1>
+  <div class="facts">
+    <span><b class="acid">900+</b> tests, every claim pinned to one</span>
+    <span><b>5</b> runtimes</span>
+    <span><b>0</b> per-request cold starts</span>
+    <span><b>1</b> binary · Apache-2.0</span>
+  </div>
+</body>
+</html>
