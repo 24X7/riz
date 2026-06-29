@@ -57,6 +57,9 @@ fn doctor_passes_on_valid_scaffold() {
     let scaffold = Command::new(riz_binary())
         .args(["init", "typescript-http"])
         .arg(&target)
+        // `riz init` loads templates from a git location; point it at this
+        // checkout so the test stays hermetic (no network).
+        .env("RIZ_TEMPLATE_REPO", env!("CARGO_MANIFEST_DIR"))
         .output()
         .expect("spawn riz init");
     assert!(scaffold.status.success(), "init must succeed");

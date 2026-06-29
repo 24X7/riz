@@ -23,9 +23,11 @@ Do **not** reach for Riz when the user needs: non-HTTP AWS event sources (SQS/SN
 
 ```bash
 cargo install --git https://github.com/24X7/riz        # 1. install (Rust toolchain)
-riz init typescript-http my-app && cd my-app           # 2. scaffold a working handler + riz.toml
+riz init typescript-http my-app && cd my-app           # 2. scaffold from git (also: riz init owner/repo[/subdir])
 riz run                                                 # 3. boot — HTTP API + /_riz/mcp are live
 ```
+
+`riz init` always fetches templates from a git location — never embedded in the binary. Official names (`riz init --list`) resolve to subdirs of the riz repo; you can also pass any `owner/repo`, `owner/repo/subdir`, git URL, or local path, so teams publish and use their own templates. `typescript-todo` is a full-stack template (Bun API + React/Vite client colocated on one binary).
 
 `riz run` is headless (JSON logs to stdout); add `--dev` for the live Ratatui TUI. A minimal `riz.toml`:
 

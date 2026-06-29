@@ -135,7 +135,7 @@ cargo run --quiet -- mcp inspect --url http://127.0.0.1:3000/_riz/mcp
 kill $RIZ_PID
 ```
 
-There's also a dedicated `tests/scaffold_e2e.rs` that exercises the full scaffold→boot→curl loop for the templates — run it after touching `assets/templates/` or any runtime adapter:
+There's also a dedicated `tests/scaffold_e2e.rs` that exercises the full scaffold→boot→curl loop for the templates — run it after touching `templates/` or any runtime adapter:
 
 ```bash
 cargo nextest run --test scaffold_e2e
@@ -255,7 +255,7 @@ docs/
 2. Wire the spawn path in `src/process/mod.rs` (look for `RuntimeKind` match arms)
 3. Add the runtime-side adapter (line-delimited JSON over stdin/stdout) in `assets/<lang>-adapter.<ext>`, include_str!-load it in the spawner
 4. Add a config variant in `RuntimeKind` (`src/config.rs`)
-5. Add a `riz init <lang>-http` template in `assets/templates/` + register in `template_files()` in `src/main.rs`
+5. Add a `riz init <lang>-http` template under `templates/<lang>-http/` + register its name in `BUILTINS` in `src/template_fetch.rs` (templates load from git — never embedded)
 6. Add a parity test sequence in `tests/runtime_parity_*.rs`
 7. Add an e2e test in `tests/scaffold_e2e.rs`
 8. Document in the README runtimes list + `docs/migrate-from/aws-lambda.md`
@@ -278,7 +278,7 @@ cargo nextest run             # MUST pass clean
 
 If you're touching:
 - **The landing page** (`web/index.html`) — `cargo nextest run --test landing_page_contract` must pass
-- **Anything in `assets/templates/`** — `cargo nextest run --test scaffold_e2e` must pass
+- **Anything in `templates/`** — `cargo nextest run --test scaffold_e2e --test cli_init` must pass
 - **Anything in `src/system/mcp/`** — `cargo nextest run mcp` must pass
 - **Any runtime adapter** — `cargo nextest run --test runtime_parity_echo` must pass
 

@@ -15,6 +15,7 @@ mod scaffold;
 mod server;
 mod state;
 mod static_files;
+mod template_fetch;
 mod system;
 mod tui;
 mod tui_log_layer;
@@ -83,26 +84,36 @@ enum Commands {
     /// the MCP endpoint. Designed to be the first command a user runs
     /// when "it won't start" so the failure surface is small + obvious.
     Doctor,
-    /// Scaffold a new riz project from a built-in template.
+    /// Scaffold a new riz project by FETCHING a template from git.
     ///
-    /// Available templates:
-    ///   - HTTP: `typescript-http`, `python-http`, `rust-http`, `nodejs-http`
-    ///   - WebSocket: `typescript-websocket`, `python-websocket`, `rust-websocket`
+    /// Templates are never embedded in the binary — they always load from a
+    /// git location. `<spec>` may be:
+    ///   - an official template name (`riz init --list`), e.g. `typescript-http`,
+    ///     `typescript-todo` — fetched from a subdir of the riz repo;
+    ///   - `owner/repo`, `owner/repo/subdir`, optionally `#ref` — any GitHub
+    ///     repo or subdirectory, so you can use your own;
+    ///   - a git URL (`https://…`, `git@…`, `file://…`) or a local path.
     ///
-    /// The template's files are written into <dir> (defaults to the
-    /// current directory). Use after install:
-    /// `riz init typescript-http my-app && cd my-app && riz run`.
+    /// Files are written into <dir> (defaults to the current directory). E.g.:
+    /// `riz init typescript-todo my-app && cd my-app && riz run`.
     ///
-    /// Use `riz init --list` to print the available templates without
-    /// scaffolding anything.
+    /// `riz init --list` prints the official templates. Set `RIZ_TEMPLATE_REPO`
+    /// to fetch the official names from a fork.
     Init {
-        /// Template name. Required unless --list is given.
-        template: Option<String>,
+        /// Template spec (name / owner/repo[/subdir] / git URL / local path).
+        /// Required unless --list is given.
+        spec: Option<String>,
         /// Target directory (defaults to current dir).
         dir: Option<String>,
-        /// Print the available templates and exit. No scaffold is written.
+        /// git ref (branch / tag) to fetch. Overrides any `#ref` in the spec.
+        #[arg(long)]
+        r#ref: Option<String>,
+        /// Print the official templates and exit. No scaffold is written.
         #[arg(long)]
         list: bool,
+        /// Copy into a non-empty target directory (overwrites colliding files).
+        #[arg(long)]
+        force: bool,
         /// After scaffold, run `git init` + initial commit in the target
         /// directory. Skipped silently if git is not on PATH or the dir
         /// is already inside a git repo.
@@ -163,172 +174,38 @@ enum McpCmd {
     },
 }
 
-/// Available templates, keyed by name. Mirrors `template_files`'s match arms
-/// — keep in sync. Tuple is (template_name, scenario, language).
-const TEMPLATES: &[(&str, &str, &str)] = &[
-    ("typescript-http",      "HTTP",      "TypeScript / Bun"),
-    ("python-http",          "HTTP",      "Python"),
-    ("rust-http",            "HTTP",      "Rust"),
-    ("nodejs-http",          "HTTP",      "Node.js"),
-    ("typescript-websocket", "WebSocket", "TypeScript / Bun"),
-    ("python-websocket",     "WebSocket", "Python"),
-    ("rust-websocket",       "WebSocket", "Rust"),
-];
-
 fn print_template_list() {
-    println!("Available templates:\n");
+    println!("Official templates (fetched from git, never embedded):\n");
     println!("  {:<24} {:<12} {}", "TEMPLATE", "SCENARIO", "LANGUAGE");
-    for (name, scenario, lang) in TEMPLATES {
+    for (name, _subdir, scenario, lang) in template_fetch::BUILTINS {
         println!("  {name:<24} {scenario:<12} {lang}");
     }
-    println!("\nUsage: riz init <template> [dir] [--git]");
+    println!("\nUsage:");
+    println!("  riz init <template> [dir] [--ref <ref>] [--git]   # an official template above");
+    println!("  riz init <owner>/<repo>[/<subdir>][#ref] [dir]    # any GitHub repo or subdir");
+    println!("  riz init <git-url|local-path> [dir]               # any git URL or local path");
+    println!("\nTemplates always load from a git location — set RIZ_TEMPLATE_REPO to use a fork.");
 }
 
-/// Built-in templates. Each entry is (filename, file contents). Embedded at
-/// build time via include_str! so the binary is self-contained.
-fn template_files(name: &str) -> Option<&'static [(&'static str, &'static str)]> {
-    match name {
-        "typescript-http" => Some(&[
-            (
-                "index.ts",
-                include_str!("../assets/templates/typescript-http/index.ts"),
-            ),
-            (
-                "riz.toml",
-                include_str!("../assets/templates/typescript-http/riz.toml"),
-            ),
-        ]),
-        "python-http" => Some(&[
-            (
-                "main.py",
-                include_str!("../assets/templates/python-http/main.py"),
-            ),
-            (
-                "riz.toml",
-                include_str!("../assets/templates/python-http/riz.toml"),
-            ),
-        ]),
-        "rust-http" => Some(&[
-            (
-                "Cargo.toml",
-                include_str!("../assets/templates/rust-http/Cargo.toml"),
-            ),
-            (
-                "src/main.rs",
-                include_str!("../assets/templates/rust-http/src/main.rs"),
-            ),
-            (
-                "riz.toml",
-                include_str!("../assets/templates/rust-http/riz.toml"),
-            ),
-            (
-                "README.md",
-                include_str!("../assets/templates/rust-http/README.md"),
-            ),
-        ]),
-        "nodejs-http" => Some(&[
-            (
-                "index.mjs",
-                include_str!("../assets/templates/nodejs-http/index.mjs"),
-            ),
-            (
-                "riz.toml",
-                include_str!("../assets/templates/nodejs-http/riz.toml"),
-            ),
-        ]),
-        "typescript-websocket" => Some(&[
-            (
-                "index.ts",
-                include_str!("../assets/templates/typescript-websocket/index.ts"),
-            ),
-            (
-                "riz.toml",
-                include_str!("../assets/templates/typescript-websocket/riz.toml"),
-            ),
-            (
-                "README.md",
-                include_str!("../assets/templates/typescript-websocket/README.md"),
-            ),
-        ]),
-        "python-websocket" => Some(&[
-            (
-                "main.py",
-                include_str!("../assets/templates/python-websocket/main.py"),
-            ),
-            (
-                "riz.toml",
-                include_str!("../assets/templates/python-websocket/riz.toml"),
-            ),
-            (
-                "README.md",
-                include_str!("../assets/templates/python-websocket/README.md"),
-            ),
-        ]),
-        "rust-websocket" => Some(&[
-            (
-                "Cargo.toml",
-                include_str!("../assets/templates/rust-websocket/Cargo.toml"),
-            ),
-            (
-                "src/main.rs",
-                include_str!("../assets/templates/rust-websocket/src/main.rs"),
-            ),
-            (
-                "riz.toml",
-                include_str!("../assets/templates/rust-websocket/riz.toml"),
-            ),
-            (
-                "README.md",
-                include_str!("../assets/templates/rust-websocket/README.md"),
-            ),
-        ]),
-        _ => None,
-    }
-}
-
-fn run_init(template: &str, dir: Option<&str>, git: bool) -> anyhow::Result<()> {
-    let files = template_files(template).ok_or_else(|| {
-        anyhow::anyhow!(
-            "unknown template '{template}'. Available: typescript-http, python-http, \
-             rust-http, nodejs-http, typescript-websocket, python-websocket, rust-websocket. \
-             (Run `riz init --list` for a formatted table.)"
-        )
-    })?;
+/// Scaffold a project by FETCHING a template from a git location (or local
+/// path) — nothing is embedded in the binary. `spec` is a built-in name, an
+/// `owner/repo[/subdir][#ref]` shorthand, a git URL, or a local path.
+fn run_init(spec: &str, dir: Option<&str>, reference: Option<&str>, git: bool, force: bool) -> anyhow::Result<()> {
+    let source = template_fetch::resolve(spec, reference)?;
     let target = match dir {
         Some(d) => std::path::PathBuf::from(d),
         None => std::env::current_dir()?,
     };
-    if !target.exists() {
-        std::fs::create_dir_all(&target)?;
-    }
-    // Refuse to overwrite existing files; opting in to clobber needs
-    // an explicit user decision (rm + re-run).
-    for (name, _) in files {
-        let dst = target.join(name);
-        if dst.exists() {
-            return Err(anyhow::anyhow!(
-                "refusing to overwrite existing file: {}. \
-                 Move it aside or pass a different <dir>.",
-                dst.display()
-            ));
-        }
-    }
-    for (name, contents) in files {
-        let dst = target.join(name);
-        // Some templates carry nested paths like `src/main.rs`; ensure
-        // the parent directory exists before writing.
-        if let Some(parent) = dst.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&dst, contents)?;
-        println!("  created {}", dst.display());
-    }
+
+    println!("Fetching template {spec:?} → {}", target.display());
+    let written = template_fetch::fetch_into(&source, &target, force)?;
+    println!("  copied {written} file{}", if written == 1 { "" } else { "s" });
 
     if git {
         try_git_init(&target);
     }
 
-    print_next_steps(template, &target);
+    print_next_steps(spec, &target);
     Ok(())
 }
 
@@ -423,37 +300,26 @@ fn try_git_init(target: &std::path::Path) {
     println!("  git init + initial commit (use --git to disable)");
 }
 
-/// Print the copy-pasteable "what to do next" block — per-template so the
-/// hint matches the scaffold's actual routes.
-fn print_next_steps(template: &str, target: &std::path::Path) {
+/// Print a "what to do next" block. Specs are now arbitrary (any repo), so we
+/// infer the hint from the files that were actually fetched rather than from a
+/// known template name.
+fn print_next_steps(spec: &str, target: &std::path::Path) {
     let dir = target.display();
-    let (build_step, exercise_cmd) = match template {
-        "rust-http" => (
-            Some("cargo build --release"),
-            Some("curl 'http://localhost:3000/hello?name=alice'"),
-        ),
-        "rust-websocket" => (Some("cargo build --release"), None),
-        "typescript-http" | "python-http" => (
-            None,
-            Some("curl 'http://localhost:3000/hello?name=alice'"),
-        ),
-        _ => (None, None),
-    };
-    println!("\n✓ {template} installed in {dir}");
+    let has = |rel: &str| target.join(rel).exists();
+    let rust = has("Cargo.toml");
+    let client = has("client/package.json"); // full-stack (Vite) layout
+
+    println!("\n✓ fetched {spec} into {dir}");
     println!("\n  Next steps:");
     println!("    cd {dir}");
-    if let Some(b) = build_step {
-        println!("    {b}");
+    if rust {
+        println!("    cargo build --release");
+    }
+    if client {
+        println!("    (cd client && bun install && bun run build)   # build the web client");
     }
     println!("    riz run");
-    if let Some(c) = exercise_cmd {
-        println!("\n  In a second terminal:");
-        println!("    {c}");
-    } else {
-        // WebSocket templates — clients vary, hint instead of prescribing.
-        println!("\n  Then point any MCP client at http://localhost:3000/_riz/mcp");
-        println!("  (Or, for WebSocket: connect to ws://localhost:3000/<route>)");
-    }
+    println!("\n  Then point any MCP client at http://localhost:3000/_riz/mcp");
     println!();
 }
 
@@ -1068,9 +934,11 @@ async fn async_main() -> anyhow::Result<()> {
     // `riz init` doesn't need (and shouldn't require) an existing config.
     // Handle it before the config-load path.
     if let Some(Commands::Init {
-        template,
+        spec,
         dir,
+        r#ref,
         list,
+        force,
         git,
     }) = &cli.command
     {
@@ -1078,10 +946,10 @@ async fn async_main() -> anyhow::Result<()> {
             print_template_list();
             return Ok(());
         }
-        let template = template.as_deref().ok_or_else(|| {
-            anyhow::anyhow!("template name required. Run `riz init --list` to see available templates.")
+        let spec = spec.as_deref().ok_or_else(|| {
+            anyhow::anyhow!("template spec required. Run `riz init --list` to see official templates.")
         })?;
-        return run_init(template, dir.as_deref(), *git);
+        return run_init(spec, dir.as_deref(), r#ref.as_deref(), *git, *force);
     }
 
     // `riz scaffold static` reads the project config and DERIVES the

@@ -17,6 +17,14 @@ fn riz_binary() -> PathBuf {
     target_dir.join("debug").join("riz")
 }
 
+/// This checkout, used as a local `RIZ_TEMPLATE_REPO` so `riz init <name>`
+/// resolves built-in templates to the on-disk `templates/` dir — hermetic, no
+/// network. (`riz init` always loads from a git location; this points it at a
+/// local one.)
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
 fn pick_free_port() -> u16 {
     TcpListener::bind("127.0.0.1:0")
         .expect("bind 0")
@@ -63,6 +71,7 @@ fn typescript_http_scaffold_boots_and_serves_hello() {
     Command::new(riz_binary())
         .args(["init", "typescript-http"])
         .arg(&target)
+        .env("RIZ_TEMPLATE_REPO", repo_root())
         .output()
         .expect("scaffold");
     let port = pick_free_port();
@@ -125,6 +134,7 @@ fn python_http_scaffold_boots_and_serves_hello() {
 
     Command::new(riz_binary())
         .args(["init", "python-http"])
+        .env("RIZ_TEMPLATE_REPO", repo_root())
         .arg(&target)
         .output()
         .expect("scaffold");
