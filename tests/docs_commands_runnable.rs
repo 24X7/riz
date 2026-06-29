@@ -41,7 +41,7 @@ const GLOBAL_FLAGS: &[&str] = &["--dev", "--config", "--port", "--log-level"];
 
 /// Every subcommand name the CLI accepts (clap `Commands` + `mcp`).
 const KNOWN_SUBCOMMANDS: &[&str] =
-    &["run", "validate", "routes", "deploy", "mcp", "doctor", "init"];
+    &["run", "validate", "routes", "deploy", "mcp", "doctor", "init", "scaffold"];
 
 /// A single ```bash``` line, with the `# @verify ...` marker (if any) that
 /// preceded it on its own line.

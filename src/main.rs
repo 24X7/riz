@@ -11,6 +11,7 @@ mod observability;
 mod process;
 mod router;
 mod runtime;
+mod scaffold;
 mod server;
 mod state;
 mod static_files;
@@ -107,6 +108,39 @@ enum Commands {
         /// is already inside a git repo.
         #[arg(long)]
         git: bool,
+    },
+    /// Scaffold the agent-discovery static surface from your riz.toml.
+    ///
+    /// Generates a site root (default `public/`) containing `llms.txt` and
+    /// `.well-known/riz.json` DERIVED from your functions — every
+    /// `[function.*]` becomes a tool entry matching what `/_riz/mcp`
+    /// advertises. Pair it with a `[static]` block (or pass `--wire` to add
+    /// one) so a live instance serves these files itself: an agent pointed at
+    /// your host then discovers its tools and the MCP endpoint with no
+    /// separate marketing site.
+    Scaffold {
+        #[command(subcommand)]
+        what: ScaffoldCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum ScaffoldCmd {
+    /// Generate `<dir>/llms.txt` + `<dir>/.well-known/riz.json` from the
+    /// current config. Refuses to overwrite existing files without --force.
+    Static {
+        /// Site root to write into (defaults to `public`).
+        dir: Option<String>,
+        /// Mount value written into the `[static]` block with --wire.
+        #[arg(long, default_value = "/")]
+        mount: String,
+        /// Append a `[static]` block to riz.toml (pointing at <dir>) unless
+        /// one is already configured.
+        #[arg(long)]
+        wire: bool,
+        /// Overwrite existing generated files.
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -295,6 +329,61 @@ fn run_init(template: &str, dir: Option<&str>, git: bool) -> anyhow::Result<()> 
     }
 
     print_next_steps(template, &target);
+    Ok(())
+}
+
+/// `riz scaffold static` — load the project config and DERIVE the
+/// agent-discovery surface (`<dir>/llms.txt` + `<dir>/.well-known/riz.json`)
+/// from its functions. With `--wire`, also add a `[static]` block so a live
+/// instance serves the generated files itself.
+fn run_scaffold_static(
+    config_path: &str,
+    dir: Option<&str>,
+    mount: &str,
+    wire: bool,
+    force: bool,
+) -> anyhow::Result<()> {
+    let config = config::Config::from_file(config_path).map_err(|e| {
+        anyhow::anyhow!(
+            "could not load {config_path}: {e}\n\
+             `riz scaffold static` derives the tool list from your functions, so it \
+             needs a valid riz.toml. Run it from your project dir or pass --config."
+        )
+    })?;
+    config
+        .validate()
+        .map_err(|e| anyhow::anyhow!("invalid riz.toml: {e}"))?;
+
+    let target = std::path::PathBuf::from(dir.unwrap_or("public"));
+    let opts = scaffold::ScaffoldOptions {
+        dir: target.clone(),
+        mount: mount.to_string(),
+        wire,
+        force,
+    };
+    let result = scaffold::scaffold_static(&config, std::path::Path::new(config_path), &opts)?;
+
+    let n = config.functions.len();
+    println!(
+        "✓ scaffolded the agent-discovery surface from {config_path} ({n} function{} → tools)",
+        if n == 1 { "" } else { "s" }
+    );
+    for p in &result.written {
+        println!("  created {}", p.display());
+    }
+    if wire {
+        if result.wired {
+            println!("  wired [static] into {config_path} (dir = {:?}, mount = {:?})", target.display().to_string(), mount);
+        } else {
+            println!("  [static] already configured — left {config_path} unchanged");
+        }
+    }
+    println!("\n  Next steps:");
+    if !wire && config.static_site.is_none() {
+        println!("    add a [static] block pointing dir at {:?} (or re-run with --wire)", target.display().to_string());
+    }
+    println!("    riz run    # GET /llms.txt and /.well-known/riz.json are now served by the instance");
+    println!();
     Ok(())
 }
 
@@ -993,6 +1082,22 @@ async fn async_main() -> anyhow::Result<()> {
             anyhow::anyhow!("template name required. Run `riz init --list` to see available templates.")
         })?;
         return run_init(template, dir.as_deref(), *git);
+    }
+
+    // `riz scaffold static` reads the project config and DERIVES the
+    // agent-discovery files from it. Handle before the generic run path.
+    if let Some(Commands::Scaffold {
+        what:
+            ScaffoldCmd::Static {
+                dir,
+                mount,
+                wire,
+                force,
+            },
+    }) = &cli.command
+    {
+        let config_path = effective_config_path(cli.dev, cli.config.as_deref());
+        return run_scaffold_static(&config_path, dir.as_deref(), mount, *wire, *force);
     }
 
     let config_path = effective_config_path(cli.dev, cli.config.as_deref());

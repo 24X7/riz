@@ -1,8 +1,8 @@
 # Static-file serving — colocate your site with your API (design)
 
-Status: **ROADMAP** (design only — nothing here is shipped).
+Status: **SHIPPED** (v1 + v1.1 + v2 all implemented and tested — see Phasing).
 Branch: `claims-truth-ai-substrate`.
-Last updated: 2026-06-18.
+Last updated: 2026-06-29.
 
 ## Goal
 
@@ -202,13 +202,25 @@ site, and only proven:
 
 ## Phasing
 
-- **v1** — `[static]` mount + index + traversal-safe serving + content-type +
-  conditional/range + cache headers + the precedence gate + the agent files.
-  This is the whole valuable core.
-- **v1.1** — `spa_fallback`, custom `not_found`, `precompressed`.
-- **v2 (only on demand)** — `riz init` scaffolds `public/` with a templated
-  `llms.txt` / `.well-known/riz.json` derived from the running config.
+- **v1** — ✅ SHIPPED. `[static]` mount + index + traversal-safe serving +
+  content-type + conditional/range + cache headers + the precedence gate + the
+  agent files (`src/static_files.rs`, `src/config.rs`, `dispatch_lambda`;
+  `tests/static_serving.rs`). This is the whole valuable core.
+- **v1.1** — ✅ SHIPPED alongside v1. `spa_fallback`, custom `not_found`,
+  `precompressed` are all implemented and tested.
+- **v2** — ✅ SHIPPED. `riz scaffold static [dir] [--mount] [--wire] [--force]`
+  generates `<dir>/llms.txt` + `<dir>/.well-known/riz.json` DERIVED from the
+  project's `riz.toml` — every `[function.*]` becomes a tool entry (name,
+  runtime, routes, description) matching what `/_riz/mcp` advertises; `--wire`
+  appends the `[static]` block. Implemented as a pure, testable generator in
+  `src/scaffold.rs` (not a static template — it reads the actual config), wired
+  in `src/main.rs`; covered by `tests/static_scaffold.rs` including the
+  round-trip that proves a live `[static]` instance serves its own generated
+  discovery files.
 
 Sequencing rationale: the precedence gate + traversal safety + the agent files
 are the parts that must be right and that carry the on-brand value; SPA/compression
-are conveniences layered after.
+are conveniences layered after; v2 scaffolding makes the self-describing-instance
+framing turnkey.
+
+Also update the status line at the top of this doc.

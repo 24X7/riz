@@ -11,6 +11,7 @@ pub mod observability;
 pub mod process;
 pub mod router;
 pub mod runtime;
+pub mod scaffold;
 pub mod server;
 pub mod state;
 pub mod static_files;

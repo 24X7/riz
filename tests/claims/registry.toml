@@ -173,6 +173,12 @@ page_text = "path_traversal_dotdot_is_rejected"
 status = "proven"
 proof = "path_traversal_dotdot_is_rejected"
 
+[[claim]]
+id = "static-scaffold-self-describes"
+page_text = "scaffolded_files_are_served_by_a_static_instance"
+status = "proven"
+proof = "scaffolded_files_are_served_by_a_static_instance"
+
 # ─────────────────────────── Copy-only (stats/positioning) ──────────────────
 
 [[claim]]

@@ -205,6 +205,7 @@ required = <span class="n">true</span></pre>
       <tr><th>command</th><th>does</th></tr>
       <tr><td><code>riz run [--dev]</code></td><td>boot; <code>--dev</code> adds the live Ratatui dashboard</td></tr>
       <tr><td><code>riz init &lt;template&gt; [dir] [--git]</code></td><td>scaffold (7 templates; <code>--list</code> to see them)</td></tr>
+      <tr><td><code>riz scaffold static [dir] [--wire] [--force]</code></td><td>generate <code>llms.txt</code> + <code>.well-known/riz.json</code> from your functions; <code>--wire</code> adds a <code>[static]</code> block</td></tr>
       <tr><td><code>riz validate</code> · <code>riz routes</code></td><td>config check · route table</td></tr>
       <tr><td><code>riz deploy &lt;fn&gt; &lt;bucket&gt; &lt;key&gt;</code></td><td>S3 hot-swap from the CLI</td></tr>
       <tr><td><code>riz mcp inspect [--url] [--bearer]</code></td><td>initialize + tools/list + typed params + SSE probe, one screen</td></tr>
@@ -235,8 +236,13 @@ precompressed = <span class="kw">false</span>       <span class="c"># serve file
       <li>Traversal, symlink escape, and dotfiles are rejected — <b>except</b> the agent surface under <code>/.well-known/*</code>.</li>
       <li>It is <b>not</b> a web server: no templating, SSR, reverse-proxying, or autoindex. For scale, front riz with a CDN.</li>
     </ul>
+    <p>Don't hand-write those discovery files — generate them. <code>riz scaffold static</code> reads your <code>riz.toml</code> and emits
+    <code>public/llms.txt</code> + <code>public/.well-known/riz.json</code> with every function rendered as a tool entry (name, runtime, routes,
+    description) matching exactly what <code>/_riz/mcp</code> advertises; <code>--wire</code> adds the <code>[static]</code> block for you. Re-run it
+    when your functions change and the instance's self-description stays in sync.</p>
     <div class="proof"><b>✓</b> proof: function_route_wins_over_static_file_at_same_path</div>
     <div class="proof"><b>✓</b> proof: live_instance_serves_its_llms_txt_and_well_known</div>
+    <div class="proof"><b>✓</b> proof: scaffolded_files_are_served_by_a_static_instance</div>
     <div class="proof"><b>✓</b> proof: path_traversal_dotdot_is_rejected</div>
 
     <div class="cta-row" style="margin-top:3rem">
