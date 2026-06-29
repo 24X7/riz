@@ -113,3 +113,13 @@ targets = [
   "x86_64-unknown-linux-gnu",
   "aarch64-unknown-linux-gnu",
 ]
+
+# Pin live GitHub runner images: cargo-dist 0.22.1 defaults to the now-retired
+# ubuntu-20.04 (jobs queue forever). `global` covers plan/global/host/announce;
+# the per-target entries set the build-matrix runners (read by the plan job).
+[workspace.metadata.dist.github-custom-runners]
+global = "ubuntu-latest"
+aarch64-apple-darwin = "macos-14"
+x86_64-apple-darwin = "macos-13"
+x86_64-unknown-linux-gnu = "ubuntu-latest"
+aarch64-unknown-linux-gnu = "ubuntu-latest"
