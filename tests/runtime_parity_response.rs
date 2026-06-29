@@ -124,8 +124,12 @@ async fn boot_riz(config_toml: &str) -> SocketAddr {
 async fn wait_for_ready(client: &reqwest::Client, url: &str) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     loop {
-        if client.get(url).send().await.is_ok() {
-            return;
+        // Wait for SUCCESS, not just any response: a connectable server whose
+        // runtime pool is still cold answers 5xx, which would race the test.
+        if let Ok(r) = client.get(url).send().await {
+            if r.status().is_success() {
+                return;
+            }
         }
         assert!(
             tokio::time::Instant::now() < deadline,
