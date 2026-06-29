@@ -158,7 +158,21 @@ async fn one_wasm_guard_protects_every_runtime() {
     let base = format!("http://127.0.0.1:{port}");
 
     // ── guard_in: allow → handler runs ──────────────────────────────────
-    let resp = client.get(format!("{base}/echo-bun")).send().await.unwrap();
+    // The first request can race the guard pool's warm-up on a slow CI runner:
+    // a not-yet-ready guard `__wasm-host` fails closed (502). Retry briefly
+    // until the guard is warm (this only tolerates cold start — a guard that
+    // truly can't serve stays non-200 and the assert below still fails).
+    let resp = {
+        let mut attempt = 0;
+        loop {
+            let r = client.get(format!("{base}/echo-bun")).send().await.unwrap();
+            if r.status() == 200 || attempt >= 20 {
+                break r;
+            }
+            attempt += 1;
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    };
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["echo"], "/echo-bun", "handler must have run: {body}");

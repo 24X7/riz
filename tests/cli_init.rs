@@ -31,12 +31,18 @@ fn assert_riz_available() {
     );
 }
 
-/// Run `riz init <args>` with the local template repo override.
+/// Run `riz init <args>` with the local template repo override. A git identity
+/// is provided via env so the `--git` path's `git commit` succeeds even on a
+/// host with no global git config (e.g. CI runners).
 fn init(args: &[&str]) -> Output {
     Command::new(riz_binary())
         .arg("init")
         .args(args)
         .env("RIZ_TEMPLATE_REPO", repo_root())
+        .env("GIT_AUTHOR_NAME", "riz test")
+        .env("GIT_AUTHOR_EMAIL", "test@riz.dev")
+        .env("GIT_COMMITTER_NAME", "riz test")
+        .env("GIT_COMMITTER_EMAIL", "test@riz.dev")
         .output()
         .expect("spawn riz init")
 }
