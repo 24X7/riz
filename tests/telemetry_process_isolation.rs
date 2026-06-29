@@ -98,7 +98,8 @@ async fn telemetry_child_roundtrips_events_to_sink() {
     let dir = tempfile::tempdir().unwrap();
     let sink = dir.path().join("telemetry.jsonl");
 
-    let sup = TelemetrySupervisor::spawn(&sink, 16, riz::observability::ExportTarget::sink_only()).expect("spawn supervisor");
+    let sup = TelemetrySupervisor::spawn(&sink, 16, riz::observability::ExportTarget::sink_only())
+        .expect("spawn supervisor");
     let handle = sup.handle();
 
     for i in 0..5 {
@@ -109,7 +110,10 @@ async fn telemetry_child_roundtrips_events_to_sink() {
     assert!(evs.len() >= 5, "sink only got {} events", evs.len());
     let names: Vec<_> = evs.iter().map(|e| e.name.clone()).collect();
     for i in 0..5 {
-        assert!(names.contains(&format!("rt{i}")), "missing rt{i} in {names:?}");
+        assert!(
+            names.contains(&format!("rt{i}")),
+            "missing rt{i} in {names:?}"
+        );
     }
     sup.shutdown().await;
 }
@@ -123,7 +127,8 @@ async fn host_emit_survives_child_kill_and_supervisor_respawns() {
     let dir = tempfile::tempdir().unwrap();
     let sink = dir.path().join("telemetry.jsonl");
 
-    let sup = TelemetrySupervisor::spawn(&sink, 16, riz::observability::ExportTarget::sink_only()).expect("spawn supervisor");
+    let sup = TelemetrySupervisor::spawn(&sink, 16, riz::observability::ExportTarget::sink_only())
+        .expect("spawn supervisor");
     let handle = sup.handle();
 
     // Make sure the first child is alive and serving.

@@ -42,7 +42,10 @@ fn route_path_params(route: &str) -> Vec<String> {
 /// - `[function.X.mcp]` `body` → verbatim JSON Schema replacing the generic
 ///   string body;
 /// - multiple routes → a `route` enum so the agent picks a declared one.
-pub(super) fn tool_input_schema(routes: &[String], mcp: Option<&McpToolConfig>) -> serde_json::Value {
+pub(super) fn tool_input_schema(
+    routes: &[String],
+    mcp: Option<&McpToolConfig>,
+) -> serde_json::Value {
     let mut properties = serde_json::Map::new();
     let mut top_required: Vec<String> = Vec::new();
 
@@ -183,7 +186,9 @@ mod tests {
             "DELETE /orders/{id}".to_string(),
         ];
         let s = tool_input_schema(&routes, None);
-        let req = s["properties"]["pathParams"]["required"].as_array().unwrap();
+        let req = s["properties"]["pathParams"]["required"]
+            .as_array()
+            .unwrap();
         assert!(req.iter().any(|v| v == "id"));
     }
 

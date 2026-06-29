@@ -274,8 +274,7 @@ async fn supervise_loop(
             cmd.env(ENV_ENDPOINT, ep);
             cmd.env(ENV_HEADERS, &headers_json);
         }
-        let mut child = match cmd.spawn()
-        {
+        let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!(error = %e, "telemetry: spawn failed; backing off");

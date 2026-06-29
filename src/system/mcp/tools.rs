@@ -9,10 +9,10 @@ use crate::state::FunctionKind;
 use http::{HeaderMap, HeaderValue, Method};
 
 use super::encoding::{lambda_response_envelope_schema, substitute_path_params, urlencode};
-use super::schema::{path_param_names, tool_input_schema};
 use super::protocol::{
     JsonRpcError, Tool, ToolContent, ToolsCallParams, ToolsCallResult, ToolsListResult,
 };
+use super::schema::{path_param_names, tool_input_schema};
 use super::McpHandler;
 
 impl McpHandler {

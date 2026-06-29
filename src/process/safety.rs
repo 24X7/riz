@@ -34,8 +34,7 @@ pub(super) fn apply_always_on_limits() -> std::io::Result<()> {
 
     // Single-file write size: cap at 100 MiB per child. A runaway
     // `fs.write` loop is bounded before filling host disk.
-    setrlimit(Resource::RLIMIT_FSIZE, 100 * 1024 * 1024, 100 * 1024 * 1024)
-        .map_err(to_io)?;
+    setrlimit(Resource::RLIMIT_FSIZE, 100 * 1024 * 1024, 100 * 1024 * 1024).map_err(to_io)?;
 
     // RLIMIT_NPROC is per-PROCESS on Linux but per-USER on macOS/BSD.
     // Setting it on macOS would compare against the host user's total
@@ -134,16 +133,12 @@ pub(super) fn apply_filesystem_allowlist(paths: &[std::path::PathBuf]) -> std::i
 }
 
 #[cfg(all(unix, not(target_os = "linux")))]
-pub(super) fn apply_filesystem_allowlist(
-    _paths: &[std::path::PathBuf],
-) -> std::io::Result<()> {
+pub(super) fn apply_filesystem_allowlist(_paths: &[std::path::PathBuf]) -> std::io::Result<()> {
     Ok(())
 }
 
 #[cfg(not(unix))]
-pub(super) fn apply_filesystem_allowlist(
-    _paths: &[std::path::PathBuf],
-) -> std::io::Result<()> {
+pub(super) fn apply_filesystem_allowlist(_paths: &[std::path::PathBuf]) -> std::io::Result<()> {
     Ok(())
 }
 
@@ -238,8 +233,7 @@ mod tests {
     #[test]
     fn apply_per_function_limits_with_none_is_no_op() {
         // Just verify the call doesn't error in the current process.
-        apply_per_function_limits(None, None)
-            .expect("None inputs must succeed without setrlimit");
+        apply_per_function_limits(None, None).expect("None inputs must succeed without setrlimit");
     }
 
     /// Cross-platform smoke test for apply_filesystem_allowlist with
@@ -258,7 +252,7 @@ mod tests {
         // ruleset which IS irreversibly applied — but we don't call it
         // directly in the test process (would sandbox the whole runner).
         // Instead verify the function exists and the signature compiles.
-        let _ = apply_filesystem_allowlist::<>;
+        let _ = apply_filesystem_allowlist;
     }
 
     /// Linux-only: spawn a child with apply_filesystem_allowlist(["/tmp"])

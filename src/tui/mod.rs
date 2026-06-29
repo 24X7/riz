@@ -35,7 +35,6 @@ use tokio::sync::watch;
 pub(crate) const RESTORE_BYTES: &[u8] =
     b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1015l\x1b[?25h\x1b[?1049l";
 
-
 /// Set to true by the server's shutdown path. The TUI loop checks this on
 /// every tick and exits cleanly — running its cleanup before the main thread
 /// returns and kills the detached TUI thread.
@@ -150,9 +149,7 @@ fn install_tty_restore_signal_handler() {
                     // Write to /dev/tty directly — bypasses any stdout
                     // redirection so the restore lands on the controlling
                     // terminal even if the user piped riz's stdout.
-                    if let Ok(mut tty) =
-                        std::fs::OpenOptions::new().write(true).open("/dev/tty")
-                    {
+                    if let Ok(mut tty) = std::fs::OpenOptions::new().write(true).open("/dev/tty") {
                         let _ = tty.write_all(RESTORE_BYTES);
                         let _ = tty.flush();
                     }
@@ -332,9 +329,18 @@ mod tests {
     fn restore_bytes_includes_every_required_escape() {
         let must_contain: &[(&[u8], &str)] = &[
             (b"\x1b[?1000l", "disable X10 mouse reporting (CSI ?1000l)"),
-            (b"\x1b[?1002l", "disable button-event mouse reporting (CSI ?1002l)"),
-            (b"\x1b[?1003l", "disable any-event mouse reporting (CSI ?1003l)"),
-            (b"\x1b[?1006l", "disable SGR-extended mouse reporting (CSI ?1006l)"),
+            (
+                b"\x1b[?1002l",
+                "disable button-event mouse reporting (CSI ?1002l)",
+            ),
+            (
+                b"\x1b[?1003l",
+                "disable any-event mouse reporting (CSI ?1003l)",
+            ),
+            (
+                b"\x1b[?1006l",
+                "disable SGR-extended mouse reporting (CSI ?1006l)",
+            ),
             (b"\x1b[?1015l", "disable urxvt mouse reporting (CSI ?1015l)"),
             (b"\x1b[?25h", "show cursor (CSI ?25h)"),
             (b"\x1b[?1049l", "leave alternate screen buffer (CSI ?1049l)"),

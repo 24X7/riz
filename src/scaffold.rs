@@ -231,8 +231,12 @@ fn wire_static_block(
     if config.static_site.is_some() {
         return Ok(false);
     }
-    let mut text = std::fs::read_to_string(config_path)
-        .map_err(|e| anyhow::anyhow!("could not read {} to wire [static]: {e}", config_path.display()))?;
+    let mut text = std::fs::read_to_string(config_path).map_err(|e| {
+        anyhow::anyhow!(
+            "could not read {} to wire [static]: {e}",
+            config_path.display()
+        )
+    })?;
     if !text.ends_with('\n') {
         text.push('\n');
     }

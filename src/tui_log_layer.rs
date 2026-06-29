@@ -83,7 +83,9 @@ impl Visit for FieldVisitor {
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
         match field.name() {
             "message" => self.message = Some(format!("{value:?}")),
-            "route_key" => self.route_key = Some(format!("{value:?}").trim_matches('"').to_string()),
+            "route_key" => {
+                self.route_key = Some(format!("{value:?}").trim_matches('"').to_string())
+            }
             _ => {}
         }
     }
@@ -106,8 +108,10 @@ mod tests {
         // events indirectly by using the tracing! macros below in a real
         // test would need a full subscriber — for now just check the
         // type compiles and the visitor stores what it should.
-        let mut v = FieldVisitor::default();
-        v.message = Some("hello".into());
+        let v = FieldVisitor {
+            message: Some("hello".into()),
+            ..Default::default()
+        };
         assert_eq!(v.message.as_deref(), Some("hello"));
     }
 }

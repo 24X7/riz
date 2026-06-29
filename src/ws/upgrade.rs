@@ -31,8 +31,10 @@ pub async fn ws_upgrade_handler(
     let stage = state.config.read().await.server.stage.clone();
     // Parse queryStringParameters from the upgrade request URI so $connect
     // events carry them, matching the AWS WebSocket event shape + the HTTP path.
-    let query: HashMap<String, String> =
-        raw_query.as_deref().map(parse_query_string).unwrap_or_default();
+    let query: HashMap<String, String> = raw_query
+        .as_deref()
+        .map(parse_query_string)
+        .unwrap_or_default();
 
     ws.on_upgrade(move |socket| async move {
         handle_socket(state, function_name, stage, headers, query, socket).await;

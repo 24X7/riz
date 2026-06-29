@@ -137,12 +137,9 @@ async fn collect_sse_payloads(resp: reqwest::Response) -> Vec<serde_json::Value>
     use futures_util::StreamExt;
     let mut buf = String::new();
     let mut stream = resp.bytes_stream();
-    while let Some(chunk) = tokio::time::timeout(
-        std::time::Duration::from_secs(20),
-        stream.next(),
-    )
-    .await
-    .expect("SSE frame within 20s")
+    while let Some(chunk) = tokio::time::timeout(std::time::Duration::from_secs(20), stream.next())
+        .await
+        .expect("SSE frame within 20s")
     {
         buf.push_str(&String::from_utf8_lossy(&chunk.expect("chunk reads")));
     }
@@ -201,10 +198,7 @@ async fn progress_notifications_stream_during_slow_tool_call() {
     assert_eq!(rest.len(), 1, "{payloads:?}");
     let final_frame = rest[0];
     assert_eq!(final_frame["id"], 9, "{final_frame}");
-    assert!(
-        final_frame["result"]["content"].is_array(),
-        "{final_frame}"
-    );
+    assert!(final_frame["result"]["content"].is_array(), "{final_frame}");
     assert_eq!(
         payloads.last().unwrap()["id"],
         9,

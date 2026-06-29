@@ -81,9 +81,7 @@ fn relative_to_mount<'a>(url_path: &'a str, mount: &str) -> Option<&'a str> {
     if url_path == m {
         return Some("");
     }
-    url_path
-        .strip_prefix(m)
-        .and_then(|r| r.strip_prefix('/'))
+    url_path.strip_prefix(m).and_then(|r| r.strip_prefix('/'))
 }
 
 enum Resolved {
@@ -209,7 +207,10 @@ async fn file_response(
     // Single-range request (Range: bytes=a-b). Only on the identity encoding —
     // ranging a precompressed body would be wrong.
     if encoding.is_none() {
-        if let Some(range) = req_headers.get(http::header::RANGE).and_then(|v| v.to_str().ok()) {
+        if let Some(range) = req_headers
+            .get(http::header::RANGE)
+            .and_then(|v| v.to_str().ok())
+        {
             match parse_single_range(range, total) {
                 Some((start, end)) => {
                     let slice = bytes[start as usize..=end as usize].to_vec();
@@ -226,10 +227,16 @@ async fn file_response(
                     return b.body(Body::from(slice)).unwrap();
                 }
                 None => {
-                    return build(StatusCode::RANGE_NOT_SATISFIABLE, &ctype, &cache, &etag, mtime)
-                        .header(http::header::CONTENT_RANGE, format!("bytes */{total}"))
-                        .body(Body::empty())
-                        .unwrap();
+                    return build(
+                        StatusCode::RANGE_NOT_SATISFIABLE,
+                        &ctype,
+                        &cache,
+                        &etag,
+                        mtime,
+                    )
+                    .header(http::header::CONTENT_RANGE, format!("bytes */{total}"))
+                    .body(Body::empty())
+                    .unwrap();
                 }
             }
         }
@@ -281,7 +288,11 @@ async fn not_found(cfg: &StaticConfig, is_head: bool) -> Response {
             return b.body(Body::from(bytes)).unwrap();
         }
     }
-    let body = if is_head { Body::empty() } else { Body::from("404 not found") };
+    let body = if is_head {
+        Body::empty()
+    } else {
+        Body::from("404 not found")
+    };
     Response::builder()
         .status(StatusCode::NOT_FOUND)
         .header(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
@@ -290,7 +301,10 @@ async fn not_found(cfg: &StaticConfig, is_head: bool) -> Response {
 }
 
 fn not_modified(req: &HeaderMap, etag: &str) -> bool {
-    if let Some(inm) = req.get(http::header::IF_NONE_MATCH).and_then(|v| v.to_str().ok()) {
+    if let Some(inm) = req
+        .get(http::header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+    {
         if inm == "*" || inm.split(',').any(|t| t.trim() == etag) {
             return true;
         }
@@ -379,7 +393,10 @@ fn is_content_hash(s: &str) -> bool {
 }
 
 fn has_extension(rel: &str) -> bool {
-    rel.rsplit('/').next().map(|seg| seg.contains('.')).unwrap_or(false)
+    rel.rsplit('/')
+        .next()
+        .map(|seg| seg.contains('.'))
+        .unwrap_or(false)
 }
 
 fn accepts_html(req: &HeaderMap) -> bool {

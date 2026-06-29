@@ -41,7 +41,9 @@ fn orders_wasm_available() -> bool {
     let m = orders_wasm_module();
     let host = riz_host_binary();
     m.exists()
-        && std::fs::metadata(&m).map(|md| md.len() > 0).unwrap_or(false)
+        && std::fs::metadata(&m)
+            .map(|md| md.len() > 0)
+            .unwrap_or(false)
         && host.exists()
 }
 
@@ -194,15 +196,33 @@ async fn wasm_orders_prices_a_valid_order() {
     assert_eq!(body["currency"], "USD", "currency echoed; body = {body}");
     assert_eq!(body["lineItemCount"], 2, "two line items; body = {body}");
     assert_eq!(body["totalQuantity"], 5, "total qty = 2+3; body = {body}");
-    assert_eq!(body["subtotalCents"], 1750, "subtotal = 1000+750; body = {body}");
+    assert_eq!(
+        body["subtotalCents"], 1750,
+        "subtotal = 1000+750; body = {body}"
+    );
     assert_eq!(body["taxRateBps"], 825, "tax rate; body = {body}");
-    assert_eq!(body["taxCents"], 144, "tax = round(1750*825/10000); body = {body}");
-    assert_eq!(body["totalCents"], 1894, "total = subtotal+tax; body = {body}");
+    assert_eq!(
+        body["taxCents"], 144,
+        "tax = round(1750*825/10000); body = {body}"
+    );
+    assert_eq!(
+        body["totalCents"], 1894,
+        "total = subtotal+tax; body = {body}"
+    );
 
     // Per-line extended amounts prove the WASM did the arithmetic, not echo.
-    assert_eq!(body["lines"][0]["sku"], "WIDGET", "line 0 sku; body = {body}");
-    assert_eq!(body["lines"][0]["extendedCents"], 1000, "2*500; body = {body}");
-    assert_eq!(body["lines"][1]["extendedCents"], 750, "3*250; body = {body}");
+    assert_eq!(
+        body["lines"][0]["sku"], "WIDGET",
+        "line 0 sku; body = {body}"
+    );
+    assert_eq!(
+        body["lines"][0]["extendedCents"], 1000,
+        "2*500; body = {body}"
+    );
+    assert_eq!(
+        body["lines"][1]["extendedCents"], 750,
+        "3*250; body = {body}"
+    );
 }
 
 /// Validation path — an order with a non-positive qty is rejected with 422 and a

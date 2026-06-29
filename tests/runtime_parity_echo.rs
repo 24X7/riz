@@ -175,8 +175,7 @@ fn assert_canonical_echo_shape(
         "invokedFunctionArn must be the synthetic riz ARN; body = {body}"
     );
     assert!(
-        body["awsRequestId"].is_string()
-            && !body["awsRequestId"].as_str().unwrap().is_empty(),
+        body["awsRequestId"].is_string() && !body["awsRequestId"].as_str().unwrap().is_empty(),
         "awsRequestId must be a non-empty string; body = {body}"
     );
     let remaining = body["remainingMs"]

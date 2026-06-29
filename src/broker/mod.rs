@@ -158,9 +158,7 @@ impl Broker {
                 Some((
                     name.clone(),
                     GrantRuntime {
-                        inflight: Arc::new(tokio::sync::Semaphore::new(
-                            cfg.max_inflight as usize,
-                        )),
+                        inflight: Arc::new(tokio::sync::Semaphore::new(cfg.max_inflight as usize)),
                         bucket: cfg
                             .rate_per_sec
                             .map(|r| tokio::sync::Mutex::new(TokenBucket::new(r))),

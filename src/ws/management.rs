@@ -90,7 +90,7 @@ impl LambdaHandler for ConnectionsHandler {
         let method = event.request_context.http.method.as_str().to_uppercase();
 
         // List endpoint: GET /_riz/connections (no path param).
-        if event.path_parameters.get("id").is_none() {
+        if !event.path_parameters.contains_key("id") {
             if method == "GET" {
                 return self.list();
             }

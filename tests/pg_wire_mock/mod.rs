@@ -20,12 +20,16 @@ use tokio::net::{TcpListener, TcpStream};
 
 pub struct MockPgServer {
     pub port: u16,
+    /// Captured wire log — a shared test-helper affordance not every test reads.
+    #[allow(dead_code)]
     pub log: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 impl MockPgServer {
     pub async fn start() -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind mock pg");
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock pg");
         let port = listener.local_addr().unwrap().port();
         let log: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
         let log2 = log.clone();
@@ -50,12 +54,9 @@ impl MockPgServer {
         )
     }
 
+    #[allow(dead_code)]
     pub fn log_contains(&self, needle: &str) -> bool {
-        self.log
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|l| l.contains(needle))
+        self.log.lock().unwrap().iter().any(|l| l.contains(needle))
     }
 }
 
@@ -170,19 +171,18 @@ async fn handle_conn(
                 let q = read_cstr(&payload, &mut at);
                 log.lock().unwrap().push(format!("query: {q}"));
                 let upper = q.to_uppercase();
-                let (tag, state) = if upper.starts_with("BEGIN")
-                    || upper.starts_with("START TRANSACTION")
-                {
-                    in_txn = true;
-                    ("BEGIN", b'T')
-                } else if upper.starts_with("COMMIT") {
-                    in_txn = false;
-                    ("COMMIT", b'I')
-                } else if upper.starts_with("SET") {
-                    ("SET", if in_txn { b'T' } else { b'I' })
-                } else {
-                    ("SELECT 0", if in_txn { b'T' } else { b'I' })
-                };
+                let (tag, state) =
+                    if upper.starts_with("BEGIN") || upper.starts_with("START TRANSACTION") {
+                        in_txn = true;
+                        ("BEGIN", b'T')
+                    } else if upper.starts_with("COMMIT") {
+                        in_txn = false;
+                        ("COMMIT", b'I')
+                    } else if upper.starts_with("SET") {
+                        ("SET", if in_txn { b'T' } else { b'I' })
+                    } else {
+                        ("SELECT 0", if in_txn { b'T' } else { b'I' })
+                    };
                 let mut out = command_complete(tag);
                 out.extend_from_slice(&ready_for_query(state));
                 s.write_all(&out).await?;

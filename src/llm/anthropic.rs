@@ -77,7 +77,13 @@ impl AnthropicProvider {
             .map_err(|e| ProviderError::Unavailable(self.name.clone(), e.to_string()))?;
         let status = resp.status();
         if !status.is_success() {
-            let txt: String = resp.text().await.unwrap_or_default().chars().take(300).collect();
+            let txt: String = resp
+                .text()
+                .await
+                .unwrap_or_default()
+                .chars()
+                .take(300)
+                .collect();
             return Err(ProviderError::Upstream(
                 self.name.clone(),
                 format!("HTTP {status}: {txt}"),
@@ -274,9 +280,7 @@ mod tests {
     async fn http_error_maps_to_upstream() {
         let base = spawn(axum::Router::new().route(
             "/v1/messages",
-            axum::routing::post(|| async {
-                (axum::http::StatusCode::UNAUTHORIZED, "bad key")
-            }),
+            axum::routing::post(|| async { (axum::http::StatusCode::UNAUTHORIZED, "bad key") }),
         ))
         .await;
         let p = AnthropicProvider::new("anthropic".into(), base, None);

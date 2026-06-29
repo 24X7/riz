@@ -72,7 +72,11 @@ fn wait_for_ready(port: u16, deadline: Duration) -> bool {
     false
 }
 
-fn mcp_call(client: &reqwest::blocking::Client, url: &str, body: serde_json::Value) -> serde_json::Value {
+fn mcp_call(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    body: serde_json::Value,
+) -> serde_json::Value {
     client
         .post(url)
         .json(&body)

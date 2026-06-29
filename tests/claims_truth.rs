@@ -4,16 +4,9 @@
 //! `tests/claims/registry.toml` maps each capability claim shown anywhere in
 //! `web/*.html` to one of three honest statuses:
 //!
-//!   * `proven`     — backed by a REAL test fn that exists in `tests/` or `src/`.
-//!                    The site DISPLAYS that fn name (the cap cards' "proof:"
-//!                    line and the detail pages' proof ledgers), so the claim's
-//!                    `page_text` is that fn name: one string that is both a
-//!                    verbatim drift-guard substring of the live page and the
-//!                    test that must exist.
-//!   * `benchmark`  — a perf number proved by a benches/ recipe, with a
-//!                    deterministic CI-floor sibling test as its `proof`.
-//!   * `copy-only`  — a subjective/marketing line or a point-in-time stat;
-//!                    needs a `note` saying why it's exempt from a test mapping.
+//!   * `proven` — backed by a REAL test fn that exists in `tests/` or `src/`. The site DISPLAYS that fn name (the cap cards' "proof:" line and the detail pages' proof ledgers), so the claim's `page_text` is that fn name: one string that is both a verbatim drift-guard substring of the live page and the test that must exist.
+//!   * `benchmark` — a perf number proved by a benches/ recipe, with a deterministic CI-floor sibling test as its `proof`.
+//!   * `copy-only` — a subjective/marketing line or a point-in-time stat; needs a `note` saying why it's exempt from a test mapping.
 //!
 //! Three invariants, enforced below, make a "proof" label impossible to fake:
 //!   1. every registry `page_text` appears somewhere on the live site;
@@ -129,11 +122,7 @@ fn registry_is_internally_consistent() {
     let mut seen = std::collections::HashSet::new();
     for c in &reg.claim {
         assert!(!c.id.trim().is_empty(), "a claim has an empty id");
-        assert!(
-            seen.insert(c.id.clone()),
-            "duplicate claim id: {:?}",
-            c.id
-        );
+        assert!(seen.insert(c.id.clone()), "duplicate claim id: {:?}", c.id);
         assert!(
             matches!(c.status.as_str(), "proven" | "benchmark" | "copy-only"),
             "claim {:?} has unknown status {:?}",

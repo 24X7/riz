@@ -25,22 +25,13 @@ use std::path::{Path, PathBuf};
 const ALLOWLIST: &[(&str, &str)] = &[
     // The claims-truth plan itself quotes slop markers as examples of what to
     // look for — those appearances are intentional.
-    (
-        "2026-06-09-claims-truth-and-ai-substrate.md",
-        "as an ai",
-    ),
+    ("2026-06-09-claims-truth-and-ai-substrate.md", "as an ai"),
     (
         "2026-06-09-claims-truth-and-ai-substrate.md",
         "todo(claude)",
     ),
-    (
-        "2026-06-09-claims-truth-and-ai-substrate.md",
-        "here's the",
-    ),
-    (
-        "2026-06-09-claims-truth-and-ai-substrate.md",
-        "here is the",
-    ),
+    ("2026-06-09-claims-truth-and-ai-substrate.md", "here's the"),
+    ("2026-06-09-claims-truth-and-ai-substrate.md", "here is the"),
     // The repo-cleanliness plan describes the very markers this test enforces.
     ("repo_cleanliness.rs", "as an ai"),
     ("repo_cleanliness.rs", "todo(claude)"),
@@ -52,11 +43,7 @@ const ALLOWLIST: &[(&str, &str)] = &[
 
 /// Roots to scan for AI-slop and merge-conflict markers.
 /// Tuples are (dir, extension). Source files are scanned only for a subset.
-const SCAN_ROOTS: &[(&str, &str)] = &[
-    ("docs", "md"),
-    ("tests", "rs"),
-    ("src", "rs"),
-];
+const SCAN_ROOTS: &[(&str, &str)] = &[("docs", "md"), ("tests", "rs"), ("src", "rs")];
 
 /// Only check docs/status/ — no other location is expected to hold these.
 const STATUS_DIR: &str = "docs/status";
@@ -120,17 +107,17 @@ fn read_lossy(path: &Path) -> String {
 /// always line-start, so they're handled separately).
 const SLOP_PATTERNS: &[(&str, &str)] = &[
     ("as an ai", "phrase 'as an AI' (AI self-reference)"),
-    ("i'm sorry, but", "phrase 'I\\'m sorry, but' (AI apology opener)"),
+    (
+        "i'm sorry, but",
+        "phrase 'I\\'m sorry, but' (AI apology opener)",
+    ),
     ("todo(claude)", "marker 'TODO(claude)' (AI-addressed TODO)"),
 ];
 
 /// These must appear only at the **start of a line** (after trimming whitespace)
 /// to avoid false-positives inside code or prose.
 const LINE_START_SLOP: &[(&str, &str)] = &[
-    (
-        "here's the ",
-        "filler opener 'Here's the …' at line start",
-    ),
+    ("here's the ", "filler opener 'Here's the …' at line start"),
     (
         "here is the ",
         "filler opener 'Here is the …' at line start",
@@ -158,10 +145,7 @@ fn check_slop(path: &Path, violations: &mut Vec<String>) {
         let trimmed = raw_line.trim().to_lowercase();
         for (pat, desc) in LINE_START_SLOP {
             if trimmed.starts_with(pat) && !is_allowlisted(path, pat) {
-                violations.push(format!(
-                    "{display}:{}: contains {desc}",
-                    line_no + 1
-                ));
+                violations.push(format!("{display}:{}: contains {desc}", line_no + 1));
             }
         }
     }
@@ -175,7 +159,8 @@ fn check_merge_conflicts(path: &Path, violations: &mut Vec<String>) {
     let content = read_lossy(path);
     let display = path.display();
     for (line_no, line) in content.lines().enumerate() {
-        if line.starts_with("<<<<<<<") || line.starts_with(">>>>>>>") || line.starts_with("=======") {
+        if line.starts_with("<<<<<<<") || line.starts_with(">>>>>>>") || line.starts_with("=======")
+        {
             violations.push(format!(
                 "{display}:{}: merge conflict scar ({:?})",
                 line_no + 1,
@@ -202,8 +187,7 @@ fn check_stale_status_dumps(violations: &mut Vec<String>) {
         }
         let name = file_name_str(&path).to_lowercase();
         // Look for session-state pattern with a date prefix older than cutoff
-        if !name.contains("session") && !name.contains("state") && !name.contains("session-state")
-        {
+        if !name.contains("session") && !name.contains("state") && !name.contains("session-state") {
             continue;
         }
         // Date prefix is YYYY-MM-DD at the start
@@ -265,7 +249,10 @@ fn plan_has_status_marker(plan_path: &Path) -> bool {
     let content = read_lossy(plan_path);
     let lower = content.to_lowercase();
     // Accept "> status:", "status: archived", "status: superseded", "status: completed"
-    lower.contains("> status:") || lower.contains("status: archived") || lower.contains("status: superseded") || lower.contains("status: completed")
+    lower.contains("> status:")
+        || lower.contains("status: archived")
+        || lower.contains("status: superseded")
+        || lower.contains("status: completed")
 }
 
 fn check_plans_coverage(violations: &mut Vec<String>) {

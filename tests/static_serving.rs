@@ -103,7 +103,11 @@ async fn directory_without_index_is_404_not_a_listing() {
 async fn path_traversal_dotdot_is_rejected() {
     let dir = tempfile::tempdir().unwrap();
     // A secret sibling OUTSIDE the served dir.
-    let outside = dir.path().parent().unwrap().join("riz-traversal-secret.txt");
+    let outside = dir
+        .path()
+        .parent()
+        .unwrap()
+        .join("riz-traversal-secret.txt");
     fs::write(&outside, "TOPSECRET").unwrap();
     let root = dir.path().join("public");
     fs::create_dir(&root).unwrap();
@@ -124,7 +128,10 @@ async fn path_traversal_dotdot_is_rejected() {
             "traversal {attack:?} must 404"
         );
         let body = String::from_utf8(body_bytes(resp).await).unwrap();
-        assert!(!body.contains("TOPSECRET"), "{attack:?} leaked the secret file");
+        assert!(
+            !body.contains("TOPSECRET"),
+            "{attack:?} leaked the secret file"
+        );
     }
     let _ = fs::remove_file(&outside);
 }
@@ -143,7 +150,11 @@ async fn symlink_escaping_the_root_is_not_followed() {
         let cfg = static_cfg(&root, "");
         let (m, p, h) = get("/link.txt");
         let resp = serve(m, p, h, &cfg).await.expect("owns response");
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "symlink escape must 404");
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "symlink escape must 404"
+        );
         let body = String::from_utf8(body_bytes(resp).await).unwrap();
         assert!(!body.contains("ESCAPED"));
     }
@@ -162,7 +173,11 @@ async fn dotfiles_are_hidden_except_well_known() {
     for hidden in ["/.env", "/.git/config"] {
         let (m, p, h) = get(hidden);
         let resp = serve(m, p, h, &cfg).await.expect("owns response");
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{hidden:?} must be hidden");
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "{hidden:?} must be hidden"
+        );
     }
 
     // The agent surface IS served.
@@ -182,11 +197,15 @@ async fn riz_system_path_is_never_served_from_disk() {
     // serve() returns None for /_riz/* so the caller never serves the file and
     // the real system route owns the path.
     assert!(
-        serve(Method::GET, "/_riz/mcp", HeaderMap::new(), &cfg).await.is_none(),
+        serve(Method::GET, "/_riz/mcp", HeaderMap::new(), &cfg)
+            .await
+            .is_none(),
         "/_riz/mcp must never resolve to a disk file"
     );
     assert!(
-        serve(Method::GET, "/_riz", HeaderMap::new(), &cfg).await.is_none(),
+        serve(Method::GET, "/_riz", HeaderMap::new(), &cfg)
+            .await
+            .is_none(),
         "/_riz must never resolve to a disk file"
     );
 }
@@ -210,8 +229,16 @@ async fn content_type_is_correct_for_wasm_json_svg() {
     ] {
         let (m, p, h) = get(path);
         let resp = serve(m, p, h, &cfg).await.expect("served");
-        let ct = resp.headers().get(header::CONTENT_TYPE).unwrap().to_str().unwrap();
-        assert!(ct.starts_with(expect), "{path}: expected {expect}, got {ct}");
+        let ct = resp
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(
+            ct.starts_with(expect),
+            "{path}: expected {expect}, got {ct}"
+        );
     }
 }
 
@@ -232,7 +259,9 @@ async fn conditional_request_returns_304() {
     // Re-request with If-None-Match → 304, empty body.
     let mut headers = HeaderMap::new();
     headers.insert(header::IF_NONE_MATCH, etag);
-    let resp = serve(Method::GET, "/app.js", headers, &cfg).await.expect("served");
+    let resp = serve(Method::GET, "/app.js", headers, &cfg)
+        .await
+        .expect("served");
     assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
     assert!(body_bytes(resp).await.is_empty(), "304 has no body");
 }
@@ -245,10 +274,16 @@ async fn range_request_returns_206() {
 
     let mut headers = HeaderMap::new();
     headers.insert(header::RANGE, HeaderValue::from_static("bytes=2-5"));
-    let resp = serve(Method::GET, "/v.bin", headers, &cfg).await.expect("served");
+    let resp = serve(Method::GET, "/v.bin", headers, &cfg)
+        .await
+        .expect("served");
     assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
     assert_eq!(
-        resp.headers().get(header::CONTENT_RANGE).unwrap().to_str().unwrap(),
+        resp.headers()
+            .get(header::CONTENT_RANGE)
+            .unwrap()
+            .to_str()
+            .unwrap(),
         "bytes 2-5/10"
     );
     assert_eq!(body_bytes(resp).await, b"2345");
@@ -256,7 +291,9 @@ async fn range_request_returns_206() {
     // Unsatisfiable range → 416.
     let mut headers = HeaderMap::new();
     headers.insert(header::RANGE, HeaderValue::from_static("bytes=50-60"));
-    let resp = serve(Method::GET, "/v.bin", headers, &cfg).await.expect("served");
+    let resp = serve(Method::GET, "/v.bin", headers, &cfg)
+        .await
+        .expect("served");
     assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
 }
 
@@ -273,7 +310,11 @@ async fn head_returns_headers_no_body() {
         .expect("served");
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(
-        resp.headers().get(header::CONTENT_LENGTH).unwrap().to_str().unwrap(),
+        resp.headers()
+            .get(header::CONTENT_LENGTH)
+            .unwrap()
+            .to_str()
+            .unwrap(),
         "11"
     );
     assert!(body_bytes(resp).await.is_empty(), "HEAD has no body");
@@ -294,7 +335,9 @@ async fn immutable_cache_header_on_hash_named_asset_no_cache_on_html() {
     let cfg = static_cfg(dir.path(), "");
 
     for hashed in ["/app.4f1c2a9b.js", "/index-D5qCqGHz.js"] {
-        let resp = serve(Method::GET, hashed, HeaderMap::new(), &cfg).await.unwrap();
+        let resp = serve(Method::GET, hashed, HeaderMap::new(), &cfg)
+            .await
+            .unwrap();
         assert!(
             resp.headers()
                 .get(header::CACHE_CONTROL)
@@ -306,15 +349,28 @@ async fn immutable_cache_header_on_hash_named_asset_no_cache_on_html() {
         );
     }
 
-    let resp = serve(Method::GET, "/index.html", HeaderMap::new(), &cfg).await.unwrap();
+    let resp = serve(Method::GET, "/index.html", HeaderMap::new(), &cfg)
+        .await
+        .unwrap();
     assert_eq!(
-        resp.headers().get(header::CACHE_CONTROL).unwrap().to_str().unwrap(),
+        resp.headers()
+            .get(header::CACHE_CONTROL)
+            .unwrap()
+            .to_str()
+            .unwrap(),
         "no-cache"
     );
 
     for normal in ["/plain.js", "/main-component.js"] {
-        let resp = serve(Method::GET, normal, HeaderMap::new(), &cfg).await.unwrap();
-        let cc = resp.headers().get(header::CACHE_CONTROL).unwrap().to_str().unwrap();
+        let resp = serve(Method::GET, normal, HeaderMap::new(), &cfg)
+            .await
+            .unwrap();
+        let cc = resp
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .unwrap()
+            .to_str()
+            .unwrap();
         assert!(
             cc.contains("max-age=3600") && !cc.contains("immutable"),
             "{normal} should use the normal asset cache, got {cc}"
@@ -342,7 +398,9 @@ async fn spa_fallback_serves_index_for_unknown_html_route_but_404s_missing_asset
     // Missing asset (has an extension) → 404, NOT index.html.
     let mut headers = HeaderMap::new();
     headers.insert(header::ACCEPT, HeaderValue::from_static("text/html"));
-    let resp = serve(Method::GET, "/missing.js", headers, &cfg).await.expect("owns");
+    let resp = serve(Method::GET, "/missing.js", headers, &cfg)
+        .await
+        .expect("owns");
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
@@ -374,17 +432,28 @@ async fn live_instance_serves_its_llms_txt_and_well_known() {
     .unwrap();
     let cfg = static_cfg(dir.path(), "");
 
-    let resp = serve(Method::GET, "/llms.txt", HeaderMap::new(), &cfg).await.unwrap();
+    let resp = serve(Method::GET, "/llms.txt", HeaderMap::new(), &cfg)
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let ct = resp.headers().get(header::CONTENT_TYPE).unwrap().to_str().unwrap();
+    let ct = resp
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(ct.starts_with("text/plain"));
-    assert!(String::from_utf8(body_bytes(resp).await).unwrap().contains("When to use"));
+    assert!(String::from_utf8(body_bytes(resp).await)
+        .unwrap()
+        .contains("When to use"));
 
     let resp = serve(Method::GET, "/.well-known/riz.json", HeaderMap::new(), &cfg)
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    assert!(String::from_utf8(body_bytes(resp).await).unwrap().contains("/_riz/mcp"));
+    assert!(String::from_utf8(body_bytes(resp).await)
+        .unwrap()
+        .contains("/_riz/mcp"));
 }
 
 // ───────────────────────────── mount handling ───────────────────────────────
@@ -396,9 +465,13 @@ async fn path_outside_mount_returns_none() {
     let cfg = static_cfg(dir.path(), "mount = \"/site\"\n");
 
     // Under mount → owns the response.
-    assert!(serve(Method::GET, "/site/", HeaderMap::new(), &cfg).await.is_some());
+    assert!(serve(Method::GET, "/site/", HeaderMap::new(), &cfg)
+        .await
+        .is_some());
     // Outside mount → None, so the caller falls through to the API 404.
-    assert!(serve(Method::GET, "/api/data", HeaderMap::new(), &cfg).await.is_none());
+    assert!(serve(Method::GET, "/api/data", HeaderMap::new(), &cfg)
+        .await
+        .is_none());
 }
 
 // ───────────────────────────── config validation ────────────────────────────
@@ -414,7 +487,9 @@ host = "127.0.0.1"
 dir = "/this/path/definitely/does/not/exist/riz"
 "#;
     let config: riz::config::Config = toml::from_str(toml).expect("parses");
-    let err = config.validate().expect_err("missing static dir must fail validation");
+    let err = config
+        .validate()
+        .expect_err("missing static dir must fail validation");
     assert!(
         err.to_string().to_lowercase().contains("static"),
         "error should mention the static dir: {err}"
@@ -529,7 +604,9 @@ async fn boot_with_static(config_toml: &str, handler_route: &str) -> SocketAddr 
         ws_connections: riz::ws::ConnectionStore::new(),
     });
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
     let bound = listener.local_addr().expect("local_addr");
     tokio::spawn(async move {
         let app =
@@ -545,7 +622,10 @@ async fn wait_ready(client: &reqwest::Client, url: &str) {
         if client.get(url).send().await.is_ok() {
             return;
         }
-        assert!(tokio::time::Instant::now() < deadline, "server never came up");
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "server never came up"
+        );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
@@ -569,7 +649,10 @@ async fn function_route_wins_over_static_file_at_same_path() {
     let resp = client.get(format!("{base}/shared")).send().await.unwrap();
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
-    assert_eq!(body, "FROM_FUNCTION", "function must win over the static file");
+    assert_eq!(
+        body, "FROM_FUNCTION",
+        "function must win over the static file"
+    );
 
     // A path NO function owns falls through to static (proves static IS wired).
     let resp = client.get(format!("{base}/")).send().await.unwrap();

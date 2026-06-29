@@ -60,8 +60,11 @@ async fn pg_query_round_trips_typed_rows_through_the_wire() {
     let mock = MockPgServer::start().await;
     let b = broker_for(&mock, "RIZ_TEST_PG_DSN_ROUNDTRIP", grant(|_| {}));
     let out = parse(
-        &b.pg_query("db", &req("select id, status from orders", serde_json::json!([])))
-            .await,
+        &b.pg_query(
+            "db",
+            &req("select id, status from orders", serde_json::json!([])),
+        )
+        .await,
     );
     assert_eq!(out["ok"], true, "{out}");
     assert_eq!(out["row_count"], 1);
@@ -75,8 +78,11 @@ async fn statement_timeout_is_applied_on_connect() {
     let mock = MockPgServer::start().await;
     let b = broker_for(&mock, "RIZ_TEST_PG_DSN_STMT_TO", grant(|_| {}));
     parse(
-        &b.pg_query("db", &req("select id, status from orders", serde_json::json!([])))
-            .await,
+        &b.pg_query(
+            "db",
+            &req("select id, status from orders", serde_json::json!([])),
+        )
+        .await,
     );
     assert!(
         mock.log_contains("SET statement_timeout = 2000"),
@@ -140,8 +146,11 @@ async fn read_only_grant_wraps_queries_in_a_read_only_transaction() {
         grant(|g| g.mode = "read-only".into()),
     );
     let out = parse(
-        &b.pg_query("db", &req("select id, status from orders", serde_json::json!([])))
-            .await,
+        &b.pg_query(
+            "db",
+            &req("select id, status from orders", serde_json::json!([])),
+        )
+        .await,
     );
     assert_eq!(out["ok"], true, "{out}");
     let log = mock.log.lock().unwrap().join("\n");

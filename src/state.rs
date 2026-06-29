@@ -510,7 +510,8 @@ impl TokenStats {
     /// the cumulative totals are always exact).
     pub fn record(&self, model: &str, provider: &str, input: u32, output: u32) {
         self.total_input.fetch_add(input as u64, Ordering::Relaxed);
-        self.total_output.fetch_add(output as u64, Ordering::Relaxed);
+        self.total_output
+            .fetch_add(output as u64, Ordering::Relaxed);
         if let Ok(mut ring) = self.recent.try_lock() {
             ring.push_back(TokenCall {
                 model: model.to_string(),
@@ -874,7 +875,10 @@ mod riz_state_tests {
         // Ring is capped to RECENT_CAP, retaining the newest entries.
         assert_eq!(snap.recent.len(), TokenStats::RECENT_CAP);
         assert_eq!(snap.recent.last().unwrap().model, format!("m{}", n - 1));
-        assert_eq!(snap.recent.first().unwrap().model, format!("m{}", n - TokenStats::RECENT_CAP));
+        assert_eq!(
+            snap.recent.first().unwrap().model,
+            format!("m{}", n - TokenStats::RECENT_CAP)
+        );
         // Cumulative totals count every call regardless of the ring cap.
         assert_eq!(snap.total_input, n as u64);
         assert_eq!(snap.total_output, n as u64);

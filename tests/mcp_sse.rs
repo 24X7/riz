@@ -164,7 +164,10 @@ async fn sse_post_with_wrong_bearer_is_401_not_a_stream() {
         .unwrap();
     assert_eq!(resp.status(), 401);
     let ct = resp.headers()["content-type"].to_str().unwrap().to_string();
-    assert!(!ct.contains("text/event-stream"), "401 must not be SSE: {ct}");
+    assert!(
+        !ct.contains("text/event-stream"),
+        "401 must not be SSE: {ct}"
+    );
 }
 
 // ───────────────────────────── GET channel ───────────────────────────────

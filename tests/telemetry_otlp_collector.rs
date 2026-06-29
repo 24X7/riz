@@ -50,7 +50,10 @@ fn real_collector_accepts_riz_otlp_export() {
         eprintln!("SKIP: set RIZ_OTLP_DOCKER=1 (needs Docker) to run the live OTLP smoke");
         return;
     }
-    assert!(docker_available(), "RIZ_OTLP_DOCKER=1 but `docker` is not usable");
+    assert!(
+        docker_available(),
+        "RIZ_OTLP_DOCKER=1 but `docker` is not usable"
+    );
 
     // Start a collector that prints received spans (debug exporter).
     let cfg = collector_config();
@@ -97,7 +100,10 @@ fn real_collector_accepts_riz_otlp_export() {
             Ok(()) => break,
             Err(e) => {
                 if Instant::now() >= deadline {
-                    panic!("collector never accepted the OTLP export: {e}\n{}", logs(&id));
+                    panic!(
+                        "collector never accepted the OTLP export: {e}\n{}",
+                        logs(&id)
+                    );
                 }
                 last_err = Some(e);
                 std::thread::sleep(Duration::from_millis(500));

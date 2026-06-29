@@ -111,7 +111,9 @@ async fn shutdown_flushes_all_pending_events_no_loss() {
 /// A tiny HTTP server that replies with a scripted sequence of status codes,
 /// one per accepted connection, counting requests. Returns the listener addr
 /// and a shared counter.
-fn scripted_http_server(statuses: Vec<u16>) -> (String, Arc<AtomicUsize>, std::thread::JoinHandle<()>) {
+fn scripted_http_server(
+    statuses: Vec<u16>,
+) -> (String, Arc<AtomicUsize>, std::thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().unwrap();
     let endpoint = format!("http://{addr}");

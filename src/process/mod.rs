@@ -151,15 +151,8 @@ impl ProcessManager {
     ) -> anyhow::Result<()> {
         let mut pools = self.pools.write().await;
         for (name, cfg) in functions {
-            Self::build_pool_into(
-                &mut pools,
-                name,
-                cfg,
-                registry,
-                &log_tx,
-                &self.riz_state,
-            )
-            .await?;
+            Self::build_pool_into(&mut pools, name, cfg, registry, &log_tx, &self.riz_state)
+                .await?;
             // WASM guards ride the same pool machinery — spawned as sibling
             // pools so they get liveness, respawn, and kill_on_drop for free.
             // A guard that can't spawn is a STARTUP error: a configured
@@ -167,16 +160,30 @@ impl ProcessManager {
             if let Some(guard) = &cfg.guard_in {
                 let gname = format!("{name}{}", guard::GUARD_IN_SUFFIX);
                 let gcfg = guard::guard_pool_config(guard, cfg);
-                Self::build_pool_into(&mut pools, &gname, &gcfg, registry, &log_tx, &self.riz_state)
-                    .await
-                    .with_context(|| format!("failed to spawn guard_in for {name}"))?;
+                Self::build_pool_into(
+                    &mut pools,
+                    &gname,
+                    &gcfg,
+                    registry,
+                    &log_tx,
+                    &self.riz_state,
+                )
+                .await
+                .with_context(|| format!("failed to spawn guard_in for {name}"))?;
             }
             if let Some(guard) = &cfg.guard_out {
                 let gname = format!("{name}{}", guard::GUARD_OUT_SUFFIX);
                 let gcfg = guard::guard_pool_config(guard, cfg);
-                Self::build_pool_into(&mut pools, &gname, &gcfg, registry, &log_tx, &self.riz_state)
-                    .await
-                    .with_context(|| format!("failed to spawn guard_out for {name}"))?;
+                Self::build_pool_into(
+                    &mut pools,
+                    &gname,
+                    &gcfg,
+                    registry,
+                    &log_tx,
+                    &self.riz_state,
+                )
+                .await
+                .with_context(|| format!("failed to spawn guard_out for {name}"))?;
             }
         }
         Ok(())

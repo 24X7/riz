@@ -76,11 +76,7 @@ const PROGRESS_TICK: std::time::Duration = std::time::Duration::from_millis(500)
 /// verbatim, `progress` strictly increasing). Errors (401 etc.) and
 /// notification-only requests (202) pass through as plain HTTP — the spec
 /// only streams successful JSON-RPC responses.
-async fn sse_post(
-    state: Arc<AppState>,
-    peer: SocketAddr,
-    req: Request<AxumBody>,
-) -> Response {
+async fn sse_post(state: Arc<AppState>, peer: SocketAddr, req: Request<AxumBody>) -> Response {
     let started = std::time::Instant::now();
     let headers = req.headers().clone();
     let body_bytes = match axum::body::to_bytes(req.into_body(), 5 * 1024 * 1024).await {
@@ -144,8 +140,9 @@ async fn sse_post(
     let mut resp = match inner.status_code {
         200 => {
             let payload = body_text(inner.body);
-            let events =
-                vec![Ok::<Event, Infallible>(Event::default().event("message").data(payload))];
+            let events = vec![Ok::<Event, Infallible>(
+                Event::default().event("message").data(payload),
+            )];
             Sse::new(stream::iter(events)).into_response()
         }
         // McpHandler answers notification-only bodies with 202 Accepted
@@ -315,11 +312,7 @@ async fn sse_get(state: Arc<AppState>, headers: HeaderMap) -> Response {
 /// Minimal AWS v2 event for the Router → McpHandler::invoke path. Only the
 /// fields invoke actually reads (method, headers for auth, body) plus the
 /// routing context need to be real.
-fn make_mcp_event(
-    headers: &HeaderMap,
-    peer: &SocketAddr,
-    body: String,
-) -> ApiGatewayV2httpRequest {
+fn make_mcp_event(headers: &HeaderMap, peer: &SocketAddr, body: String) -> ApiGatewayV2httpRequest {
     let route_key = "POST /_riz/mcp".to_string();
     let ctx = ApiGatewayV2httpRequestContext {
         route_key: Some(route_key.clone()),

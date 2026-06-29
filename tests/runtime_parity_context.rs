@@ -151,7 +151,11 @@ async fn exercise_context_fields(addr: SocketAddr, function_name: &str) {
         .send()
         .await
         .expect("send");
-    assert_eq!(resp.status(), 200, "{function_name}: GET /echo expected 200");
+    assert_eq!(
+        resp.status(),
+        200,
+        "{function_name}: GET /echo expected 200"
+    );
     let body: serde_json::Value = resp.json().await.expect("json");
 
     // Stage variables from [function.X.stage_variables] block.

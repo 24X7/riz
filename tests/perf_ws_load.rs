@@ -123,7 +123,7 @@ path = "/chat"
     let started = Instant::now();
     for i in 0..N_MESSAGES {
         socket
-            .send(Message::Text(format!("msg-{i}").into()))
+            .send(Message::Text(format!("msg-{i}")))
             .await
             .expect("ws send");
     }

@@ -152,8 +152,7 @@ async fn tools_list_types_greedy_path_param() {
     let addr = serve(state).await;
     let schema = tool_schema(addr, "files").await;
     assert_eq!(
-        schema["properties"]["pathParams"]["properties"]["key"]["type"],
-        "string",
+        schema["properties"]["pathParams"]["properties"]["key"]["type"], "string",
         "{schema}"
     );
 }
@@ -206,7 +205,10 @@ async fn tools_list_route_enum_for_multi_route_function() {
     let addr = serve(state).await;
     let schema = tool_schema(addr, "orders").await;
     let route_enum = schema["properties"]["route"]["enum"].as_array().unwrap();
-    assert!(route_enum.iter().any(|v| v == "GET /orders/{id}"), "{schema}");
+    assert!(
+        route_enum.iter().any(|v| v == "GET /orders/{id}"),
+        "{schema}"
+    );
     assert!(route_enum.iter().any(|v| v == "POST /orders"), "{schema}");
 }
 
@@ -251,8 +253,7 @@ async fn tools_list_uses_declared_body_schema() {
     let addr = serve(state).await;
     let schema = tool_schema(addr, "orders").await;
     assert_eq!(
-        schema["properties"]["body"]["properties"]["sku"]["type"],
-        "string",
+        schema["properties"]["body"]["properties"]["sku"]["type"], "string",
         "{schema}"
     );
 }
@@ -441,7 +442,9 @@ routes = [{ path = "/search", method = "GET" }]
 type = "float64"
 "#;
     let cfg: Config = toml::from_str(toml_src).expect("parses as toml");
-    let err = cfg.validate().expect_err("float64 is not a valid param type");
+    let err = cfg
+        .validate()
+        .expect_err("float64 is not a valid param type");
     assert!(err.contains("search"), "{err}");
     assert!(err.contains("limit"), "{err}");
     assert!(err.contains("float64"), "{err}");

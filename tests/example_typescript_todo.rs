@@ -150,12 +150,19 @@ fn api_and_client_are_served_on_one_origin() {
         .unwrap()
         .starts_with("text/html"));
     let html = resp.text().unwrap();
-    assert!(html.contains("<div id=\"root\">"), "served HTML is not the client shell");
+    assert!(
+        html.contains("<div id=\"root\">"),
+        "served HTML is not the client shell"
+    );
 
     // The API (a function) answers on the same origin — no CORS, no second host.
     let list = client.get(format!("{base}/api/todos")).send().unwrap();
     assert_eq!(list.status(), 200);
-    assert_eq!(list.text().unwrap().trim(), "[]", "fresh store should be empty");
+    assert_eq!(
+        list.text().unwrap().trim(),
+        "[]",
+        "fresh store should be empty"
+    );
 
     // Create.
     let created = client
@@ -176,7 +183,10 @@ fn api_and_client_are_served_on_one_origin() {
         .send()
         .unwrap();
     assert_eq!(patched.status(), 200);
-    assert_eq!(patched.json::<serde_json::Value>().unwrap()["completed"], true);
+    assert_eq!(
+        patched.json::<serde_json::Value>().unwrap()["completed"],
+        true
+    );
 
     // Delete → 204.
     let deleted = client
@@ -186,7 +196,10 @@ fn api_and_client_are_served_on_one_origin() {
     assert_eq!(deleted.status(), 204);
 
     // SPA fallback: an unknown client-side route returns the app shell, not 404.
-    let spa = client.get(format!("{base}/some/client/route")).send().unwrap();
+    let spa = client
+        .get(format!("{base}/some/client/route"))
+        .send()
+        .unwrap();
     assert_eq!(spa.status(), 200);
     assert!(spa
         .headers()

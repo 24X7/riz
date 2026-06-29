@@ -32,16 +32,16 @@ fn riz_binary() -> PathBuf {
 
 fn contributing_md() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("CONTRIBUTING.md");
-    std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
 /// Global flags that MUST precede the subcommand.
 const GLOBAL_FLAGS: &[&str] = &["--dev", "--config", "--port", "--log-level"];
 
 /// Every subcommand name the CLI accepts (clap `Commands` + `mcp`).
-const KNOWN_SUBCOMMANDS: &[&str] =
-    &["run", "validate", "routes", "deploy", "mcp", "doctor", "init", "scaffold"];
+const KNOWN_SUBCOMMANDS: &[&str] = &[
+    "run", "validate", "routes", "deploy", "mcp", "doctor", "init", "scaffold",
+];
 
 /// A single ```bash``` line, with the `# @verify ...` marker (if any) that
 /// preceded it on its own line.
@@ -106,7 +106,9 @@ fn cargo_run_args(line: &str) -> Option<Vec<String>> {
                     let space = rest.find(' ');
                     if let Some(sp) = space {
                         if eq < sp
-                            && rest[..eq].chars().all(|c| c.is_ascii_uppercase() || c == '_')
+                            && rest[..eq]
+                                .chars()
+                                .all(|c| c.is_ascii_uppercase() || c == '_')
                         {
                             rest = rest[sp + 1..].trim_start();
                             continue;
@@ -130,8 +132,18 @@ fn cargo_run_args(line: &str) -> Option<Vec<String>> {
 /// True if the line is a heavy/networked command we only shape-check.
 fn is_shape_check_only(line: &str) -> bool {
     let heavy = [
-        "wrk", "rustup", "brew", "bun install", "curl", "cargo build", "cargo install",
-        "cargo watch", "cargo fmt", "cargo clippy", "cargo flamegraph", "python3",
+        "wrk",
+        "rustup",
+        "brew",
+        "bun install",
+        "curl",
+        "cargo build",
+        "cargo install",
+        "cargo watch",
+        "cargo fmt",
+        "cargo clippy",
+        "cargo flamegraph",
+        "python3",
     ];
     if heavy.iter().any(|h| line.contains(h)) {
         return true;
@@ -150,7 +162,8 @@ fn is_shape_check_only(line: &str) -> bool {
 
 /// Index of the first arg that is a known subcommand.
 fn subcommand_index(args: &[String]) -> Option<usize> {
-    args.iter().position(|a| KNOWN_SUBCOMMANDS.contains(&a.as_str()))
+    args.iter()
+        .position(|a| KNOWN_SUBCOMMANDS.contains(&a.as_str()))
 }
 
 /// Assert global flags appear before the subcommand for a `cargo run -- <args>`
@@ -178,7 +191,10 @@ fn assert_global_flags_precede_subcommand(line: &str, args: &[String]) {
 fn contributing_commands_are_runnable() {
     let md = contributing_md();
     let cmds = parse_bash_commands(&md);
-    assert!(!cmds.is_empty(), "no bash commands parsed from CONTRIBUTING.md");
+    assert!(
+        !cmds.is_empty(),
+        "no bash commands parsed from CONTRIBUTING.md"
+    );
 
     let mut verified = 0usize;
     let mut shape_checked = 0usize;
@@ -234,10 +250,8 @@ fn contributing_commands_are_runnable() {
                 // A `cargo run -- ...` with no subcommand is only OK for the
                 // clap-auto flags (--version/--help/-V/-h).
                 assert!(
-                    args.iter().any(|a| matches!(
-                        a.as_str(),
-                        "--version" | "--help" | "-V" | "-h"
-                    )),
+                    args.iter()
+                        .any(|a| matches!(a.as_str(), "--version" | "--help" | "-V" | "-h")),
                     "`cargo run --` line with no known subcommand and no \
                      --version/--help: `{line}`"
                 );

@@ -204,7 +204,11 @@ async fn one_wasm_guard_protects_every_runtime() {
 
     // ── Cross-runtime: the SAME guard module wraps a WASM handler ───────
     if with_wasm {
-        let resp = client.get(format!("{base}/echo-wasm")).send().await.unwrap();
+        let resp = client
+            .get(format!("{base}/echo-wasm"))
+            .send()
+            .await
+            .unwrap();
         assert_eq!(resp.status(), 200, "wasm handler allow path");
         let resp = client
             .get(format!("{base}/echo-wasm"))

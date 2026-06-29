@@ -45,14 +45,8 @@ fn chat_child_span(trace: &str, span: &str, parent: &str) -> TelemetryEvent {
         "gen_ai.request.model".to_string(),
         AttrValue::String("gpt-4o".into()),
     );
-    attrs.insert(
-        "gen_ai.usage.input_tokens".to_string(),
-        AttrValue::Int(11),
-    );
-    attrs.insert(
-        "gen_ai.usage.output_tokens".to_string(),
-        AttrValue::Int(7),
-    );
+    attrs.insert("gen_ai.usage.input_tokens".to_string(), AttrValue::Int(11));
+    attrs.insert("gen_ai.usage.output_tokens".to_string(), AttrValue::Int(7));
     TelemetryEvent {
         name: "chat.completions".into(),
         kind: SpanKind::Client,
@@ -131,7 +125,10 @@ fn otlp_encoder_emits_genai_token_attrs() {
     assert_eq!(find("gen_ai.usage.input_tokens")["value"]["intValue"], "11");
     assert_eq!(find("gen_ai.usage.output_tokens")["value"]["intValue"], "7");
     assert_eq!(find("gen_ai.system")["value"]["stringValue"], "openai");
-    assert_eq!(find("gen_ai.request.model")["value"]["stringValue"], "gpt-4o");
+    assert_eq!(
+        find("gen_ai.request.model")["value"]["stringValue"],
+        "gpt-4o"
+    );
 }
 
 /// Stand up a one-shot HTTP receiver and prove the export path POSTs the OTLP
@@ -216,7 +213,5 @@ fn otlp_worker_posts_to_configured_endpoint() {
 }
 
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|w| w == needle)
+    haystack.windows(needle.len()).position(|w| w == needle)
 }

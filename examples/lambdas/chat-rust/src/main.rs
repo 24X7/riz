@@ -34,8 +34,8 @@ async fn handler(
     }
 
     // $default: POST the echoed message back via @connections.
-    let base = std::env::var("RIZ_TEST_BASE_URL")
-        .unwrap_or_else(|_| "http://localhost:3000".into());
+    let base =
+        std::env::var("RIZ_TEST_BASE_URL").unwrap_or_else(|_| "http://localhost:3000".into());
     let body_in = event.body.unwrap_or_default();
     let payload = format!("echo: {body_in}");
 

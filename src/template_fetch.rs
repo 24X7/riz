@@ -25,14 +25,39 @@ const DEFAULT_REPO: &str = "https://github.com/24X7/riz";
 /// the "out of the box" set `riz init --list` shows — still fetched from git,
 /// never embedded. Anyone can also point `riz init` at their own `owner/repo`.
 pub const BUILTINS: &[(&str, &str, &str, &str)] = &[
-    ("typescript-http", "templates/typescript-http", "HTTP", "TypeScript / Bun"),
+    (
+        "typescript-http",
+        "templates/typescript-http",
+        "HTTP",
+        "TypeScript / Bun",
+    ),
     ("python-http", "templates/python-http", "HTTP", "Python"),
     ("rust-http", "templates/rust-http", "HTTP", "Rust"),
     ("nodejs-http", "templates/nodejs-http", "HTTP", "Node.js"),
-    ("typescript-websocket", "templates/typescript-websocket", "WebSocket", "TypeScript / Bun"),
-    ("python-websocket", "templates/python-websocket", "WebSocket", "Python"),
-    ("rust-websocket", "templates/rust-websocket", "WebSocket", "Rust"),
-    ("typescript-todo", "examples/typescript-todo", "Full-stack", "TS/Bun API + React/Vite client"),
+    (
+        "typescript-websocket",
+        "templates/typescript-websocket",
+        "WebSocket",
+        "TypeScript / Bun",
+    ),
+    (
+        "python-websocket",
+        "templates/python-websocket",
+        "WebSocket",
+        "Python",
+    ),
+    (
+        "rust-websocket",
+        "templates/rust-websocket",
+        "WebSocket",
+        "Rust",
+    ),
+    (
+        "typescript-todo",
+        "examples/typescript-todo",
+        "Full-stack",
+        "TS/Bun API + React/Vite client",
+    ),
 ];
 
 /// A resolved template source.
@@ -103,7 +128,11 @@ pub fn resolve(spec: &str, cli_ref: Option<&str>) -> anyhow::Result<Source> {
     // 2. Local path.
     if looks_local(spec) {
         let p = expand_tilde(spec);
-        anyhow::ensure!(p.is_dir(), "local template path does not exist: {}", p.display());
+        anyhow::ensure!(
+            p.is_dir(),
+            "local template path does not exist: {}",
+            p.display()
+        );
         return Ok(Source::Local(p));
     }
 
@@ -138,7 +167,11 @@ pub fn resolve(spec: &str, cli_ref: Option<&str>) -> anyhow::Result<Source> {
 
 fn merge_ref(src: Source, reference: Option<String>) -> Source {
     match src {
-        Source::Git { repo, reference: inner, subdir } => Source::Git {
+        Source::Git {
+            repo,
+            reference: inner,
+            subdir,
+        } => Source::Git {
             repo,
             reference: reference.or(inner),
             subdir,
@@ -162,7 +195,11 @@ fn parse_github_tree_url(s: &str) -> Option<Source> {
     } else {
         None
     };
-    Some(Source::Git { repo, reference, subdir })
+    Some(Source::Git {
+        repo,
+        reference,
+        subdir,
+    })
 }
 
 /// `owner/repo[/sub/dir]` → GitHub Git source.
@@ -177,7 +214,11 @@ fn parse_shorthand(s: &str) -> Option<Source> {
     } else {
         None
     };
-    Some(Source::Git { repo, reference: None, subdir })
+    Some(Source::Git {
+        repo,
+        reference: None,
+        subdir,
+    })
 }
 
 fn expand_tilde(s: &str) -> PathBuf {
@@ -192,7 +233,13 @@ fn expand_tilde(s: &str) -> PathBuf {
 /// Fetch `source` into `dest`. Refuses a non-empty `dest` unless `force`.
 /// Returns the number of files written.
 pub fn fetch_into(source: &Source, dest: &Path, force: bool) -> anyhow::Result<usize> {
-    if dest.exists() && dest.read_dir().map(|mut d| d.next().is_some()).unwrap_or(false) && !force {
+    if dest.exists()
+        && dest
+            .read_dir()
+            .map(|mut d| d.next().is_some())
+            .unwrap_or(false)
+        && !force
+    {
         anyhow::bail!(
             "target directory {} is not empty. Move it aside or pass --force.",
             dest.display()
@@ -201,11 +248,19 @@ pub fn fetch_into(source: &Source, dest: &Path, force: bool) -> anyhow::Result<u
 
     match source {
         Source::Local(path) => {
-            anyhow::ensure!(path.is_dir(), "template source is not a directory: {}", path.display());
+            anyhow::ensure!(
+                path.is_dir(),
+                "template source is not a directory: {}",
+                path.display()
+            );
             std::fs::create_dir_all(dest)?;
             copy_dir(path, dest)
         }
-        Source::Git { repo, reference, subdir } => {
+        Source::Git {
+            repo,
+            reference,
+            subdir,
+        } => {
             let tmp = ScratchDir::new()?;
             let clone_dir = tmp.path().join("repo");
             git_clone(repo, reference.as_deref(), &clone_dir)?;
@@ -217,7 +272,10 @@ pub fn fetch_into(source: &Source, dest: &Path, force: bool) -> anyhow::Result<u
                 src.is_dir(),
                 "subdir {:?} not found in {repo}{}",
                 subdir.as_deref().unwrap_or(""),
-                reference.as_deref().map(|r| format!(" @ {r}")).unwrap_or_default()
+                reference
+                    .as_deref()
+                    .map(|r| format!(" @ {r}"))
+                    .unwrap_or_default()
             );
             std::fs::create_dir_all(dest)?;
             copy_dir(&src, dest)
@@ -283,9 +341,8 @@ fn git_clone(repo: &str, reference: Option<&str>, dest: &Path) -> anyhow::Result
 const SKIP_DIRS: &[&str] = &[".git", "node_modules", "target", ".vite"];
 
 fn is_skipped(name: &std::ffi::OsStr) -> bool {
-    name.to_str().is_some_and(|n| {
-        SKIP_DIRS.contains(&n) || n.ends_with(".tsbuildinfo")
-    })
+    name.to_str()
+        .is_some_and(|n| SKIP_DIRS.contains(&n) || n.ends_with(".tsbuildinfo"))
 }
 
 /// Recursively copy `src` into `dst`, skipping VCS/dep/build cruft. Returns

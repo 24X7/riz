@@ -50,11 +50,12 @@ impl TokioPgBackend {
     }
 
     async fn connect(&self) -> Result<tokio_postgres::Client, String> {
-        let pg_config: tokio_postgres::Config = self
-            .dsn
-            .parse()
-            .map_err(|e| format!("invalid DSN: {e}"))?;
-        let use_tls = !matches!(pg_config.get_ssl_mode(), tokio_postgres::config::SslMode::Disable);
+        let pg_config: tokio_postgres::Config =
+            self.dsn.parse().map_err(|e| format!("invalid DSN: {e}"))?;
+        let use_tls = !matches!(
+            pg_config.get_ssl_mode(),
+            tokio_postgres::config::SslMode::Disable
+        );
 
         let client = if use_tls {
             let mut roots = rustls::RootCertStore::empty();
@@ -209,21 +210,11 @@ fn column_to_json(
         Type::BOOL => row
             .try_get::<_, Option<bool>>(i)
             .map(|v| v.map(Value::from)),
-        Type::INT2 => row
-            .try_get::<_, Option<i16>>(i)
-            .map(|v| v.map(Value::from)),
-        Type::INT4 => row
-            .try_get::<_, Option<i32>>(i)
-            .map(|v| v.map(Value::from)),
-        Type::INT8 => row
-            .try_get::<_, Option<i64>>(i)
-            .map(|v| v.map(Value::from)),
-        Type::FLOAT4 => row
-            .try_get::<_, Option<f32>>(i)
-            .map(|v| v.map(Value::from)),
-        Type::FLOAT8 => row
-            .try_get::<_, Option<f64>>(i)
-            .map(|v| v.map(Value::from)),
+        Type::INT2 => row.try_get::<_, Option<i16>>(i).map(|v| v.map(Value::from)),
+        Type::INT4 => row.try_get::<_, Option<i32>>(i).map(|v| v.map(Value::from)),
+        Type::INT8 => row.try_get::<_, Option<i64>>(i).map(|v| v.map(Value::from)),
+        Type::FLOAT4 => row.try_get::<_, Option<f32>>(i).map(|v| v.map(Value::from)),
+        Type::FLOAT8 => row.try_get::<_, Option<f64>>(i).map(|v| v.map(Value::from)),
         Type::TEXT | Type::VARCHAR | Type::BPCHAR | Type::NAME | Type::UNKNOWN => row
             .try_get::<_, Option<String>>(i)
             .map(|v| v.map(Value::from)),

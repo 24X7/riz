@@ -60,7 +60,10 @@ fn builtin_templates_scaffold_from_the_git_location() {
             "init {name} failed: {}",
             String::from_utf8_lossy(&out.stderr)
         );
-        assert!(target.join("riz.toml").is_file(), "{name}: riz.toml missing");
+        assert!(
+            target.join("riz.toml").is_file(),
+            "{name}: riz.toml missing"
+        );
         assert!(
             target.join(must_have).is_file(),
             "{name}: expected {must_have}"
@@ -85,7 +88,10 @@ fn full_stack_todo_template_brings_api_and_client() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(target.join("api/todos.ts").is_file(), "API handler missing");
-    assert!(target.join("client/package.json").is_file(), "client missing");
+    assert!(
+        target.join("client/package.json").is_file(),
+        "client missing"
+    );
     assert!(
         target.join("client/dist/index.html").is_file(),
         "built client missing"
@@ -236,5 +242,8 @@ fn clones_a_template_from_a_real_git_repo() {
     );
     assert!(target.join("riz.toml").is_file());
     assert!(target.join("i.ts").is_file());
-    assert!(!target.join(".git").exists(), ".git must not be carried over");
+    assert!(
+        !target.join(".git").exists(),
+        ".git must not be carried over"
+    );
 }

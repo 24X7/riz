@@ -1004,16 +1004,18 @@ impl Config {
                 ));
             }
             if s.mount == "/_riz" || s.mount.starts_with("/_riz/") {
-                return Err(
-                    "[static] mount must not use the reserved /_riz namespace".into(),
-                );
+                return Err("[static] mount must not use the reserved /_riz namespace".into());
             }
             // The mount must not collide with a declared function route prefix:
             // function routes always win, so a colliding static mount would be
             // dead config — reject it loudly rather than silently shadow.
             for (name, func) in &self.functions {
                 for r in func.effective_routes(name) {
-                    if s.mount != "/" && (r.path == s.mount || r.path.starts_with(&format!("{}/", s.mount.trim_end_matches('/')))) {
+                    if s.mount != "/"
+                        && (r.path == s.mount
+                            || r.path
+                                .starts_with(&format!("{}/", s.mount.trim_end_matches('/'))))
+                    {
                         return Err(format!(
                             "[static] mount = {:?} collides with function '{name}' route {:?} \
                              — function routes always win, so the static mount would be dead",

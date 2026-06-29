@@ -162,7 +162,11 @@ async fn exercise_binary_body(addr: SocketAddr, function_name: &str) {
         .send()
         .await
         .expect("send");
-    assert_eq!(resp.status(), 200, "{function_name}: POST /echo expected 200");
+    assert_eq!(
+        resp.status(),
+        200,
+        "{function_name}: POST /echo expected 200"
+    );
     let body: serde_json::Value = resp.json().await.expect("response is JSON");
 
     // riz must have base64-encoded the body and set the flag.
@@ -176,7 +180,9 @@ async fn exercise_binary_body(addr: SocketAddr, function_name: &str) {
         .unwrap_or_else(|| panic!("{function_name}: body must be a base64 string; body = {body}"));
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(encoded)
-        .unwrap_or_else(|e| panic!("{function_name}: body must be valid base64: {e}; body = {body}"));
+        .unwrap_or_else(|e| {
+            panic!("{function_name}: body must be valid base64: {e}; body = {body}")
+        });
     assert_eq!(
         decoded, PNG_HEADER,
         "{function_name}: base64-decode(body) must equal the POSTed bytes; got {decoded:?}"

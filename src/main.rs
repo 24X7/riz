@@ -15,8 +15,8 @@ mod scaffold;
 mod server;
 mod state;
 mod static_files;
-mod template_fetch;
 mod system;
+mod template_fetch;
 mod tui;
 mod tui_log_layer;
 mod ws;
@@ -176,7 +176,7 @@ enum McpCmd {
 
 fn print_template_list() {
     println!("Official templates (fetched from git, never embedded):\n");
-    println!("  {:<24} {:<12} {}", "TEMPLATE", "SCENARIO", "LANGUAGE");
+    println!("  {:<24} {:<12} LANGUAGE", "TEMPLATE", "SCENARIO");
     for (name, _subdir, scenario, lang) in template_fetch::BUILTINS {
         println!("  {name:<24} {scenario:<12} {lang}");
     }
@@ -190,7 +190,13 @@ fn print_template_list() {
 /// Scaffold a project by FETCHING a template from a git location (or local
 /// path) — nothing is embedded in the binary. `spec` is a built-in name, an
 /// `owner/repo[/subdir][#ref]` shorthand, a git URL, or a local path.
-fn run_init(spec: &str, dir: Option<&str>, reference: Option<&str>, git: bool, force: bool) -> anyhow::Result<()> {
+fn run_init(
+    spec: &str,
+    dir: Option<&str>,
+    reference: Option<&str>,
+    git: bool,
+    force: bool,
+) -> anyhow::Result<()> {
     let source = template_fetch::resolve(spec, reference)?;
     let target = match dir {
         Some(d) => std::path::PathBuf::from(d),
@@ -199,7 +205,10 @@ fn run_init(spec: &str, dir: Option<&str>, reference: Option<&str>, git: bool, f
 
     println!("Fetching template {spec:?} → {}", target.display());
     let written = template_fetch::fetch_into(&source, &target, force)?;
-    println!("  copied {written} file{}", if written == 1 { "" } else { "s" });
+    println!(
+        "  copied {written} file{}",
+        if written == 1 { "" } else { "s" }
+    );
 
     if git {
         try_git_init(&target);
@@ -250,16 +259,25 @@ fn run_scaffold_static(
     }
     if wire {
         if result.wired {
-            println!("  wired [static] into {config_path} (dir = {:?}, mount = {:?})", target.display().to_string(), mount);
+            println!(
+                "  wired [static] into {config_path} (dir = {:?}, mount = {:?})",
+                target.display().to_string(),
+                mount
+            );
         } else {
             println!("  [static] already configured — left {config_path} unchanged");
         }
     }
     println!("\n  Next steps:");
     if !wire && config.static_site.is_none() {
-        println!("    add a [static] block pointing dir at {:?} (or re-run with --wire)", target.display().to_string());
+        println!(
+            "    add a [static] block pointing dir at {:?} (or re-run with --wire)",
+            target.display().to_string()
+        );
     }
-    println!("    riz run    # GET /llms.txt and /.well-known/riz.json are now served by the instance");
+    println!(
+        "    riz run    # GET /llms.txt and /.well-known/riz.json are now served by the instance"
+    );
     println!();
     Ok(())
 }
@@ -366,15 +384,11 @@ async fn run_mcp_inspect(url: &str, bearer: Option<&str>) -> anyhow::Result<()> 
     }
     if !status.is_success() {
         let txt = init_resp.text().await.unwrap_or_default();
-        return Err(anyhow::anyhow!(
-            "initialize failed: HTTP {status}\n{txt}"
-        ));
+        return Err(anyhow::anyhow!("initialize failed: HTTP {status}\n{txt}"));
     }
     let init_json: serde_json::Value = init_resp.json().await?;
     if let Some(err) = init_json.get("error") {
-        return Err(anyhow::anyhow!(
-            "initialize returned JSON-RPC error: {err}"
-        ));
+        return Err(anyhow::anyhow!("initialize returned JSON-RPC error: {err}"));
     }
 
     let protocol_version = init_json["result"]["protocolVersion"]
@@ -415,9 +429,7 @@ async fn run_mcp_inspect(url: &str, bearer: Option<&str>) -> anyhow::Result<()> 
         .error_for_status()?;
     let list_json: serde_json::Value = list_resp.json().await?;
     if let Some(err) = list_json.get("error") {
-        return Err(anyhow::anyhow!(
-            "tools/list returned JSON-RPC error: {err}"
-        ));
+        return Err(anyhow::anyhow!("tools/list returned JSON-RPC error: {err}"));
     }
 
     let tools = list_json["result"]["tools"]
@@ -459,13 +471,9 @@ async fn run_mcp_inspect(url: &str, bearer: Option<&str>) -> anyhow::Result<()> 
     // ── SSE channel probe (Streamable HTTP, spec 2025-03-26+) ───────────────
     // GET with Accept: text/event-stream opens the server-initiated channel.
     // Verify it answers 200 text/event-stream; don't consume the stream.
-    let sse_resp = auth_header(
-        client
-            .get(url)
-            .header("accept", "text/event-stream"),
-    )
-    .send()
-    .await;
+    let sse_resp = auth_header(client.get(url).header("accept", "text/event-stream"))
+        .send()
+        .await;
     println!();
     match sse_resp {
         Ok(r) if r.status().is_success() => {
@@ -485,9 +493,7 @@ async fn run_mcp_inspect(url: &str, bearer: Option<&str>) -> anyhow::Result<()> 
     }
 
     println!();
-    println!(
-        "✓ MCP endpoint healthy. Point Claude / Cursor at {url} to use these tools."
-    );
+    println!("✓ MCP endpoint healthy. Point Claude / Cursor at {url} to use these tools.");
     Ok(())
 }
 
@@ -559,7 +565,10 @@ async fn run_doctor(config_path: &str) -> anyhow::Result<()> {
         Err(e) => {
             report(Finding::Fail, "riz.toml parses", &format!("{e}"));
             record(Finding::Fail);
-            println!("\n✗ {} failure(s) — cannot continue without parseable config.", fails);
+            println!(
+                "\n✗ {} failure(s) — cannot continue without parseable config.",
+                fails
+            );
             std::process::exit(1);
         }
     };
@@ -574,7 +583,7 @@ async fn run_doctor(config_path: &str) -> anyhow::Result<()> {
             record(Finding::Pass);
         }
         Err(e) => {
-            report(Finding::Fail, "riz.toml validates", &format!("{e}"));
+            report(Finding::Fail, "riz.toml validates", &e.to_string());
             record(Finding::Fail);
         }
     }
@@ -620,7 +629,11 @@ async fn run_doctor(config_path: &str) -> anyhow::Result<()> {
     if needs_python {
         match which_binary("python3") {
             Some(path) => {
-                report(Finding::Pass, "python3 on PATH", &path.display().to_string());
+                report(
+                    Finding::Pass,
+                    "python3 on PATH",
+                    &path.display().to_string(),
+                );
                 record(Finding::Pass);
             }
             None => {
@@ -658,9 +671,7 @@ async fn run_doctor(config_path: &str) -> anyhow::Result<()> {
         let handler_str = fc.handler.display().to_string();
         let label = format!("function `{name}` handler");
         match fc.runtime {
-            config::RuntimeKind::Bun
-            | config::RuntimeKind::Python
-            | config::RuntimeKind::Node => {
+            config::RuntimeKind::Bun | config::RuntimeKind::Python | config::RuntimeKind::Node => {
                 // Handler is "file.ext.export" or "./path/file.handler". Strip
                 // the trailing export segment and check the file exists.
                 let candidate = strip_handler_export(&fc.handler);
@@ -840,11 +851,19 @@ fn typed_params_summary(schema: &serde_json::Value) -> Option<String> {
             .iter()
             .map(|(name, spec)| {
                 let kind = spec["type"].as_str().unwrap_or("any");
-                let star = if required.contains(&name.as_str()) { "*" } else { "" };
+                let star = if required.contains(&name.as_str()) {
+                    "*"
+                } else {
+                    ""
+                };
                 format!("{name}: {kind}{star}")
             })
             .collect();
-        Some(format!("{} {{ {} }}", key.trim_end_matches("Params"), fields.join(", ")))
+        Some(format!(
+            "{} {{ {} }}",
+            key.trim_end_matches("Params"),
+            fields.join(", ")
+        ))
     };
     let parts: Vec<String> = ["pathParams", "queryParams"]
         .iter()
@@ -876,7 +895,9 @@ fn effective_config_path(_dev: bool, explicit: Option<&str>) -> String {
     // this repo's `examples/` dir, the old `examples/riz.dev.toml` default
     // was a footgun: silent failure if the file wasn't there, or worse,
     // accidental load of an example config you didn't mean to run.
-    explicit.map(|s| s.to_string()).unwrap_or_else(|| "riz.toml".into())
+    explicit
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "riz.toml".into())
 }
 
 fn effective_log_level(dev: bool, explicit: Option<&str>) -> &str {
@@ -947,7 +968,9 @@ async fn async_main() -> anyhow::Result<()> {
             return Ok(());
         }
         let spec = spec.as_deref().ok_or_else(|| {
-            anyhow::anyhow!("template spec required. Run `riz init --list` to see official templates.")
+            anyhow::anyhow!(
+                "template spec required. Run `riz init --list` to see official templates."
+            )
         })?;
         return run_init(spec, dir.as_deref(), r#ref.as_deref(), *git, *force);
     }
@@ -1012,7 +1035,11 @@ async fn async_main() -> anyhow::Result<()> {
     // through the process environment. Children inherit this plus the DSN env
     // vars the resources name — grants travel per-function in argv (see
     // WasmRuntime::spawn_command); credentials never appear in argv or config.
-    if config.functions.values().any(|f| !f.capabilities.is_empty()) {
+    if config
+        .functions
+        .values()
+        .any(|f| !f.capabilities.is_empty())
+    {
         if let Ok(json) = serde_json::to_string(&config.resources) {
             std::env::set_var("RIZ_BROKER_RESOURCES", json);
         }

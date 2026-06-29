@@ -143,9 +143,7 @@ method = "ANY"
     }
     if server.try_wait().ok().flatten().is_none() {
         let _ = server.kill();
-        panic!(
-            "riz did not exit within 15s after SIGTERM (would have been the old 30s-hang bug)"
-        );
+        panic!("riz did not exit within 15s after SIGTERM (would have been the old 30s-hang bug)");
     }
 
     // Keep ws_stream alive until after exit so the test really did hold

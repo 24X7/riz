@@ -83,9 +83,7 @@ fn serve_jwks(jwks: String) -> String {
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { break };
-            stream
-                .set_read_timeout(Some(Duration::from_secs(2)))
-                .ok();
+            stream.set_read_timeout(Some(Duration::from_secs(2))).ok();
             let mut buf = [0u8; 2048];
             let _ = stream.read(&mut buf);
             let body = jwks.clone();
@@ -169,7 +167,7 @@ async fn clerk_default_token_without_aud_is_accepted() {
         Some("https://app.example.com")
     );
     assert!(
-        out.context.get("aud").is_none(),
+        !out.context.contains_key("aud"),
         "Clerk default token has no aud; context must not invent one"
     );
 }

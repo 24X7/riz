@@ -73,25 +73,20 @@ fn is_allowlisted(file_path: &Path, content_fragment: &str) -> bool {
 /// Check rule 1: tautological assertions.
 /// Flags lines matching: `assert!(true)`, `assert_eq!(1, 1)`, `assert!(1 == 1)`.
 /// Space-tolerant matching.
+#[allow(clippy::type_complexity)]
 fn check_tautological_assertions(file_path: &Path, content: &str, violations: &mut Vec<String>) {
     let patterns: &[(&str, &dyn Fn(&str) -> bool)] = &[
         ("assert!(true)", &|line: &str| {
             // Match assert!( <optional spaces> true <optional spaces> )
-            let stripped = line
-                .replace(' ', "")
-                .replace('\t', "");
+            let stripped = line.replace([' ', '\t'], "");
             stripped.contains("assert!(true)") || stripped.contains("assert!(true,")
         }),
         ("assert_eq!(1, 1)", &|line: &str| {
-            let stripped = line
-                .replace(' ', "")
-                .replace('\t', "");
+            let stripped = line.replace([' ', '\t'], "");
             stripped.contains("assert_eq!(1,1)")
         }),
         ("assert!(1 == 1)", &|line: &str| {
-            let stripped = line
-                .replace(' ', "")
-                .replace('\t', "");
+            let stripped = line.replace([' ', '\t'], "");
             stripped.contains("assert!(1==1)")
         }),
     ];
@@ -176,11 +171,17 @@ fn check_empty_test_bodies(file_path: &Path, content: &str, violations: &mut Vec
             if j < n {
                 let fn_line = lines[j].trim();
                 // Match: (pub )? (async )? fn name(...) {
-                if fn_line.starts_with("fn ") || fn_line.starts_with("async fn ") || fn_line.starts_with("pub fn ") || fn_line.starts_with("pub async fn ") {
+                if fn_line.starts_with("fn ")
+                    || fn_line.starts_with("async fn ")
+                    || fn_line.starts_with("pub fn ")
+                    || fn_line.starts_with("pub async fn ")
+                {
                     // Check if the body is empty: fn name() {} on one line
                     if fn_line.ends_with("{}") || fn_line.ends_with("{ }") {
                         let fragment = format!("empty_body:{}", fn_line);
-                        if !is_allowlisted(file_path, &fragment) && !is_allowlisted(file_path, fn_line) {
+                        if !is_allowlisted(file_path, &fragment)
+                            && !is_allowlisted(file_path, fn_line)
+                        {
                             violations.push(format!(
                                 "[empty-test-body] {}:{}: test function has an empty body — add assertions or #[ignore = \"reason\"]",
                                 file_path.display(),
@@ -196,8 +197,12 @@ fn check_empty_test_bodies(file_path: &Path, content: &str, violations: &mut Vec
                         while k < n && depth > 0 {
                             let body_line = lines[k].trim();
                             for ch in lines[k].chars() {
-                                if ch == '{' { depth += 1; }
-                                if ch == '}' { depth -= 1; }
+                                if ch == '{' {
+                                    depth += 1;
+                                }
+                                if ch == '}' {
+                                    depth -= 1;
+                                }
                             }
                             if depth > 0 && !body_line.is_empty() && !body_line.starts_with("//") {
                                 has_real_content = true;
@@ -206,7 +211,9 @@ fn check_empty_test_bodies(file_path: &Path, content: &str, violations: &mut Vec
                         }
                         if !has_real_content {
                             let fragment = format!("empty_body_multiline:{}", fn_line);
-                            if !is_allowlisted(file_path, &fragment) && !is_allowlisted(file_path, fn_line) {
+                            if !is_allowlisted(file_path, &fragment)
+                                && !is_allowlisted(file_path, fn_line)
+                            {
                                 violations.push(format!(
                                     "[empty-test-body] {}:{}: test function body is empty (only whitespace/comments) — add assertions or #[ignore = \"reason\"]",
                                     file_path.display(),

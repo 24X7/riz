@@ -126,7 +126,10 @@ pub async fn chat_completions(
         "http.route".to_string(),
         AttrValue::String("/_riz/v1/chat/completions".to_string()),
     );
-    req_attrs.insert("http.status_code".to_string(), AttrValue::Int(status as i64));
+    req_attrs.insert(
+        "http.status_code".to_string(),
+        AttrValue::Int(status as i64),
+    );
     req_attrs.insert(
         GEN_AI_REQUEST_MODEL.to_string(),
         AttrValue::String(requested_model),
@@ -159,7 +162,9 @@ pub async fn chat_completions(
 /// provider has no incremental tokens, so we chunk the finished content — the
 /// wire format is real SSE that any streaming client reads correctly. Real
 /// providers will proxy upstream token streams when they land.
-fn stream_response(resp: ChatResponse) -> Sse<impl stream::Stream<Item = Result<Event, Infallible>>> {
+fn stream_response(
+    resp: ChatResponse,
+) -> Sse<impl stream::Stream<Item = Result<Event, Infallible>>> {
     let id = resp.id;
     let created = resp.created;
     let model = resp.model;
@@ -172,7 +177,13 @@ fn stream_response(resp: ChatResponse) -> Sse<impl stream::Stream<Item = Result<
 
     let mut events: Vec<Result<Event, Infallible>> = Vec::new();
     // 1. Opening role delta.
-    events.push(Ok(chunk_event(&id, created, &model, json!({ "role": "assistant" }), None)));
+    events.push(Ok(chunk_event(
+        &id,
+        created,
+        &model,
+        json!({ "role": "assistant" }),
+        None,
+    )));
     // 2. Content deltas, preserving spacing so concatenation == the original.
     for (i, word) in content.split(' ').enumerate() {
         let piece = if i == 0 {
@@ -192,7 +203,13 @@ fn stream_response(resp: ChatResponse) -> Sse<impl stream::Stream<Item = Result<
         )));
     }
     // 3. Terminal chunk with finish_reason, then the [DONE] sentinel.
-    events.push(Ok(chunk_event(&id, created, &model, json!({}), Some("stop"))));
+    events.push(Ok(chunk_event(
+        &id,
+        created,
+        &model,
+        json!({}),
+        Some("stop"),
+    )));
     events.push(Ok(Event::default().data("[DONE]")));
 
     Sse::new(stream::iter(events))

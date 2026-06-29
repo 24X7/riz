@@ -68,7 +68,12 @@ pub struct Usage {
 impl ChatResponse {
     /// Build a non-streaming `chat.completion` response from an assistant
     /// message + token counts, generating the `id`/`created` envelope fields.
-    pub fn assistant(model: &str, content: String, prompt_tokens: u32, completion_tokens: u32) -> Self {
+    pub fn assistant(
+        model: &str,
+        content: String,
+        prompt_tokens: u32,
+        completion_tokens: u32,
+    ) -> Self {
         let created = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)

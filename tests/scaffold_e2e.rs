@@ -90,10 +90,8 @@ fn typescript_http_scaffold_boots_and_serves_hello() {
         panic!("typescript-http scaffold never became ready");
     }
 
-    let resp = reqwest::blocking::get(format!(
-        "http://127.0.0.1:{port}/hello?name=alice"
-    ))
-    .expect("curl");
+    let resp =
+        reqwest::blocking::get(format!("http://127.0.0.1:{port}/hello?name=alice")).expect("curl");
     let status = resp.status();
     let body = resp.text().unwrap_or_default();
 
@@ -154,10 +152,8 @@ fn python_http_scaffold_boots_and_serves_hello() {
         panic!("python-http scaffold never became ready");
     }
 
-    let resp = reqwest::blocking::get(format!(
-        "http://127.0.0.1:{port}/hello?name=alice"
-    ))
-    .expect("curl");
+    let resp =
+        reqwest::blocking::get(format!("http://127.0.0.1:{port}/hello?name=alice")).expect("curl");
     let status = resp.status();
     let body = resp.text().unwrap_or_default();
 

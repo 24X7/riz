@@ -90,7 +90,10 @@ async fn parse_failure_kills_and_respawns_the_process() {
     // Capture initial PID.
     let initial_pid = {
         let stats = mgr.pool_stats().await;
-        let badfn = stats.iter().find(|p| p.name == "badfn").expect("pool exists");
+        let badfn = stats
+            .iter()
+            .find(|p| p.name == "badfn")
+            .expect("pool exists");
         assert_eq!(badfn.pids.len(), 1, "concurrency=1 → exactly one process");
         badfn.pids[0]
     };
@@ -112,7 +115,10 @@ async fn parse_failure_kills_and_respawns_the_process() {
     // observe pool_stats(), the new PID should already be in place.
     let new_pid = {
         let stats = mgr.pool_stats().await;
-        let badfn = stats.iter().find(|p| p.name == "badfn").expect("pool exists");
+        let badfn = stats
+            .iter()
+            .find(|p| p.name == "badfn")
+            .expect("pool exists");
         assert_eq!(
             badfn.pids.len(),
             1,

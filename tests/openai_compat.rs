@@ -60,7 +60,10 @@ async fn wait_ready(base: &str) {
         if reqwest::get(format!("{base}/ready")).await.is_ok() {
             return;
         }
-        assert!(tokio::time::Instant::now() < deadline, "server never came up");
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "server never came up"
+        );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
@@ -112,7 +115,10 @@ async fn models_lists_configured_providers() {
         .iter()
         .map(|m| m["id"].as_str().unwrap())
         .collect();
-    assert!(ids.contains(&"mock"), "models must list the mock provider: {ids:?}");
+    assert!(
+        ids.contains(&"mock"),
+        "models must list the mock provider: {ids:?}"
+    );
 }
 
 const BUDGET_CFG: &str = r#"

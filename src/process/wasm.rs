@@ -261,8 +261,12 @@ fn add_broker_imports(linker: &mut wasmtime::Linker<HostCtx>) -> wasmtime::Resul
             };
             let mut grant_buf = vec![0u8; grant_len.max(0) as usize];
             let mut req_buf = vec![0u8; req_len.max(0) as usize];
-            if memory.read(&caller, grant_ptr as usize, &mut grant_buf).is_err()
-                || memory.read(&caller, req_ptr as usize, &mut req_buf).is_err()
+            if memory
+                .read(&caller, grant_ptr as usize, &mut grant_buf)
+                .is_err()
+                || memory
+                    .read(&caller, req_ptr as usize, &mut req_buf)
+                    .is_err()
             {
                 return -1;
             }

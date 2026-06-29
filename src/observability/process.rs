@@ -37,7 +37,10 @@ pub fn run_worker(args: &[String]) -> anyhow::Result<()> {
         .first()
         .context("__telemetry: missing <sink-path> argument")?;
 
-    match std::env::var("RIZ_TELEMETRY_ENDPOINT").ok().filter(|s| !s.is_empty()) {
+    match std::env::var("RIZ_TELEMETRY_ENDPOINT")
+        .ok()
+        .filter(|s| !s.is_empty())
+    {
         Some(endpoint) => run_export(&endpoint),
         None => run_sink(sink_path),
     }
@@ -110,8 +113,7 @@ fn run_sink(sink_path: &str) -> anyhow::Result<()> {
                 // Append as a JSON line. Flush per event so the host (and the
                 // isolation tests) can observe events promptly; throughput is
                 // not the concern in 2a, the seam and isolation are.
-                let line =
-                    serde_json::to_string(&ev).context("__telemetry: serialize event")?;
+                let line = serde_json::to_string(&ev).context("__telemetry: serialize event")?;
                 writeln!(sink, "{line}").context("__telemetry: write sink")?;
                 sink.flush().context("__telemetry: flush sink")?;
             }

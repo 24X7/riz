@@ -202,7 +202,8 @@ async fn exercise_all_verbs(addr: SocketAddr, function_name: &str) {
             method = case.method
         );
         assert_eq!(
-            body["echo"], "/echo",
+            body["echo"],
+            "/echo",
             "{function_name} {method}: response.echo mismatch; full body = {body}",
             method = case.method
         );

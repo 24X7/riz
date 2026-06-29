@@ -58,7 +58,10 @@ fn llms_txt_lists_every_function_as_a_tool_with_routes_and_runtime() {
     // A function with no [[routes]] gets the implicit ANY /<name> fallback.
     assert!(txt.contains("/health"), "health implicit route missing");
     // Runtimes are surfaced.
-    assert!(txt.contains("`node`") && txt.contains("`python`"), "runtimes missing");
+    assert!(
+        txt.contains("`node`") && txt.contains("`python`"),
+        "runtimes missing"
+    );
     // The MCP endpoint is advertised so an agent knows where to call.
     assert!(txt.contains("/_riz/mcp"), "mcp endpoint missing");
 }
@@ -67,7 +70,8 @@ fn llms_txt_lists_every_function_as_a_tool_with_routes_and_runtime() {
 fn well_known_is_valid_json_with_tools_and_mcp_endpoint() {
     let cfg = sample_config();
     let json = riz::scaffold::generate_well_known(&cfg);
-    let v: serde_json::Value = serde_json::from_str(&json).expect("generated riz.json is valid JSON");
+    let v: serde_json::Value =
+        serde_json::from_str(&json).expect("generated riz.json is valid JSON");
 
     assert_eq!(v["mcp"]["endpoint"], "/_riz/mcp");
     let tools = v["tools"].as_array().expect("tools is an array");
@@ -102,7 +106,10 @@ description = "Full-text search over the catalog."
     .unwrap();
     let json = riz::scaffold::generate_well_known(&cfg);
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(v["tools"][0]["description"], "Full-text search over the catalog.");
+    assert_eq!(
+        v["tools"][0]["description"],
+        "Full-text search over the catalog."
+    );
 }
 
 // ─────────────────────── round-trip: instance serves itself ─────────────────
@@ -131,14 +138,19 @@ async fn scaffolded_files_are_served_by_a_static_instance() {
     let wired: riz::config::Config =
         toml::from_str(&fs::read_to_string(&config_path).unwrap()).expect("wired config parses");
     wired.validate().expect("wired config validates");
-    let static_cfg = wired.static_site.clone().expect("[static] present after wire");
+    let static_cfg = wired
+        .static_site
+        .clone()
+        .expect("[static] present after wire");
 
     // A live instance with this [static] serves its own discovery files.
     let resp = riz::static_files::serve(&Method::GET, "/llms.txt", &HeaderMap::new(), &static_cfg)
         .await
         .expect("llms.txt served");
     assert_eq!(resp.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     assert!(String::from_utf8_lossy(&body).contains("### orders"));
 
     let resp = riz::static_files::serve(
@@ -150,7 +162,9 @@ async fn scaffolded_files_are_served_by_a_static_instance() {
     .await
     .expect("riz.json served");
     assert_eq!(resp.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(v["mcp"]["endpoint"], "/_riz/mcp");
 }
@@ -176,7 +190,10 @@ fn refuses_to_clobber_without_force_then_overwrites_with_force() {
     riz::scaffold::scaffold_static(&cfg, &config_path, &opts(false)).unwrap();
     // Second without --force refuses.
     let err = riz::scaffold::scaffold_static(&cfg, &config_path, &opts(false)).unwrap_err();
-    assert!(err.to_string().contains("refusing to overwrite"), "got: {err}");
+    assert!(
+        err.to_string().contains("refusing to overwrite"),
+        "got: {err}"
+    );
     // With --force it succeeds.
     riz::scaffold::scaffold_static(&cfg, &config_path, &opts(true)).unwrap();
 }
@@ -252,9 +269,14 @@ fn cli_scaffold_static_writes_files_and_wires_config() {
         .args(["scaffold", "static", "public"])
         .output()
         .unwrap();
-    assert!(!out2.status.success(), "second run should refuse to overwrite");
-    assert!(String::from_utf8_lossy(&out2.stderr).contains("--force")
-        || String::from_utf8_lossy(&out2.stdout).contains("--force"));
+    assert!(
+        !out2.status.success(),
+        "second run should refuse to overwrite"
+    );
+    assert!(
+        String::from_utf8_lossy(&out2.stderr).contains("--force")
+            || String::from_utf8_lossy(&out2.stdout).contains("--force")
+    );
 }
 
 #[test]
@@ -271,5 +293,7 @@ fn cli_scaffold_static_errors_clearly_without_a_config() {
         .output()
         .unwrap();
     assert!(!out.status.success(), "should fail without a config");
-    assert!(String::from_utf8_lossy(&out.stderr).to_lowercase().contains("riz.toml"));
+    assert!(String::from_utf8_lossy(&out.stderr)
+        .to_lowercase()
+        .contains("riz.toml"));
 }

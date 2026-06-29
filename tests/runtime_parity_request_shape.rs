@@ -74,7 +74,9 @@ fn echo_wasm_available() -> bool {
     let m = echo_wasm_module();
     let host = riz_host_binary();
     m.exists()
-        && std::fs::metadata(&m).map(|md| md.len() > 0).unwrap_or(false)
+        && std::fs::metadata(&m)
+            .map(|md| md.len() > 0)
+            .unwrap_or(false)
         && host.exists()
 }
 
@@ -171,7 +173,11 @@ async fn exercise_path_and_query(addr: SocketAddr, function_name: &str) {
 
     let url = format!("http://{addr}/users/42?name=alice&count=3");
     let resp = client.get(&url).send().await.expect("send");
-    assert_eq!(resp.status(), 200, "{function_name}: GET /users/42 expected 200");
+    assert_eq!(
+        resp.status(),
+        200,
+        "{function_name}: GET /users/42 expected 200"
+    );
     let body: serde_json::Value = resp.json().await.expect("json");
 
     // Path params: router extracted `{id}` → "42".

@@ -377,7 +377,9 @@ pub fn render_tokens_panel(
         Span::styled("Input: ", Style::default().fg(Color::DarkGray)),
         Span::styled(
             stats.total_input.to_string(),
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::raw("   "),
         Span::styled("Output: ", Style::default().fg(Color::DarkGray)),
@@ -552,18 +554,20 @@ mod tests {
     fn dashboard_tokens_tab_renders_token_figures() {
         // Full dashboard render via the public `render(frame, app)` entrypoint,
         // proving the Tokens tab is wired end-to-end and doesn't panic.
-        let mut app = App::default();
-        app.selected_tab = 3; // Tokens
-        app.token_stats = TokenStatsSnapshot {
-            total_input: 42,
-            total_output: 8,
-            recent: vec![TokenCall {
-                model: "demo-model".into(),
-                provider: "mock".into(),
-                input: 7,
-                output: 3,
-                at: SystemTime::UNIX_EPOCH,
-            }],
+        let app = App {
+            selected_tab: 3, // Tokens
+            token_stats: TokenStatsSnapshot {
+                total_input: 42,
+                total_output: 8,
+                recent: vec![TokenCall {
+                    model: "demo-model".into(),
+                    provider: "mock".into(),
+                    input: 7,
+                    output: 3,
+                    at: SystemTime::UNIX_EPOCH,
+                }],
+            },
+            ..Default::default()
         };
 
         let backend = TestBackend::new(120, 24);

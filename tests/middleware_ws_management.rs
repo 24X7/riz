@@ -99,8 +99,7 @@ path = "/chat"
     });
 
     tokio::spawn(async move {
-        let app =
-            riz::server::build_app(state).into_make_service_with_connect_info::<SocketAddr>();
+        let app = riz::server::build_app(state).into_make_service_with_connect_info::<SocketAddr>();
         axum::serve(listener, app).await.unwrap();
     });
 
@@ -128,9 +127,7 @@ path = "/chat"
 async fn connect_and_get_connection_id(
     addr: SocketAddr,
 ) -> (
-    tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
     String,
 ) {
     let url = format!("ws://{addr}/chat");
@@ -157,7 +154,9 @@ async fn connect_and_get_connection_id(
 
     // The connection is registered. Discover its ID via the list endpoint.
     let list_url = format!("http://{addr}/_riz/connections");
-    let resp = reqwest::get(&list_url).await.expect("GET /_riz/connections");
+    let resp = reqwest::get(&list_url)
+        .await
+        .expect("GET /_riz/connections");
     assert_eq!(
         resp.status(),
         200,

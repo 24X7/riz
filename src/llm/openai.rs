@@ -63,7 +63,13 @@ impl OpenAiProvider {
             .map_err(|e| ProviderError::Unavailable(self.name.clone(), e.to_string()))?;
         let status = resp.status();
         if !status.is_success() {
-            let txt: String = resp.text().await.unwrap_or_default().chars().take(300).collect();
+            let txt: String = resp
+                .text()
+                .await
+                .unwrap_or_default()
+                .chars()
+                .take(300)
+                .collect();
             return Err(ProviderError::Upstream(
                 self.name.clone(),
                 format!("HTTP {status}: {txt}"),
@@ -92,7 +98,13 @@ impl OpenAiProvider {
             .map_err(|e| ProviderError::Unavailable(self.name.clone(), e.to_string()))?;
         let status = resp.status();
         if !status.is_success() {
-            let txt: String = resp.text().await.unwrap_or_default().chars().take(300).collect();
+            let txt: String = resp
+                .text()
+                .await
+                .unwrap_or_default()
+                .chars()
+                .take(300)
+                .collect();
             return Err(ProviderError::Upstream(
                 self.name.clone(),
                 format!("HTTP {status}: {txt}"),

@@ -202,8 +202,10 @@ impl Gateway {
                 names.first().map(|s| (*s).clone())
             })
             .unwrap_or_default();
-        Ok(Gateway::new(providers, default_provider, cfg.fallback_chain.clone())
-            .with_budget(cfg.budget_usd))
+        Ok(
+            Gateway::new(providers, default_provider, cfg.fallback_chain.clone())
+                .with_budget(cfg.budget_usd),
+        )
     }
 
     /// Names of all configured providers (for `GET /_riz/v1/models`).
@@ -292,7 +294,9 @@ impl Gateway {
         let model = req.model.clone();
         let inputs = req.input.into_vec();
         if inputs.is_empty() {
-            return Err(ProviderError::BadRequest("embeddings input is empty".into()));
+            return Err(ProviderError::BadRequest(
+                "embeddings input is empty".into(),
+            ));
         }
         let order = self.attempt_order(&model);
         if order.is_empty() {
@@ -434,8 +438,8 @@ kind = "ollama"
     async fn records_usage_and_enforces_budget() {
         let mut providers = HashMap::new();
         providers.insert("mock".to_string(), Provider::Mock(MockProvider));
-        let gw = Gateway::new(providers, "mock".into(), vec!["mock".into()])
-            .with_budget(Some(0.000001));
+        let gw =
+            Gateway::new(providers, "mock".into(), vec!["mock".into()]).with_budget(Some(0.000001));
         // First call: budget checked before the call (cost starts at 0) → proceeds.
         gw.chat(&user_req("mock", "hello world")).await.unwrap();
         assert!(gw.total_cost_usd() > 0.0, "usage must record non-zero cost");

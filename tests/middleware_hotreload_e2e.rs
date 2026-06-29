@@ -39,9 +39,7 @@ fn riz_toml_with_routes(routes: &[(&str, &str)]) -> String {
     let routes_block: String = routes
         .iter()
         .map(|(path, method)| {
-            format!(
-                "[[function.echo-bun.routes]]\npath = \"{path}\"\nmethod = \"{method}\"\n"
-            )
+            format!("[[function.echo-bun.routes]]\npath = \"{path}\"\nmethod = \"{method}\"\n")
         })
         .collect();
     format!(
@@ -132,7 +130,12 @@ async fn boot_riz_from_path(config_path: PathBuf) -> (SocketAddr, Arc<riz::state
     (bound, app_state)
 }
 
-async fn poll_until_reachable(client: &reqwest::Client, url: &str, status: u16, deadline_secs: u64) -> bool {
+async fn poll_until_reachable(
+    client: &reqwest::Client,
+    url: &str,
+    status: u16,
+    deadline_secs: u64,
+) -> bool {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(deadline_secs);
     loop {
         if let Ok(resp) = client.get(url).send().await {

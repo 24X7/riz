@@ -44,10 +44,7 @@ pub fn build_app(state: Arc<AppState>) -> AxumRouter {
         // MCP Streamable HTTP: the transport entry serves GET-SSE / POST-SSE /
         // DELETE itself and delegates everything else (plain-JSON POST, OPTIONS
         // preflight, non-SSE GET) back to dispatch_lambda unchanged.
-        .route(
-            "/_riz/mcp",
-            any(crate::system::mcp::transport::entry),
-        );
+        .route("/_riz/mcp", any(crate::system::mcp::transport::entry));
 
     // Mount WebSocket upgrade routes for every protocol=websocket function.
     // build_app runs once at startup, so a try_read in this sync context is
@@ -154,7 +151,9 @@ pub fn build_app(state: Arc<AppState>) -> AxumRouter {
                                 if let Some(resp) = bearer_reject(&headers, tok.as_deref()) {
                                     return resp;
                                 }
-                                crate::system::openai_compat::models(gw).await.into_response()
+                                crate::system::openai_compat::models(gw)
+                                    .await
+                                    .into_response()
                             }
                         }),
                     );
@@ -169,7 +168,9 @@ pub fn build_app(state: Arc<AppState>) -> AxumRouter {
                                 if let Some(resp) = bearer_reject(&headers, tok.as_deref()) {
                                     return resp;
                                 }
-                                crate::system::openai_compat::usage(gw).await.into_response()
+                                crate::system::openai_compat::usage(gw)
+                                    .await
+                                    .into_response()
                             }
                         }),
                     );
@@ -221,9 +222,7 @@ pub async fn run(state: Arc<AppState>, addr: SocketAddr) -> anyhow::Result<()> {
         // axum handler task complete and the drain finish in milliseconds.
         let conn_count = shutdown_state.ws_connections.all().len();
         if conn_count > 0 {
-            tracing::info!(
-                "closing {conn_count} active WebSocket connection(s) before drain"
-            );
+            tracing::info!("closing {conn_count} active WebSocket connection(s) before drain");
             for conn in shutdown_state.ws_connections.all() {
                 let _ = conn.outbound.send(crate::ws::OutboundMessage::Close);
             }
@@ -769,9 +768,7 @@ pub(crate) async fn dispatch_lambda(
             state.push_log(
                 "ERROR",
                 None,
-                format!(
-                    "dispatch error {method_str} {path} req={request_id} ip={source_ip}: {e}"
-                ),
+                format!("dispatch error {method_str} {path} req={request_id} ip={source_ip}: {e}"),
             );
             // Apply global CORS config for error responses (unmatched routes).
             let cors_hdrs = {
@@ -831,11 +828,11 @@ fn emit_request_span(
         "http.route".to_string(),
         AttrValue::String(function_name.to_string()),
     );
-    attributes.insert("http.status_code".to_string(), AttrValue::Int(status as i64));
     attributes.insert(
-        "duration_ms".to_string(),
-        AttrValue::Double(latency_ms),
+        "http.status_code".to_string(),
+        AttrValue::Int(status as i64),
     );
+    attributes.insert("duration_ms".to_string(), AttrValue::Double(latency_ms));
 
     telemetry.emit(TelemetryEvent {
         name: format!("{method} {function_name}"),
@@ -981,10 +978,7 @@ async fn cache_invalidate(
 /// request's Authorization header doesn't match (constant-time compare);
 /// `None` means proceed. No token configured → open, matching the
 /// documented local-dev default for the rest of `/_riz/*`.
-fn bearer_reject(
-    headers: &axum::http::HeaderMap,
-    expected: Option<&str>,
-) -> Option<Response> {
+fn bearer_reject(headers: &axum::http::HeaderMap, expected: Option<&str>) -> Option<Response> {
     let expected = expected?;
     let auth = headers
         .get(http::header::AUTHORIZATION)

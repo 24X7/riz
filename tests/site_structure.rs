@@ -28,13 +28,20 @@ fn site_pages() -> Vec<(PathBuf, String)> {
         }
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
-    assert!(out.len() >= 7, "expected the full multi-page site under web/");
+    assert!(
+        out.len() >= 7,
+        "expected the full multi-page site under web/"
+    );
     out
 }
 
 fn page(name: &str) -> String {
-    fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("web").join(name))
-        .unwrap_or_else(|e| panic!("could not read web/{name}: {e}"))
+    fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("web")
+            .join(name),
+    )
+    .unwrap_or_else(|e| panic!("could not read web/{name}: {e}"))
 }
 
 // ─────────────────────────── core pages exist ───────────────────────────────
@@ -51,7 +58,9 @@ fn the_expected_pages_are_present() {
         "docs.html",
         "examples.html",
     ] {
-        let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("web").join(name);
+        let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("web")
+            .join(name);
         assert!(p.exists(), "missing core page web/{name}");
     }
 }
@@ -99,9 +108,21 @@ fn every_page_shares_the_nav_and_stylesheet() {
         );
     }
     // The vendored runtime + generated/static deploy-root assets must exist.
-    for asset in ["turbo.min.js", "og.png", "favicon.svg", "apple-touch-icon.png", "robots.txt", "sitemap.xml", "llms.txt", ".well-known/riz.json"] {
+    for asset in [
+        "turbo.min.js",
+        "og.png",
+        "favicon.svg",
+        "apple-touch-icon.png",
+        "robots.txt",
+        "sitemap.xml",
+        "llms.txt",
+        ".well-known/riz.json",
+    ] {
         assert!(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("web").join(asset).exists(),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("web")
+                .join(asset)
+                .exists(),
             "web/{asset} (deploy-root asset) is missing"
         );
     }
@@ -231,6 +252,7 @@ fn no_page_carries_a_retired_fiction() {
 #[test]
 fn embedded_toml_snippets_parse_and_validate() {
     let mut checked = 0;
+    let tag_re = regex::Regex::new(r"<[^>]+>").unwrap();
     for (path, html) in site_pages() {
         let mut rest = html.as_str();
         while let Some(start) = rest.find("<pre data-riz-toml>") {
@@ -241,15 +263,20 @@ fn embedded_toml_snippets_parse_and_validate() {
                 .replace("&lt;", "<")
                 .replace("&gt;", ">")
                 .replace("&amp;", "&");
-            let text = regex::Regex::new(r"<[^>]+>")
-                .unwrap()
+            let text = tag_re
                 .replace_all(&text, "")
                 .to_string();
             let cfg: riz::config::Config = toml::from_str(&text).unwrap_or_else(|e| {
-                panic!("{}: embedded riz.toml does not parse: {e}\n{text}", path.display())
+                panic!(
+                    "{}: embedded riz.toml does not parse: {e}\n{text}",
+                    path.display()
+                )
             });
             cfg.validate().unwrap_or_else(|e| {
-                panic!("{}: embedded riz.toml fails validation: {e}", path.display())
+                panic!(
+                    "{}: embedded riz.toml fails validation: {e}",
+                    path.display()
+                )
             });
             checked += 1;
             rest = &after[end..];

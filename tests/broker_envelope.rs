@@ -113,11 +113,7 @@ async fn empty_broker_denies_everything() {
 #[tokio::test]
 async fn oversized_request_is_rejected_before_backend() {
     let backend = MockPg::new(0, vec![]);
-    let b = broker_with(
-        "db",
-        grant(|g| g.max_request_bytes = 64),
-        backend.clone(),
-    );
+    let b = broker_with("db", grant(|g| g.max_request_bytes = 64), backend.clone());
     let big_sql = "select ".to_string() + &"x".repeat(200);
     let out = parse(&b.pg_query("db", &req(&big_sql)).await);
     assert_eq!(out["error"]["code"], "too_large", "{out}");

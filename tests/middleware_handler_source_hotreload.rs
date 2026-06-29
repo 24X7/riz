@@ -35,7 +35,9 @@ fn install_echo_handler(dir: &std::path::Path) -> PathBuf {
     dst
 }
 
-async fn boot_riz_with_handler(handler: &std::path::Path) -> (SocketAddr, Arc<riz::state::AppState>) {
+async fn boot_riz_with_handler(
+    handler: &std::path::Path,
+) -> (SocketAddr, Arc<riz::state::AppState>) {
     let handler_export = format!("{}.handler", handler.with_extension("").display());
     let config_toml = format!(
         r#"

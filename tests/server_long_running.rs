@@ -115,10 +115,7 @@ concurrency = 1
     tokio::time::sleep(Duration::from_secs(32)).await;
 
     // riz must still be serving traffic at this point.
-    let still_alive = server
-        .try_wait()
-        .expect("try_wait")
-        .is_none();
+    let still_alive = server.try_wait().expect("try_wait").is_none();
     if !still_alive {
         let _ = server.kill();
         panic!(

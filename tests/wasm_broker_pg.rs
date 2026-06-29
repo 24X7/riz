@@ -169,7 +169,10 @@ async fn wasm_guest_brokers_pg_through_capability_grants() {
     let body: serde_json::Value = serde_json::from_str(&text).unwrap();
     assert_eq!(body["ok"], true, "{body}");
     assert_eq!(body["row_count"], 1, "{body}");
-    assert_eq!(body["rows"][0]["id"], 1042, "typed int4 -> JSON number: {body}");
+    assert_eq!(
+        body["rows"][0]["id"], 1042,
+        "typed int4 -> JSON number: {body}"
+    );
     assert_eq!(body["rows"][0]["status"], "delayed", "{body}");
 
     // ── 2. Deny-by-default: same guest, no grant ──────────────────────────

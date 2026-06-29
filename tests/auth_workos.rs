@@ -73,8 +73,7 @@ impl TestKey {
         .to_string();
 
         let der = private.to_pkcs1_der().expect("pkcs1 der");
-        let encoding =
-            EncodingKey::from_rsa_der(der.as_bytes());
+        let encoding = EncodingKey::from_rsa_der(der.as_bytes());
 
         Self { encoding, jwks }
     }
@@ -96,9 +95,7 @@ fn serve_jwks(jwks: String) -> String {
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { break };
-            stream
-                .set_read_timeout(Some(Duration::from_secs(2)))
-                .ok();
+            stream.set_read_timeout(Some(Duration::from_secs(2))).ok();
             let mut buf = [0u8; 2048];
             let _ = stream.read(&mut buf);
             let body = jwks.clone();

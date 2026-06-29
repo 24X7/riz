@@ -267,10 +267,7 @@ pub async fn watch_handler_sources(state: Arc<AppState>) {
         // dir (cargo build artifacts, node_modules touches) can spam
         // hot-swaps. Document this; future enhancement is ignore patterns.
         if let Err(e) = watcher.watch(dir, RecursiveMode::Recursive) {
-            error!(
-                "failed to watch handler dir {}: {e}",
-                dir.display()
-            );
+            error!("failed to watch handler dir {}: {e}", dir.display());
         } else {
             info!("watching handler dir {} for source changes", dir.display());
         }

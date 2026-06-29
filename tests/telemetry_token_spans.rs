@@ -83,12 +83,25 @@ fn request_with_gateway_call_rolls_up_token_usage() {
         chat_span(trace, "2222222222222222", req, "gpt-4o", 11, 7),
         chat_span(trace, "3333333333333333", req, "gpt-4o", 20, 13),
         // Belongs to a different request — must be excluded from the rollup.
-        chat_span(trace, "4444444444444444", "9999999999999999", "gpt-4o", 100, 100),
+        chat_span(
+            trace,
+            "4444444444444444",
+            "9999999999999999",
+            "gpt-4o",
+            100,
+            100,
+        ),
     ];
 
     let (input, output) = rollup_tokens(&events, req);
-    assert_eq!(input, 31, "input tokens roll up only this request's children");
-    assert_eq!(output, 20, "output tokens roll up only this request's children");
+    assert_eq!(
+        input, 31,
+        "input tokens roll up only this request's children"
+    );
+    assert_eq!(
+        output, 20,
+        "output tokens roll up only this request's children"
+    );
 }
 
 /// A non-leaf span (an agent turn or a tool invocation) carrying no token
@@ -160,12 +173,25 @@ fn multi_hop_agent_chain_rolls_up_token_usage_across_the_tree() {
         chat_span(trace, "aaaa000000000002", tool, "claude-opus-4-8", 20, 13),
         chat_span(trace, "aaaa000000000003", agent, "claude-opus-4-8", 5, 3),
         // A different request entirely — must be excluded from this request's cost.
-        chat_span(trace, "aaaa000000000004", "9999999999999999", "claude-opus-4-8", 100, 100),
+        chat_span(
+            trace,
+            "aaaa000000000004",
+            "9999999999999999",
+            "claude-opus-4-8",
+            100,
+            100,
+        ),
     ];
 
     let (input, output) = rollup_tokens_tree(&events, req);
-    assert_eq!(input, 36, "input tokens roll up across the whole tool/agent chain (11+20+5)");
-    assert_eq!(output, 23, "output tokens roll up across the whole tool/agent chain (7+13+3)");
+    assert_eq!(
+        input, 36,
+        "input tokens roll up across the whole tool/agent chain (11+20+5)"
+    );
+    assert_eq!(
+        output, 23,
+        "output tokens roll up across the whole tool/agent chain (7+13+3)"
+    );
 
     // Contrast: the flat direct-children rollup sees NO completions directly
     // under the request (they're all nested under agent.turn), proving the tree

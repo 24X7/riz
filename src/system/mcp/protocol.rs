@@ -10,20 +10,13 @@ use std::collections::HashMap;
 /// Spec history that shapes this list:
 ///   - 2024-11-05  — original public baseline; still widely deployed in clients.
 ///   - 2025-03-26  — introduces Streamable HTTP transport, JSON-RPC batching.
-///   - 2025-06-18  — REMOVES JSON-RPC batching, adds structured tool output
-///                   (`outputSchema` / `structuredContent`), tighter OAuth.
-///   - 2025-11-25  — current stable. Adds elicitation, async tasks, enhanced
-///                   sampling, Client ID Metadata Documents, the extensions
-///                   system, mandatory RFC 8707 Resource Indicators on OAuth.
+///   - 2025-06-18  — REMOVES JSON-RPC batching, adds structured tool output (`outputSchema` / `structuredContent`), tighter OAuth.
+///   - 2025-11-25  — current stable. Adds elicitation, async tasks, enhanced sampling, Client ID Metadata Documents, the extensions system, mandatory RFC 8707 Resource Indicators on OAuth.
 ///
 /// Default points at the newest stable; older clients still get their requested
 /// version echoed back so legacy negotiation keeps working.
-pub(super) const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
-    "2024-11-05",
-    "2025-03-26",
-    "2025-06-18",
-    "2025-11-25",
-];
+pub(super) const SUPPORTED_PROTOCOL_VERSIONS: &[&str] =
+    &["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
 pub(super) const SERVER_DEFAULT_PROTOCOL_VERSION: &str = "2025-11-25";
 
 #[derive(Deserialize)]
@@ -103,9 +96,17 @@ pub(super) struct ToolArguments {
     pub(super) body: Option<String>,
     #[serde(default, deserialize_with = "de_scalar_string_map")]
     pub(super) headers: HashMap<String, String>,
-    #[serde(default, rename = "queryParams", deserialize_with = "de_scalar_string_map")]
+    #[serde(
+        default,
+        rename = "queryParams",
+        deserialize_with = "de_scalar_string_map"
+    )]
     pub(super) query_params: HashMap<String, String>,
-    #[serde(default, rename = "pathParams", deserialize_with = "de_scalar_string_map")]
+    #[serde(
+        default,
+        rename = "pathParams",
+        deserialize_with = "de_scalar_string_map"
+    )]
     pub(super) path_params: HashMap<String, String>,
     #[serde(default, rename = "isBase64Encoded")]
     pub(super) is_base64_encoded: bool,
