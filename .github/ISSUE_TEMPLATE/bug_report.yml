@@ -1,0 +1,59 @@
+name: Bug report
+description: Something in riz behaves incorrectly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug! A minimal `riz.toml` + handler that reproduces it
+        is the single most helpful thing you can include.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you observe, and what did you expect instead?
+      placeholder: "GET /accounts/42 returned 500; expected 200 with the account JSON."
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: A minimal `riz.toml` and handler (or exact steps). Use code fences.
+      render: toml
+      placeholder: |
+        [function.api]
+        runtime = "bun"
+        handler = "index.handler"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: riz version
+      description: Output of `riz --version`.
+      placeholder: "riz 0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Runtime
+      options: ["bun", "node", "python", "rust", "wasm", "n/a"]
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS / arch
+      placeholder: "macOS 14 arm64 / Ubuntu 22.04 x86_64"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant `riz run` output (JSON logs to stdout). Redact secrets.
+      render: shell
+    validations:
+      required: false
