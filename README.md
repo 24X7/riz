@@ -101,9 +101,24 @@ curl 'http://localhost:3000/hello?name=alice'
 Edit `index.ts`, save — the next request hits the new code. No restart, no
 config touch: the watcher debounces and hot-swaps the function's pool.
 
-Seven built-in templates (4 languages):
-`typescript-http` · `nodejs-http` · `python-http` · `rust-http` ·
-`typescript-websocket` · `python-websocket` · `rust-websocket`.
+**`riz init` always fetches templates from a git location — nothing is embedded
+in the binary.** Official templates (8, incl. a full-stack one):
+
+```
+typescript-http · nodejs-http · python-http · rust-http
+typescript-websocket · python-websocket · rust-websocket
+typescript-todo        # full-stack: Bun API + React/Vite client on one binary
+
+riz init --list                              # the official set + usage
+riz init typescript-todo my-app              # an official name → riz repo (git)
+riz init owner/repo my-app                   # any GitHub repo
+riz init owner/repo/path/to/tmpl#v2 my-app   # a subdirectory, at a ref/tag
+riz init https://host/o/r.git my-app         # any git URL (incl. file://)
+riz init ./local/template my-app             # a local path (offline)
+```
+
+Set `RIZ_TEMPLATE_REPO` to a fork (git URL or local path) to resolve the
+official names from somewhere other than the canonical repo.
 
 ---
 
@@ -204,6 +219,43 @@ clean `412`; cost surfaces next to latency in the same operator view.
 
 ---
 
+## 4 · Static files — colocate your site, describe yourself to agents
+
+Point `[static]` at a directory and a riz instance serves it on the **same
+binary and origin as your API** — no second host, no CORS, no extra infra. The
+compounding use is **self-description**: drop an `llms.txt` and
+`.well-known/riz.json` in that dir and a live instance answers `GET /llms.txt`
+and `/.well-known/riz.json` itself, so an agent pointed at your host discovers
+its tools and the `/_riz/mcp` endpoint with no separate marketing site.
+
+```toml
+[static]
+dir = "client/dist"      # required — served as the site root
+mount = "/"              # URL prefix (default "/")
+spa_fallback = true      # unknown HTML route → index.html (history-API SPAs)
+precompressed = false    # serve file.br / file.gz when the client allows
+```
+
+**Functions and `/_riz/*` always win** — static is the last `GET`/`HEAD`
+fallback before a 404, so it can never shadow an API. The boring parts are done
+right: `ETag` + `304`, `Range` → `206`, correct content types (incl. `.wasm`),
+immutable cache for hash-named assets / `no-cache` for HTML, directory →
+`index.html` (never a listing). Path traversal, symlink escape, and dotfiles
+(except `/.well-known/*`) are rejected. It is **not** a web server — no
+templating, SSR, proxying, or autoindex; front it with a CDN for scale.
+
+```bash
+# Generate the agent-discovery files FROM your config (functions → tools list)
+riz scaffold static --wire        # writes public/llms.txt + .well-known/riz.json,
+                                  # and adds a [static] block to riz.toml
+```
+
+A complete full-stack demo lives in [`examples/typescript-todo`](examples/typescript-todo)
+(a Bun todo API + a built React/Vite client served on one binary), and
+`riz init typescript-todo my-app` scaffolds it.
+
+---
+
 ## Capabilities
 
 **Runtimes & protocols**
@@ -214,6 +266,7 @@ clean `412`; cost surfaces next to latency in the same operator view.
 **Agent + AI surface**
 - **MCP server** at `/_riz/mcp` (JSON-RPC 2.0, spec 2025-11-25) — every function is a tool, automatically
 - **OpenAI-compatible LLM gateway** at `/_riz/v1/*` — provider routing + fallback, SSE streaming, embeddings, budget caps, cost telemetry
+- **Static + self-describing** — `[static]` serves your SPA/site on the same binary/origin (no CORS); `riz scaffold static` generates `llms.txt` + `.well-known/riz.json` from your functions so a live instance describes itself to agents
 
 **Security & isolation**
 - Lambda authorizers — **REQUEST** (call a user function) + **JWT** (JWKS URL, TTL cache)
@@ -228,7 +281,7 @@ clean `412`; cost surfaces next to latency in the same operator view.
 - **Hot-swap deploys** from S3 with 30s in-flight drain
 - Prometheus `/_riz/metrics`, rich `/_riz/health`, `/_riz/registry`, plus a live **terminal dashboard** (`--dev`) with P50–P99 latency; hand-rolled **OpenTelemetry** OTLP/HTTP-JSON span export (one path → Datadog and CloudWatch/X-Ray) from an isolated telemetry child
 - Process pool with semaphore-bounded concurrency, liveness watcher, auto-respawn on crash/timeout, two-phase graceful shutdown
-- `riz init` (7 templates), `riz doctor` (preflight), `riz routes`, `riz validate`, `riz mcp inspect`
+- `riz init <spec>` (git-fetched templates — official names, `owner/repo[/subdir]`, git URL, or local path; never embedded), `riz scaffold static` (generate the agent-discovery files), `riz doctor` (preflight), `riz routes`, `riz validate`, `riz mcp inspect`
 - **Single ~35 MB Rust binary** — no GC pauses, no Docker, no per-request container
 
 ---
