@@ -122,4 +122,6 @@ global = "ubuntu-latest"
 aarch64-apple-darwin = "macos-14"
 x86_64-apple-darwin = "macos-13"
 x86_64-unknown-linux-gnu = "ubuntu-latest"
-aarch64-unknown-linux-gnu = "ubuntu-latest"
+# Native ARM runner (free for public repos) — cross-compiling riz's native deps
+# (wasmtime, rustls) to aarch64 on x86 fails; build it natively instead.
+aarch64-unknown-linux-gnu = "ubuntu-24.04-arm"
