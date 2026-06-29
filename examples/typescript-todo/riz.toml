@@ -1,0 +1,44 @@
+# typescript-todo — a full app on ONE riz binary.
+#
+# The todo API (Bun) and the built React client are served from the same
+# binary and the same origin: the client calls /api/todos with no CORS and no
+# second host. Run from this directory:
+#
+#   (cd client && bun install && bun run build)   # produces client/dist
+#   riz run                                        # http://localhost:3000
+#
+# Then open http://localhost:3000 — the React app is served by [static] and
+# talks to the function below.
+
+[server]
+port = 3000
+host = "127.0.0.1"
+
+# ── API: one function, four routes (AWS "one pool, many routes") ─────────────
+[function.todos]
+runtime = "bun"
+handler = "api/todos.handler"
+
+[[function.todos.routes]]
+path = "/api/todos"
+method = "GET"
+
+[[function.todos.routes]]
+path = "/api/todos"
+method = "POST"
+
+[[function.todos.routes]]
+path = "/api/todos/{id}"
+method = "PATCH"
+
+[[function.todos.routes]]
+path = "/api/todos/{id}"
+method = "DELETE"
+
+# ── Client: serve the Vite build on the same origin as the API ───────────────
+# Functions and /_riz/* always win; everything else (the SPA) falls through to
+# these files. spa_fallback routes client-side paths back to index.html.
+[static]
+dir = "client/dist"
+mount = "/"
+spa_fallback = true

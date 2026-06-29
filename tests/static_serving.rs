@@ -285,20 +285,26 @@ async fn head_returns_headers_no_body() {
 async fn immutable_cache_header_on_hash_named_asset_no_cache_on_html() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(dir.path().join("app.4f1c2a9b.js"), "x").unwrap();
+    // Vite / webpack / esbuild emit `name-HASH.ext` (dash, single dot).
+    fs::write(dir.path().join("index-D5qCqGHz.js"), "v").unwrap();
     fs::write(dir.path().join("index.html"), "<h1/>").unwrap();
     fs::write(dir.path().join("plain.js"), "y").unwrap();
+    // A real hyphenated name (a word, not a hash) must stay on the normal cache.
+    fs::write(dir.path().join("main-component.js"), "z").unwrap();
     let cfg = static_cfg(dir.path(), "");
 
-    let resp = serve(Method::GET, "/app.4f1c2a9b.js", HeaderMap::new(), &cfg)
-        .await
-        .unwrap();
-    assert!(resp
-        .headers()
-        .get(header::CACHE_CONTROL)
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .contains("immutable"));
+    for hashed in ["/app.4f1c2a9b.js", "/index-D5qCqGHz.js"] {
+        let resp = serve(Method::GET, hashed, HeaderMap::new(), &cfg).await.unwrap();
+        assert!(
+            resp.headers()
+                .get(header::CACHE_CONTROL)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .contains("immutable"),
+            "{hashed} should be immutable-cached"
+        );
+    }
 
     let resp = serve(Method::GET, "/index.html", HeaderMap::new(), &cfg).await.unwrap();
     assert_eq!(
@@ -306,9 +312,14 @@ async fn immutable_cache_header_on_hash_named_asset_no_cache_on_html() {
         "no-cache"
     );
 
-    let resp = serve(Method::GET, "/plain.js", HeaderMap::new(), &cfg).await.unwrap();
-    let cc = resp.headers().get(header::CACHE_CONTROL).unwrap().to_str().unwrap();
-    assert!(cc.contains("max-age=3600") && !cc.contains("immutable"));
+    for normal in ["/plain.js", "/main-component.js"] {
+        let resp = serve(Method::GET, normal, HeaderMap::new(), &cfg).await.unwrap();
+        let cc = resp.headers().get(header::CACHE_CONTROL).unwrap().to_str().unwrap();
+        assert!(
+            cc.contains("max-age=3600") && !cc.contains("immutable"),
+            "{normal} should use the normal asset cache, got {cc}"
+        );
+    }
 }
 
 // ───────────────────────────── SPA fallback ─────────────────────────────────

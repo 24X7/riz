@@ -345,19 +345,37 @@ fn cache_control(path: &Path, ctype: &str, cfg: &StaticConfig) -> String {
     cfg.cache_assets.clone()
 }
 
-/// True for `name.<hash>.ext` where `<hash>` is 8+ alphanumerics (the shape
-/// bundlers emit for content-hashed assets).
+/// True when the filename carries a content hash, the shape bundlers emit for
+/// fingerprinted assets. Covers both common conventions:
+///   - `app.4f1c2a9b.js` — hash as a dot-separated segment.
+///   - `index-D5qCqGHz.js` — hash appended with a dash (Vite, webpack, esbuild).
 fn is_hash_named(path: &Path) -> bool {
     let name = match path.file_name().and_then(|n| n.to_str()) {
         Some(n) => n,
         None => return false,
     };
-    let parts: Vec<&str> = name.split('.').collect();
-    if parts.len() < 3 {
+    // The hash lives in the file stem (must have an extension).
+    let stem = match name.rsplit_once('.') {
+        Some((stem, _ext)) => stem,
+        None => return false,
+    };
+    // The hash is the last token of the stem under the separators bundlers use.
+    let token = stem.rsplit(['.', '-']).next().unwrap_or(stem);
+    is_content_hash(token)
+}
+
+/// A content-hash token: 8+ alphanumerics that look *generated* rather than a
+/// word — they contain a digit or mix upper- and lower-case. This keeps a real
+/// name like `main-component.js` on the normal cache while `index-D5qCqGHz.js`
+/// and `app.4f1c2a9b.js` get the immutable 1-year cache.
+fn is_content_hash(s: &str) -> bool {
+    if s.len() < 8 || !s.chars().all(|c| c.is_ascii_alphanumeric()) {
         return false;
     }
-    let hash = parts[parts.len() - 2];
-    hash.len() >= 8 && hash.chars().all(|c| c.is_ascii_alphanumeric())
+    let has_digit = s.chars().any(|c| c.is_ascii_digit());
+    let has_upper = s.chars().any(|c| c.is_ascii_uppercase());
+    let has_lower = s.chars().any(|c| c.is_ascii_lowercase());
+    has_digit || (has_upper && has_lower)
 }
 
 fn has_extension(rel: &str) -> bool {
