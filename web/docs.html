@@ -57,6 +57,7 @@
     <a href="#guards">Guards</a>
     <a href="#broker">Capability broker</a>
     <a href="#gateway">LLM gateway</a>
+    <a href="#static">Static files</a>
     <span class="grp">Operate</span>
     <a href="#endpoints">Endpoints</a>
     <a href="#cli">CLI</a>
@@ -217,6 +218,26 @@ required = <span class="n">true</span></pre>
       <li><b>Change:</b> edit <code>riz.toml</code> or handler source → debounced hot-reload swaps the pool. <code>POST /deploy</code> pulls from S3, drains in-flight work over 30s, promotes atomically, and auto-rolls-back on a failed health check.</li>
       <li><b>Shutdown:</b> SIGTERM/SIGINT → graceful 30s drain, then children are killed as a group — nothing orphaned.</li>
     </ul>
+
+    <h2 id="static">Static files</h2>
+    <p>Point <code>[static]</code> at a directory and a riz instance serves it on the <b>same binary and origin as your API</b> — no second host, no CORS, no extra infra.
+    The compounding use is <b>self-description</b>: drop an <code>llms.txt</code> and <code>.well-known/riz.json</code> in that dir and a live instance answers
+    <code>GET /llms.txt</code> and <code>/.well-known/riz.json</code>, so an agent pointed at your host discovers the when-to-use card and the <code>/_riz/mcp</code>
+    endpoint with no separate marketing site. Colocating an SPA or landing page is the second use.</p>
+    <pre>[static]
+dir = <span class="s">"./public"</span>            <span class="c"># required — served as the site root</span>
+mount = <span class="s">"/"</span>                 <span class="c"># URL prefix (default "/")</span>
+spa_fallback = <span class="kw">false</span>        <span class="c"># unknown HTML route → index.html (history-API SPAs)</span>
+precompressed = <span class="kw">false</span>       <span class="c"># serve file.br / file.gz when the client allows</span></pre>
+    <ul>
+      <li><b>Functions and <code>/_riz/*</code> always win.</b> Static is the last GET/HEAD fallback before a 404 — it can never shadow an API or a system route.</li>
+      <li>Boring parts done right: <code>ETag</code> + <code>304</code>, <code>Range</code> → <code>206</code>, correct content types (incl. <code>.wasm</code>), immutable cache for hash-named assets and <code>no-cache</code> for HTML, directory → <code>index.html</code> (never a listing).</li>
+      <li>Traversal, symlink escape, and dotfiles are rejected — <b>except</b> the agent surface under <code>/.well-known/*</code>.</li>
+      <li>It is <b>not</b> a web server: no templating, SSR, reverse-proxying, or autoindex. For scale, front riz with a CDN.</li>
+    </ul>
+    <div class="proof"><b>✓</b> proof: function_route_wins_over_static_file_at_same_path</div>
+    <div class="proof"><b>✓</b> proof: live_instance_serves_its_llms_txt_and_well_known</div>
+    <div class="proof"><b>✓</b> proof: path_traversal_dotdot_is_rejected</div>
 
     <div class="cta-row" style="margin-top:3rem">
       <a class="cta pri" href="start.html">Back to getting started →</a>

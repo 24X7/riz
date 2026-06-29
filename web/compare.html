@@ -107,6 +107,11 @@
             <td>CloudWatch — powerful, billed, assembled by you</td>
           </tr>
           <tr>
+            <th>Your site</th>
+            <td><span class="y">Same binary, same origin — <code>$0</code>, no CORS</span>. A <code>[static]</code> dir colocates your SPA and serves the instance's own <code>llms.txt</code> / <code>.well-known</code>.</td>
+            <td class="dim">S3 + CloudFront (another bucket, distribution, and origin) — or CORS between your API and your front end</td>
+          </tr>
+          <tr>
             <th style="color:var(--warn)">Where Lambda wins</th>
             <td class="dim">Single-node by design today: no auto-scaling fleet, no managed HA, no IAM integration. You own the box and its uptime.</td>
             <td><span class="y">Infinite horizontal scale, managed HA, the AWS ecosystem</span>. Spiky planet-scale traffic with zero ops: use Lambda — your handlers will move back unchanged.</td>

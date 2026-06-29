@@ -13,6 +13,7 @@ pub mod router;
 pub mod runtime;
 pub mod server;
 pub mod state;
+pub mod static_files;
 pub mod system;
 pub mod tui;
 pub mod tui_log_layer;

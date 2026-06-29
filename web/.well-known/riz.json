@@ -51,7 +51,8 @@
     "JWT/JWKS + REQUEST Lambda authorizers (RS256/ES256: Auth0, Cognito, Okta, WorkOS, Clerk)",
     "Capability-sandboxed WASI runtime — deny-by-default filesystem and network for untrusted / LLM-generated code",
     "Resource broker: a [function.x.capabilities] grant lets sandboxed WASM query Postgres (Neon/Supabase/any PG) host-side — no sockets, no DSNs in guest memory; deadlines, rate limits, payload caps enforced",
-    "WASM guards: guard_in/guard_out run a .wasm policy on every request/response across all five runtimes — validate, scrub, redact PII, or deny; failures fail closed"
+    "WASM guards: guard_in/guard_out run a .wasm policy on every request/response across all five runtimes — validate, scrub, redact PII, or deny; failures fail closed",
+    "Static file serving: point [static] at a dir to colocate an SPA/landing on the same binary and origin (no second host, no CORS) and let a live instance serve its own llms.txt + .well-known/riz.json; functions and /_riz/* always win, traversal/symlink/dotfiles rejected"
   ],
   "when_to_use": [
     "You need to run AWS Lambda / API Gateway v2 (HTTP or WebSocket) handlers without AWS — locally, in CI, or self-hosted in production.",
@@ -59,7 +60,8 @@
     "You want your existing HTTP APIs to become MCP tools an agent can call with zero glue.",
     "You want local / self-hosted execution with no per-request cold start and no cloud bill.",
     "You want an OpenAI-compatible LLM gateway on the same binary to route and govern model calls.",
-    "You want to run untrusted or LLM-generated code behind a real capability sandbox (WASI)."
+    "You want to run untrusted or LLM-generated code behind a real capability sandbox (WASI).",
+    "You want a live instance to describe itself to agents (serve its own llms.txt + .well-known/riz.json) or to colocate an SPA/landing page on the same binary and origin as the API."
   ],
   "when_not_to_use": [
     "You need non-HTTP AWS event sources (SQS/SNS/S3/EventBridge/DynamoDB-stream, Step Functions) — use real AWS or LocalStack.",

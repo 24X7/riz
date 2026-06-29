@@ -385,6 +385,43 @@ pub(crate) async fn dispatch_lambda(
     let cache_key = CacheLayer::make_key(&method_str, &path, &query);
     let route_key_for_logs = crate::router::Router::route_key(&method_str, &path);
 
+    // ── Static file serving (GET/HEAD fallback) ──────────────────────────────
+    // After CORS preflight, before any function dispatch or cache lookup: if
+    // `[static]` is configured and NO function owns this path, serve a file
+    // from disk. Functions and `/_riz/*` always win — the `function_for_path`
+    // gate is the same method-agnostic lookup that drives CORS preflight, so a
+    // static file can never shadow an API (a method mismatch still yields the
+    // function's own 405/404). GET/HEAD only; `static_files::serve` returns
+    // `None` only when the path is not under the mount, in which case we fall
+    // through to the normal 404 path below.
+    if method_typed == http::Method::GET || method_typed == http::Method::HEAD {
+        let static_cfg = { state.config.read().await.static_site.clone() };
+        if let Some(static_cfg) = static_cfg {
+            let owned_by_function = {
+                let router = state.router.read().await;
+                router.function_for_path(&path).is_some()
+            };
+            if !owned_by_function {
+                if let Some(resp) =
+                    crate::static_files::serve(&method_typed, &path, req.headers(), &static_cfg)
+                        .await
+                {
+                    let latency = start.elapsed().as_secs_f64() * 1000.0;
+                    let request_id = Uuid::new_v4().to_string();
+                    let status = resp.status().as_u16();
+                    state.push_log(
+                        "INFO",
+                        Some(&route_key_for_logs),
+                        format!(
+                            "{method_str} {path} {status} {latency:.0}ms [static] req={request_id} ip={source_ip}"
+                        ),
+                    );
+                    return resp;
+                }
+            }
+        }
+    }
+
     // BUG-12: skip cache for authenticated/personalized requests
     let has_auth =
         req.headers().contains_key("authorization") || req.headers().contains_key("cookie");

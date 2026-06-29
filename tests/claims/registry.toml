@@ -153,6 +153,26 @@ status = "benchmark"
 proof = "ws_handles_100_messages_within_10s"
 note = "Headline 91k req/s · p99<1ms is a benches/ result (the stat bar links the recipe), not a deterministic CI test. The CI-floor sibling ws_handles_100_messages_within_10s is the regression gate that fails if load throughput collapses. page_text keeps the <b> tag so the drift guard pins the exact stat-bar rendering."
 
+# ─────────────────────────── Static file serving ────────────────────────────
+
+[[claim]]
+id = "static-colocation"
+page_text = "function_route_wins_over_static_file_at_same_path"
+status = "proven"
+proof = "function_route_wins_over_static_file_at_same_path"
+
+[[claim]]
+id = "static-self-describing"
+page_text = "live_instance_serves_its_llms_txt_and_well_known"
+status = "proven"
+proof = "live_instance_serves_its_llms_txt_and_well_known"
+
+[[claim]]
+id = "static-traversal-safe"
+page_text = "path_traversal_dotdot_is_rejected"
+status = "proven"
+proof = "path_traversal_dotdot_is_rejected"
+
 # ─────────────────────────── Copy-only (stats/positioning) ──────────────────
 
 [[claim]]

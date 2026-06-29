@@ -166,6 +166,74 @@ pub struct Config {
     /// `[function.<fn>.capabilities.<grant>]`.
     #[serde(default)]
     pub resources: ResourcesConfig,
+    /// Optional static-file mount (`[static]`). Disabled by default. When set,
+    /// riz serves files from `dir` as a fallback AFTER function + `/_riz/*`
+    /// routes — colocating a site (SPA / landing / the agent-discovery files)
+    /// on the same binary and port as the API. See
+    /// `docs/superpowers/specs/2026-06-18-static-serving-design.md`.
+    #[serde(default, rename = "static")]
+    pub static_site: Option<StaticConfig>,
+}
+
+/// `[static]` — serve files from a directory as a fallback after API routes.
+///
+/// Precedence (enforced in `dispatch_lambda`): system endpoints, the LLM
+/// gateway, the MCP endpoint, WebSocket upgrades, and every `[function.*]`
+/// route win FIRST; static is consulted only when no route owns the path and
+/// the request is a GET/HEAD. `/_riz/*` is never served from disk.
+#[derive(Debug, Clone, Deserialize)]
+pub struct StaticConfig {
+    /// Directory served as the site root. Required (its presence enables the
+    /// feature); must exist and be a directory at startup.
+    pub dir: PathBuf,
+    /// URL prefix the dir is served under. Default `/`. Must start with `/`
+    /// and must not be `/_riz` or collide with a declared function route.
+    #[serde(default = "default_static_mount")]
+    pub mount: String,
+    /// Directory-index file served for a directory request. Default
+    /// `index.html`.
+    #[serde(default = "default_static_index")]
+    pub index: String,
+    /// History-API SPA fallback: an unknown GET that accepts `text/html` and
+    /// has no file extension is served `index` (so client-side routes work).
+    /// A missing asset (path with an extension) still 404s. Default false.
+    #[serde(default)]
+    pub spa_fallback: bool,
+    /// Optional custom 404 body file (relative to `dir`, e.g. `404.html`).
+    /// Empty → a plain `404 not found`.
+    #[serde(default)]
+    pub not_found: String,
+    /// Serve `path.br` / `path.gz` when present and the client's
+    /// `Accept-Encoding` allows it. No on-the-fly compression. Default false.
+    #[serde(default)]
+    pub precompressed: bool,
+    /// `Cache-Control` for HTML (index / `*.html`). Default `no-cache` so a
+    /// redeploy is picked up immediately.
+    #[serde(default = "default_cache_html")]
+    pub cache_html: String,
+    /// `Cache-Control` for non-hash-named assets. Default 1 hour.
+    #[serde(default = "default_cache_assets")]
+    pub cache_assets: String,
+    /// `Cache-Control` for hash-named assets (e.g. `app.4f1c2a.js`). Default
+    /// 1 year immutable.
+    #[serde(default = "default_cache_immutable")]
+    pub cache_immutable: String,
+}
+
+fn default_static_mount() -> String {
+    "/".to_string()
+}
+fn default_static_index() -> String {
+    "index.html".to_string()
+}
+fn default_cache_html() -> String {
+    "no-cache".to_string()
+}
+fn default_cache_assets() -> String {
+    "public, max-age=3600".to_string()
+}
+fn default_cache_immutable() -> String {
+    "public, max-age=31536000, immutable".to_string()
 }
 
 /// `[resources]` — named backends the broker may reach on behalf of granted
@@ -915,6 +983,53 @@ impl Config {
                 if !self.gateway.providers.contains_key(fb) {
                     return Err(format!(
                         "[gateway] fallback_chain entry \"{fb}\" is not a configured provider"
+                    ));
+                }
+            }
+        }
+
+        // [static] — fail closed at startup so a misconfigured mount never
+        // silently serves nothing (or shadows an API).
+        if let Some(s) = &self.static_site {
+            if !s.dir.is_dir() {
+                return Err(format!(
+                    "[static] dir = {:?} does not exist or is not a directory",
+                    s.dir
+                ));
+            }
+            if !s.mount.starts_with('/') {
+                return Err(format!(
+                    "[static] mount = {:?} must start with '/'",
+                    s.mount
+                ));
+            }
+            if s.mount == "/_riz" || s.mount.starts_with("/_riz/") {
+                return Err(
+                    "[static] mount must not use the reserved /_riz namespace".into(),
+                );
+            }
+            // The mount must not collide with a declared function route prefix:
+            // function routes always win, so a colliding static mount would be
+            // dead config — reject it loudly rather than silently shadow.
+            for (name, func) in &self.functions {
+                for r in func.effective_routes(name) {
+                    if s.mount != "/" && (r.path == s.mount || r.path.starts_with(&format!("{}/", s.mount.trim_end_matches('/')))) {
+                        return Err(format!(
+                            "[static] mount = {:?} collides with function '{name}' route {:?} \
+                             — function routes always win, so the static mount would be dead",
+                            s.mount, r.path
+                        ));
+                    }
+                }
+            }
+            // index / not_found must resolve inside dir (no traversal).
+            for (label, rel) in [("index", &s.index), ("not_found", &s.not_found)] {
+                if rel.is_empty() {
+                    continue;
+                }
+                if rel.contains("..") || rel.starts_with('/') {
+                    return Err(format!(
+                        "[static] {label} = {rel:?} must be a relative path inside dir (no '..', no leading '/')"
                     ));
                 }
             }

@@ -13,6 +13,7 @@ mod router;
 mod runtime;
 mod server;
 mod state;
+mod static_files;
 mod system;
 mod tui;
 mod tui_log_layer;
