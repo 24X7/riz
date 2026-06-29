@@ -337,6 +337,10 @@ your handler code and the stdin/stdout bridge to it. Methodology + caveats in
   `/cache/invalidate`; `/_riz/health` stays open for probes.
 - Hot-swap: `POST /deploy` `{"lambda":"name","s3_bucket":"...","s3_key":"..."}` (gated by `[deploy] deploy_key` / `RIZ_DEPLOY_KEY` + optional CIDR allowlist) — in-flight requests drain over 30s, new requests hit the new pool atomically.
 - Prometheus `/_riz/metrics` works with the Datadog Agent's OpenMetrics integration.
+- **Observability + integrations**: traces export as OTLP/HTTP to any collector/agent
+  (Datadog, Honeycomb, Tempo, Jaeger, X-Ray). Copy-paste `[telemetry]` blocks per
+  backend, plus LLM-provider and JWKS-auth wiring, are in
+  [`docs/integrations/`](docs/integrations/README.md).
 
 ---
 

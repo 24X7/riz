@@ -21,9 +21,15 @@
 //!
 //! There is exactly ONE export path. Datadog, CloudWatch/X-Ray, Honeycomb, and
 //! any OTLP collector are all just a different `endpoint` + `headers` on this
-//! same POST — e.g. Datadog's OTLP intake with a `dd-api-key` header, or an
-//! AWS OTel/ADOT collector that forwards to X-Ray. The host never speaks
-//! StatsD or any vendor wire protocol directly.
+//! same POST — the host never speaks StatsD or any vendor wire protocol
+//! directly. The GA route to a vendor is an OTLP collector/agent:
+//!   - Datadog: the Datadog Agent (or an OTel Collector + datadog exporter)
+//!     OTLP receiver on `:4318`. (Datadog's *agentless* `dd-api-key` OTLP intake
+//!     is GA for metrics/logs and Preview for traces.)
+//!   - AWS X-Ray: an ADOT / OTel Collector that forwards to X-Ray.
+//!   - Honeycomb: `endpoint = https://api.honeycomb.io` + `x-honeycomb-team`.
+//!
+//! See `docs/integrations/observability.md` for copy-paste `[telemetry]` blocks.
 
 use std::collections::BTreeMap;
 use std::time::Duration;

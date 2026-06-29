@@ -26,8 +26,8 @@ use serde_json::json;
 
 use crate::llm::{ChatRequest, ChatResponse, EmbeddingsRequest, Gateway, ProviderError};
 use crate::observability::ipc::{
-    AttrValue, SpanKind, TelemetryEvent, GEN_AI_INPUT_TOKENS, GEN_AI_OUTPUT_TOKENS,
-    GEN_AI_REQUEST_MODEL, GEN_AI_SYSTEM,
+    AttrValue, SpanKind, TelemetryEvent, GEN_AI_INPUT_TOKENS, GEN_AI_OPERATION,
+    GEN_AI_OUTPUT_TOKENS, GEN_AI_PROVIDER, GEN_AI_REQUEST_MODEL, GEN_AI_SYSTEM,
 };
 use crate::observability::TelemetryHandle;
 use crate::server::{new_span_id, new_trace_id, now_unix_nanos};
@@ -68,8 +68,19 @@ pub async fn chat_completions(
             resp.usage.completion_tokens,
         );
         let mut attrs = BTreeMap::new();
+        // `gen_ai.operation.name` (current semconv) + both the legacy
+        // `gen_ai.system` and current `gen_ai.provider.name` so old and new
+        // OTel-GenAI consumers (e.g. Datadog LLM Observability) classify the span.
+        attrs.insert(
+            GEN_AI_OPERATION.to_string(),
+            AttrValue::String("chat".to_string()),
+        );
         attrs.insert(
             GEN_AI_SYSTEM.to_string(),
+            AttrValue::String("riz-gateway".to_string()),
+        );
+        attrs.insert(
+            GEN_AI_PROVIDER.to_string(),
             AttrValue::String("riz-gateway".to_string()),
         );
         attrs.insert(

@@ -29,6 +29,12 @@ pub const GEN_AI_SYSTEM: &str = "gen_ai.system";
 pub const GEN_AI_REQUEST_MODEL: &str = "gen_ai.request.model";
 pub const GEN_AI_INPUT_TOKENS: &str = "gen_ai.usage.input_tokens";
 pub const GEN_AI_OUTPUT_TOKENS: &str = "gen_ai.usage.output_tokens";
+/// `gen_ai.operation.name` — the GenAI operation ("chat" for chat completions).
+/// Current OTel GenAI semconv; lets Datadog LLM Observability and others classify
+/// the span. `gen_ai.provider.name` is the current name for what older semconv
+/// called `gen_ai.system`; we emit both so old and new backends light up.
+pub const GEN_AI_OPERATION: &str = "gen_ai.operation.name";
+pub const GEN_AI_PROVIDER: &str = "gen_ai.provider.name";
 
 /// A typed span attribute value (OTel `AnyValue` subset we use).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

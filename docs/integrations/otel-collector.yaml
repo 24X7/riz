@@ -1,0 +1,33 @@
+# Minimal OpenTelemetry Collector config for validating riz's OTLP/HTTP-JSON
+# trace export. Receives OTLP over HTTP on :4318 (the endpoint riz posts
+# `/v1/traces` to) and prints every received span via the debug exporter.
+#
+# Run it:
+#   docker run --rm -p 4318:4318 \
+#     -v "$PWD/docs/integrations/otel-collector.yaml":/etc/otelcol/config.yaml \
+#     otel/opentelemetry-collector:latest --config /etc/otelcol/config.yaml
+#
+# Then point riz at it and drive a request:
+#   [telemetry]
+#   enabled = true
+#   endpoint = "http://localhost:4318"
+#
+# You'll see riz's spans (service.name=riz, hex trace/span ids) in the
+# collector's stdout. `tests/telemetry_otlp_collector.rs` automates exactly this
+# when run with RIZ_OTLP_DOCKER=1.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [debug]
