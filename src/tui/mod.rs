@@ -296,15 +296,11 @@ fn run_loop<B: ratatui::backend::Backend>(
                     }
                     KeyCode::Tab | KeyCode::Right => app.next_tab(),
                     KeyCode::BackTab | KeyCode::Left => app.prev_tab(),
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        if app.selected_tab == 0 {
-                            app.select_next_route();
-                        }
+                    KeyCode::Down | KeyCode::Char('j') if app.selected_tab == 0 => {
+                        app.select_next_route();
                     }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        if app.selected_tab == 0 {
-                            app.select_prev_route();
-                        }
+                    KeyCode::Up | KeyCode::Char('k') if app.selected_tab == 0 => {
+                        app.select_prev_route();
                     }
                     _ => {}
                 }

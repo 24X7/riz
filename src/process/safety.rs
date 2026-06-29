@@ -157,7 +157,7 @@ mod tests {
 
     /// On Linux, the always-on safety profile sets PR_SET_NO_NEW_PRIVS.
     /// Verify by spawning a child under the pre_exec and reading
-    /// `/proc/self/status` for `NoNewPrivs:	1`. On macOS this test is
+    /// `/proc/self/status` for `NoNewPrivs: 1`. On macOS this test is
     /// compiled out — the prctl block in apply_always_on_limits is
     /// already cfg-gated to Linux.
     #[cfg(target_os = "linux")]
