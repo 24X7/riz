@@ -263,9 +263,7 @@ fn embedded_toml_snippets_parse_and_validate() {
                 .replace("&lt;", "<")
                 .replace("&gt;", ">")
                 .replace("&amp;", "&");
-            let text = tag_re
-                .replace_all(&text, "")
-                .to_string();
+            let text = tag_re.replace_all(&text, "").to_string();
             let cfg: riz::config::Config = toml::from_str(&text).unwrap_or_else(|e| {
                 panic!(
                     "{}: embedded riz.toml does not parse: {e}\n{text}",
