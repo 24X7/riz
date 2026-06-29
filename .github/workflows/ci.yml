@@ -51,7 +51,8 @@ jobs:
       # nextest, never `cargo test` — process-per-test isolation plus the
       # leak signal (a child process outliving its test fails the run).
       - name: cargo nextest run
-        run: cargo nextest run --workspace
+        # --no-fail-fast: surface every failure in one run, not just the first.
+        run: cargo nextest run --workspace --no-fail-fast
 
   acceptance-future:
     name: Future-wave acceptance (informational)

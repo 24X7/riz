@@ -198,7 +198,8 @@ mod tests {
         use std::os::unix::process::CommandExt;
         use std::process::{Command, Stdio};
 
-        let mut cmd = Command::new("/bin/sh");
+        // bash (not dash) so `ulimit -v` reports in 1024-byte blocks on Linux.
+        let mut cmd = Command::new("/bin/bash");
         cmd.arg("-c").arg("ulimit -H -v; ulimit -H -t");
         cmd.stdout(Stdio::piped());
         unsafe {
@@ -294,15 +295,17 @@ mod tests {
 
     /// Spawning a child via Command with the safety pre_exec must
     /// produce a process whose RLIMIT_CORE is 0 AND RLIMIT_NOFILE is
-    /// 4096 AND RLIMIT_FSIZE is 100 MiB (102400 KB blocks). We verify
-    /// via `ulimit -H -c -n -f` (hard limits, portable on /bin/sh on
-    /// both macOS and Linux).
+    /// 4096 AND RLIMIT_FSIZE is 100 MiB (102400 KiB blocks). We verify
+    /// via `ulimit -H -c -n -f` under **bash specifically**: `ulimit -f`
+    /// reports in 1024-byte blocks on bash but 512-byte blocks on dash
+    /// (Linux `/bin/sh`), so pinning the shell keeps the numbers stable
+    /// across macOS (where `/bin/sh` is already bash) and Linux.
     #[test]
     fn child_inherits_always_on_caps() {
         use std::os::unix::process::CommandExt;
         use std::process::{Command, Stdio};
 
-        let mut cmd = Command::new("/bin/sh");
+        let mut cmd = Command::new("/bin/bash");
         cmd.arg("-c")
             .arg("ulimit -H -c; ulimit -H -n; ulimit -H -f");
         cmd.stdout(Stdio::piped());
