@@ -150,14 +150,14 @@ concurrency = 2
 #                   left off here: Bun/Python JITs reserve large virtual address
 #                   space, so a low RLIMIT_AS is platform-sensitive. Opt in per host.
 #   allowed_paths → Linux Landlock filesystem allowlist (a no-op off Linux). It
-#                   is enforced in pre_exec, i.e. BEFORE execve, so for a SCRIPTED
-#                   runtime the allowlist must ALSO include the interpreter and
-#                   its shared libraries (python3 + /usr, /lib*) or the child
-#                   can't exec at all (EACCES). The interpreter path varies per
-#                   host, so it's left off this portable demo; for true
-#                   deny-by-default filesystem isolation see the WASM examples
-#                   (echo-wasm / orders-wasm), where allowed_paths are WASI
-#                   preopens applied inside the wasmtime sandbox.
+#                   is enforced in pre_exec, i.e. BEFORE execve, so the allowlist
+#                   must ALSO include the program being run and its shared
+#                   libraries (here python3 + /usr, /lib*) or the child can't
+#                   exec at all (EACCES). The interpreter path varies per host,
+#                   so it's left off this portable demo; per-handler filesystem
+#                   isolation is exercised by the dedicated safety tests instead.
+#                   (See the riz-bug note in CONTRIBUTING — allowed_paths should
+#                   auto-grant the interpreter; until then keep it Linux-aware.)
 # (An always-on profile — RLIMIT_CORE=0, fd/file-size caps, PDEATHSIG,
 #  NO_NEW_PRIVS — applies to every handler regardless of these opt-ins.)
 cpu_time_secs = 10
@@ -193,16 +193,20 @@ method = "ANY"
 # ─────────────── WASM (wasm32-wasip1 under wasmtime) ───────────────
 # A capability-sandboxed .wasm handler — same Lambda envelope as every other
 # runtime, run by `riz __wasm-host` inside wasmtime's WASI sandbox. Deny-by-
-# default: stdio only. allowed_paths below become WASI preopens (host==guest);
-# stage_variables become the guest's environment. No filesystem/network beyond
-# what's granted here. Build: cd examples/lambdas/echo-wasm &&
+# default: stdio only, no filesystem, no network, no host env. stage_variables
+# become the guest's environment. Build: cd examples/lambdas/echo-wasm &&
 # cargo build --release --target wasm32-wasip1
+#
+# allowed_paths would grant WASI preopens to the guest — but it ALSO drives the
+# host child's Landlock allowlist (applied in pre_exec, before execve), and on
+# Linux that blocks the wasm host from exec'ing the riz binary unless the binary
+# is in the list. echo-wasm needs no filesystem, so it's left off and the guest
+# runs fully sandboxed (the strongest demo). See riz-bug note in CONTRIBUTING.
 [function.echo-wasm]
 runtime = "wasm"
 handler = "./examples/lambdas/echo-wasm/target/wasm32-wasip1/release/echo-wasm.wasm"
 timeout_ms = 5000
 concurrency = 2
-allowed_paths = ["/tmp"]
 [function.echo-wasm.stage_variables]
 sandbox = "wasi"
 [[function.echo-wasm.routes]]

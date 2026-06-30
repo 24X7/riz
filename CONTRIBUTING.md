@@ -171,6 +171,23 @@ so it needs the full toolchain: `bun`, `node`, `python3`, `go`, and the
 `wasm32-wasip1` rust target. "All examples work together" can't be proven
 without them, so a missing toolchain fails loudly rather than passing by skip.
 
+#### Known sharp edge: `allowed_paths` + Linux Landlock
+
+`allowed_paths` becomes a **Linux Landlock** filesystem allowlist applied in the
+child's `pre_exec` (`src/process/pool.rs`) — i.e. **before `execve`**. The
+allowlist currently contains *only* the configured paths, so it does **not**
+grant the program being exec'd: on Linux the child can't `exec` `python3` (a
+scripted runtime) or the `riz __wasm-host` binary (a wasm runtime) when those
+live outside `allowed_paths`, and `riz run` fails to boot with `EACCES`. macOS
+has no Landlock, so this only bites on Linux (which the e2e harness caught).
+
+Until this is fixed, `examples/riz.all.toml` leaves `allowed_paths` off its
+scripted/wasm handlers. The proper fix is for the Landlock ruleset to also grant
+read+exec on the resolved interpreter/host binary and its shared-library dirs
+(without broadening reads to e.g. `/etc`, which the `safety.rs` deny-tests rely
+on). The feature is otherwise covered by `tests/telemetry_process_isolation.rs`
+and the `process::safety` unit tests.
+
 ### Benchmark
 
 The throughput/latency benchmark hammers a release-mode `riz` running a single Bun ping handler with [`wrk`](https://github.com/wg/wrk). Two ways to run it.
