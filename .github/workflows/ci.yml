@@ -69,9 +69,24 @@ jobs:
 
       # nextest, never `cargo test` — process-per-test isolation plus the
       # leak signal (a child process outliving its test fails the run).
-      - name: cargo nextest run
+      #
+      # The full suite EXCEPT the end-to-end smoke harness. The harness boots the
+      # whole example fleet (~46 worker processes across six runtimes) and holds
+      # it for the test's duration; run concurrently with the rest of the suite
+      # that starves the 2-vCPU/7GB GitHub runner — workers get killed mid-invoke
+      # ("Broken pipe" 502s) in the harness AND in unrelated process-spawning
+      # tests. So the harness runs in its own step below, with the runner to
+      # itself. Both steps are in this gating job, so either failing fails CI.
+      - name: cargo nextest run (unit + integration, excl. e2e fleet)
         # --no-fail-fast: surface every failure in one run, not just the first.
-        run: cargo nextest run --workspace --no-fail-fast
+        run: cargo nextest run --workspace --no-fail-fast -E 'not binary(e2e_smoke_all)'
+
+      # The end-to-end smoke harness, isolated so the full example fleet has the
+      # whole runner. Boots the real riz binary against examples/riz.all.toml and
+      # asserts every example × every runtime works together (see
+      # examples/smoke-all.sh + tests/e2e_smoke_all.rs).
+      - name: cargo nextest run (e2e smoke — full example fleet, isolated)
+        run: cargo nextest run --test e2e_smoke_all
 
   acceptance-future:
     name: Future-wave acceptance (informational)
