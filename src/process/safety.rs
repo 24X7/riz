@@ -8,7 +8,7 @@
 //! The always-on profile caps a child's blast radius before it can harm
 //! the host: RLIMIT_CORE = 0 (no multi-gigabyte core dumps on crash),
 //! RLIMIT_NOFILE = 4096 (fd-leak ceiling), RLIMIT_FSIZE = 100 MiB
-//! (single-file write cap), and on Linux RLIMIT_NPROC = 256 plus
+//! (single-file write cap), and on Linux RLIMIT_NPROC = 4096 plus
 //! PR_SET_PDEATHSIG(SIGKILL) and PR_SET_NO_NEW_PRIVS. Opt-in per-function
 //! caps (memory_mb, cpu_time_secs, allowed_paths) layer on top elsewhere.
 
@@ -36,14 +36,18 @@ pub(super) fn apply_always_on_limits() -> std::io::Result<()> {
     // `fs.write` loop is bounded before filling host disk.
     setrlimit(Resource::RLIMIT_FSIZE, 100 * 1024 * 1024, 100 * 1024 * 1024).map_err(to_io)?;
 
-    // RLIMIT_NPROC is per-PROCESS on Linux but per-USER on macOS/BSD.
-    // Setting it on macOS would compare against the host user's total
-    // process count and likely EINVAL on any moderately busy box.
-    // Apply only on Linux, where it caps fork-bombs inside a single
-    // child's process tree (combined with process_group(0) + killpg
-    // this gives us tight blast-radius control).
+    // RLIMIT_NPROC on Linux is enforced per-REAL-UID and counts THREADS, not
+    // per-process (the man-page wording is subtle). It therefore bounds EVERY
+    // riz worker's threads combined, not one child's subtree — and riz spawns
+    // many multi-threaded workers (a single Bun process alone runs ~12 threads),
+    // so a low cap silently kills workers mid-invocation once the fleet's thread
+    // count crosses it (a full example fleet is ~46 workers). Keep it high enough
+    // for a real fleet while still backstopping a fork bomb: an unbounded bomb is
+    // stopped by ANY finite cap, and 4096 keeps the box alive without crippling
+    // normal operation (it mirrors RLIMIT_NOFILE). macOS/BSD enforce per-USER and
+    // would EINVAL against the host's total process count, so apply on Linux only.
     #[cfg(target_os = "linux")]
-    setrlimit(Resource::RLIMIT_NPROC, 256, 256).map_err(to_io)?;
+    setrlimit(Resource::RLIMIT_NPROC, 4096, 4096).map_err(to_io)?;
 
     // Linux-only prctl pair:
     //   PR_SET_PDEATHSIG(SIGKILL): kernel SIGKILLs this child when the

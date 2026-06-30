@@ -76,13 +76,13 @@ kind = "ollama"
 runtime = "bun"
 handler = "./examples/lambdas/ping/index.handler"
 timeout_ms = 1000
-concurrency = 2
+concurrency = 1
 
 [function.accounts]
 runtime = "bun"
 handler = "./examples/lambdas/accounts/index.handler"
 timeout_ms = 1000
-concurrency = 2
+concurrency = 1
 # Response caching: GET /accounts/{id} is cached for 30s. The handler stamps
 # a `ts` into the body, so a cache HIT replays the same ts; POST /cache/invalidate
 # with prefix "GET:/accounts/" evicts it and the next GET stamps a fresh ts.
@@ -95,7 +95,7 @@ method = "GET"
 runtime = "bun"
 handler = "./examples/lambdas/events/index.handler"
 timeout_ms = 1000
-concurrency = 2
+concurrency = 1
 [[function.events.routes]]
 path = "/events"
 method = "ANY"
@@ -104,7 +104,7 @@ method = "ANY"
 runtime = "bun"
 handler = "./examples/lambdas/crud-accounts/index.handler"
 timeout_ms = 5000
-concurrency = 4
+concurrency = 1
 [[function.crud-accounts.routes]]
 path = "/accounts"
 method = "ANY"
@@ -116,7 +116,7 @@ method = "ANY"
 runtime = "bun"
 handler = "./examples/lambdas/echo-bun/index.handler"
 timeout_ms = 5000
-concurrency = 4
+concurrency = 1
 # Stage variables — surfaced on the event as `stageVariables`, mirroring AWS
 # API Gateway per-stage config. The echo handler reflects them in its response.
 [function.echo-bun.stage_variables]
@@ -132,7 +132,7 @@ method = "ANY"
 runtime = "node"
 handler = "./examples/lambdas/echo-node/index.handler"
 timeout_ms = 5000
-concurrency = 2
+concurrency = 1
 [[function.echo-node.routes]]
 path = "/echo-node"
 method = "ANY"
@@ -143,7 +143,7 @@ method = "ANY"
 runtime = "python"
 handler = "./examples/lambdas/echo-python/main.lambda_handler"
 timeout_ms = 5000
-concurrency = 2
+concurrency = 1
 # On-box safety caps applied to this handler's child process:
 #   cpu_time_secs → RLIMIT_CPU (SIGXCPU then SIGKILL on runaway loops)
 #   memory_mb     → RLIMIT_AS  (mirrors AWS Lambda MemorySize) — available but
@@ -171,7 +171,7 @@ method = "ANY"
 runtime = "rust"
 handler = "./target/release/echo-rust"
 timeout_ms = 5000
-concurrency = 2
+concurrency = 1
 [[function.echo-rust.routes]]
 path = "/echo-rust"
 method = "ANY"
@@ -185,7 +185,7 @@ method = "ANY"
 runtime = "go"
 handler = "./examples/lambdas/echo-go/echo-go"
 timeout_ms = 5000
-concurrency = 2
+concurrency = 1
 [[function.echo-go.routes]]
 path = "/echo-go"
 method = "ANY"
@@ -206,7 +206,7 @@ method = "ANY"
 runtime = "wasm"
 handler = "./examples/lambdas/echo-wasm/target/wasm32-wasip1/release/echo-wasm.wasm"
 timeout_ms = 5000
-concurrency = 2
+concurrency = 1
 [function.echo-wasm.stage_variables]
 sandbox = "wasi"
 [[function.echo-wasm.routes]]
@@ -223,7 +223,7 @@ method = "ANY"
 runtime = "wasm"
 handler = "./examples/lambdas/orders-wasm/target/wasm32-wasip1/release/orders-wasm.wasm"
 timeout_ms = 5000
-concurrency = 2
+concurrency = 1
 [function.orders-wasm.stage_variables]
 sandbox = "wasi"
 [[function.orders-wasm.routes]]
@@ -239,20 +239,20 @@ method = "POST"
 runtime = "bun"
 handler = "./examples/lambdas/auth-allow-bun/index.handler"
 timeout_ms = 1000
-concurrency = 2
+concurrency = 1
 
 [function.auth-deny]
 runtime = "bun"
 handler = "./examples/lambdas/auth-deny-bun/index.handler"
 timeout_ms = 1000
-concurrency = 2
+concurrency = 1
 
 # /protected — same handler as /events but gated by auth-allow (always passes)
 [function.protected]
 runtime = "bun"
 handler = "./examples/lambdas/events/index.handler"
 timeout_ms = 1000
-concurrency = 2
+concurrency = 1
 authorizer = "auth-allow"
 [[function.protected.routes]]
 path = "/protected"
@@ -263,7 +263,7 @@ method = "ANY"
 runtime = "bun"
 handler = "./examples/lambdas/events/index.handler"
 timeout_ms = 1000
-concurrency = 2
+concurrency = 1
 authorizer = "auth-deny"
 [[function.forbidden.routes]]
 path = "/forbidden"
@@ -276,7 +276,7 @@ protocol = "websocket"
 runtime = "bun"
 handler = "./examples/lambdas/chat/index.handler"
 timeout_ms = 5000
-concurrency = 4
+concurrency = 1
 [[function.chat.routes]]
 path = "/chat"
 method = "ANY"
@@ -288,7 +288,7 @@ protocol = "websocket"
 runtime = "python"
 handler = "./examples/lambdas/chat-python/main.lambda_handler"
 timeout_ms = 5000
-concurrency = 4
+concurrency = 1
 [[function.chat-python.routes]]
 path = "/chat-python"
 method = "ANY"
@@ -300,7 +300,7 @@ protocol = "websocket"
 runtime = "rust"
 handler = "./target/release/chat-rust"
 timeout_ms = 5000
-concurrency = 4
+concurrency = 1
 [[function.chat-rust.routes]]
 path = "/chat-rust"
 method = "ANY"
