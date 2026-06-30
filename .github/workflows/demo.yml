@@ -1,0 +1,48 @@
+# Render the terminal demo GIF/MP4 on demand (assets/demo.tape) and upload it as
+# an artifact. Manual trigger — does not run on push/PR. This is the "have
+# another tool render it" button: it installs riz + bun, then drives the real
+# binary through the tape with charmbracelet/vhs and records the screen.
+#
+# Run it from the Actions tab → "Demo GIF" → Run workflow. Download the artifact
+# and drop assets/demo.gif into the README (or web/) to ship it.
+name: Demo GIF
+
+on:
+  workflow_dispatch:
+
+jobs:
+  render:
+    name: Render demo.tape with vhs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Bun (the demo handler runtime)
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Build + install riz onto PATH
+        run: cargo install --path . --locked
+
+      - name: Render the tape
+        uses: charmbracelet/vhs-action@v2
+        with:
+          path: assets/demo.tape
+
+      - name: Upload the rendered demo
+        uses: actions/upload-artifact@v4
+        with:
+          name: riz-demo
+          path: |
+            assets/demo.gif
+            assets/demo.mp4
+          if-no-files-found: error
