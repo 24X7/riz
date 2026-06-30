@@ -4,13 +4,13 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>riz — Write a function. Get an agent-ready API.</title>
-  <meta name="description" content="Self-hosted AWS Lambda runtime in one Rust binary. Every function becomes a typed MCP tool the moment it boots. Five runtimes, no per-request cold start, WASM sandbox with a capability broker, LLM gateway. 900+ tests. Apache-2.0."/>
+  <meta name="description" content="Self-hosted AWS Lambda runtime in one Rust binary. Every function becomes a typed MCP tool the moment it boots. Six runtimes, no per-request cold start, WASM sandbox with a capability broker, LLM gateway. 900+ tests. Apache-2.0."/>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%230A0A0B'/><rect x='28' y='20' width='44' height='60' fill='%23CFFF04'/></svg>"/>
   <link rel="apple-touch-icon" href="apple-touch-icon.png"/>
   <meta property="og:type" content="website"/>
   <meta property="og:site_name" content="riz"/>
   <meta property="og:title" content="riz — Write a function. Get an agent-ready API."/>
-  <meta property="og:description" content="Self-hosted AWS Lambda runtime in one Rust binary. Every function becomes a typed MCP tool the moment it boots. Five runtimes, no per-request cold start, WASM sandbox with a capability broker, LLM gateway. 900+ tests. Apache-2.0."/>
+  <meta property="og:description" content="Self-hosted AWS Lambda runtime in one Rust binary. Every function becomes a typed MCP tool the moment it boots. Six runtimes, no per-request cold start, WASM sandbox with a capability broker, LLM gateway. 900+ tests. Apache-2.0."/>
   <meta name="twitter:card" content="summary_large_image"/>
   <meta property="og:image" content="https://riz.dev/og.png"/>
   <meta property="og:image:width" content="1200"/>
@@ -24,12 +24,13 @@
   <link rel="stylesheet" href="site.css"/>
   <!-- Turbo Drive: same-origin .html nav without full reloads. Self-hosted; routing/extensions unchanged. -->
   <script src="turbo.min.js"></script>
+  <script defer src="nav.js"></script>
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": "riz",
-    "description": "Self-hosted AWS Lambda runtime in one Rust binary. Write a plain AWS-Lambda-shaped handler — no web framework to pick — and the runtime makes it production-grade: always-on safety profile, supervised crash-respawn, graceful in-flight drain, real percentile observability, and warm pre-spawned pools (no per-request cold start). Every function becomes a typed MCP tool an agent can call the moment it boots. Five runtimes: Bun, Node.js, Python, Rust, and capability-sandboxed WASM, with a resource broker and fail-closed WASM guards. OpenAI-compatible LLM gateway built in.",
+    "description": "Self-hosted AWS Lambda runtime in one Rust binary. Write a plain AWS-Lambda-shaped handler — no web framework to pick — and the runtime makes it production-grade: always-on safety profile, supervised crash-respawn, graceful in-flight drain, real percentile observability, and warm pre-spawned pools (no per-request cold start). Every function becomes a typed MCP tool an agent can call the moment it boots. Six runtimes: Bun, Node.js, Python, Rust, Go, and capability-sandboxed WASM, with a resource broker and fail-closed WASM guards. OpenAI-compatible LLM gateway built in.",
     "url": "https://riz.dev",
     "image": "https://riz.dev/og.png",
     "sameAs": ["https://github.com/24X7/riz"],
@@ -47,9 +48,9 @@
       "MCP Streamable HTTP with SSE response frames, sessions, and notifications/progress during long tool calls",
       "Exact AWS API Gateway v2 HTTP + WebSocket payloads — handlers move between AWS and riz unchanged",
       "Warm pre-spawned process pool per function — no per-request cold start",
-      "Five runtimes: Bun, Node.js, Python, Rust, and capability-sandboxed WASI/WASM — cross-runtime parity tested",
+      "Six runtimes: Bun, Node.js, Python, Rust, Go, and capability-sandboxed WASI/WASM — cross-runtime parity tested",
       "Resource broker: sandboxed WASM queries Postgres (Neon/Supabase/any PG) via capability grants — no sockets, no DSNs in guest memory",
-      "WASM guards (guard_in/guard_out): one .wasm policy validates, scrubs, or redacts across all five runtimes, fail-closed",
+      "WASM guards (guard_in/guard_out): one .wasm policy validates, scrubs, or redacts across all six runtimes, fail-closed",
       "OpenAI-compatible LLM gateway with provider routing, SSE streaming, embeddings, and bearer-gated budget caps that fail closed",
       "Always-on per-child safety profile: RLIMIT_CORE=0, NOFILE=4096, FSIZE=100MiB, NPROC=256, PR_SET_PDEATHSIG=SIGKILL, NO_NEW_PRIVS",
       "Supervised crash-respawn with a liveness watcher and a graceful 30s in-flight drain",
@@ -163,7 +164,7 @@
         <ul class="facts">
           <li>Warm pre-spawned pools — no per-request cold start</li>
           <li>Real Lambda context: <code>getRemainingTimeInMillis</code>, ARNs</li>
-          <li>Five runtimes, parity-tested on every HTTP capability</li>
+          <li>Six runtimes, parity-tested on every HTTP capability</li>
         </ul>
         <div class="cap-foot">
           <div class="proof"><b>✓</b> proof: wasm_echo_passes_path_and_query</div>
@@ -189,7 +190,7 @@
       <a class="cap" href="sandbox.html#guards">
         <div class="cap-glyph">[grd]</div>
         <h3>One guard, every runtime</h3>
-        <p class="claim">A <code style="font-family:var(--mono);font-size:.85em">.wasm</code> policy screens every request and response — the same module wraps Bun, Node, Python, Rust, and WASM handlers.</p>
+        <p class="claim">A <code style="font-family:var(--mono);font-size:.85em">.wasm</code> policy screens every request and response — the same module wraps Bun, Node, Python, Rust, Go, and WASM handlers.</p>
         <ul class="facts">
           <li><code>guard_in</code>: allow, scrub, or deny before the handler</li>
           <li><code>guard_out</code>: redact PII before bytes leave</li>

@@ -24,6 +24,7 @@
   <link rel="stylesheet" href="site.css"/>
   <!-- Turbo Drive: same-origin .html nav without full reloads. Self-hosted; routing/extensions unchanged. -->
   <script src="turbo.min.js"></script>
+  <script defer src="nav.js"></script>
 </head>
 <body>
 <div class="gridbg"></div>
@@ -177,7 +178,7 @@ rate_per_sec = <span class="n">50</span></pre>
         </p>
         <p class="lead" style="margin-top:1rem">
           The property nobody else has: <b>the same guard module wraps Bun, Node.js, Python,
-          Rust, and WASM handlers identically</b> — write your policy once, in any language that
+          Rust, Go, and WASM handlers identically</b> — write your policy once, in any language that
           compiles to WASM, and every runtime obeys it. And it <b>fails closed</b>:
           a policy that can't run never silently allows traffic.
         </p>
