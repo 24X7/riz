@@ -204,9 +204,7 @@ fn compare_contrasts_lambda_and_frameworks() {
     // riz scales by running as a container on a platform that autoscales it —
     // the compare page must explain that scale story (not imply it can't scale).
     assert!(
-        html.contains("Cloud Run")
-            && html.contains("Fargate")
-            && html.contains("Container Apps"),
+        html.contains("Cloud Run") && html.contains("Fargate") && html.contains("Container Apps"),
         "compare page must show how riz scales on container platforms \
          (Cloud Run / ECS+Fargate / Azure Container Apps)"
     );
