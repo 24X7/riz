@@ -79,13 +79,17 @@ against AWS Lambda and web frameworks.
 
 ## How it scales
 
-riz is one static binary, so you scale it the way you scale any container — by
-running more of it. Wrap it in a container and let your platform autoscale it:
-**Google Cloud Run** (per-instance concurrency up to 1000 + scale-to-zero), **AWS
-ECS + Fargate** (Application Auto Scaling behind an ALB), or **Azure Container
-Apps** (KEDA on HTTP concurrency / events). Each instance serves many concurrent
-requests from its warm pools — so you add warm containers instead of paying a
-cold start on every call. Details on
+riz handlers are HTTP API services with no per-request cold start, so you run riz
+**always-on**: wrap the binary in a container, deploy it on a managed HTTP
+container service, keep a **warm floor** (min one instance), and let the platform
+autoscale *up* on load — **Google Cloud Run** (`min-instances ≥ 1`; up to 1000
+concurrent/instance), **AWS App Runner** (HTTP-API service that keeps a warm
+provisioned floor — never scales to 0), or **Azure Container Apps**
+(`minReplicas ≥ 1`, KEDA on HTTP concurrency). Each instance serves many
+concurrent requests from its warm pools, so even the first request after a spike
+hits a warm instance — never a container cold start. (Scale-to-zero is available
+but reintroduces that cold start; keep the floor on the hot path. More control:
+ECS on Fargate, k8s, or a VM behind a load balancer.) Details on
 [riz.dev/compare.html](https://riz.dev/compare.html).
 
 ## What riz is *not*
