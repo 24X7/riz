@@ -743,8 +743,28 @@ pub enum Protocol {
 impl Config {
     pub fn from_file(path: impl AsRef<std::path::Path>) -> anyhow::Result<Self> {
         let path = path.as_ref();
-        let text = std::fs::read_to_string(path)
-            .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", path.display()))?;
+        let text = std::fs::read_to_string(path).map_err(|e| {
+            // A missing config is the #1 "it won't start / I'm stuck" moment —
+            // so don't just surface a bare ENOENT. Point the user at how to get
+            // unstuck (scaffold, --config, --help) instead of a dead end.
+            if e.kind() == std::io::ErrorKind::NotFound {
+                let cwd = std::env::current_dir()
+                    .map(|d| d.display().to_string())
+                    .unwrap_or_else(|_| ".".to_string());
+                anyhow::anyhow!(
+                    "no {} found in {cwd}\n\n\
+                     riz reads ./riz.toml by default (override with --config <path>).\n\n\
+                     Get started:\n  \
+                       riz init typescript-http my-app   scaffold a project, then `cd my-app && riz run`\n  \
+                       riz init --list                   list available templates\n  \
+                       riz --config <path> run           run a riz.toml that lives elsewhere\n\n\
+                     Run `riz --help` for all commands.",
+                    path.display()
+                )
+            } else {
+                anyhow::anyhow!("cannot read {}: {e}", path.display())
+            }
+        })?;
         let config: Config = toml::from_str(&text)
             .map_err(|e| anyhow::anyhow!("invalid config in {}: {e}", path.display()))?;
         Ok(config)
