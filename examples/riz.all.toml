@@ -14,8 +14,10 @@
 #   ANY  /echo-bun              → echo-bun (Bun)
 #   ANY  /echo-node             → echo-node (Node.js)
 #   ANY  /echo-python           → echo-python (Python)
-#   ANY  /echo-rust             → echo-rust (Rust)
+#   ANY  /echo-rust             → echo-rust (Rust, official lambda_runtime via the Lambda Runtime API)
+#   ANY  /echo-go               → echo-go   (Go, official aws-lambda-go via the Lambda Runtime API)
 #   ANY  /echo-wasm             → echo-wasm (WASM / wasm32-wasip1, wasmtime sandbox)
+#   POST /orders                → orders-wasm (WASM real-compute order pricing)
 #   ANY  /protected             → events (Bun) gated by auth-allow-bun authorizer (allows)
 #   ANY  /forbidden             → events (Bun) gated by auth-deny-bun  authorizer (denies)
 #   WS   /chat                  → chat (Bun)
@@ -165,6 +167,20 @@ timeout_ms = 5000
 concurrency = 2
 [[function.echo-rust.routes]]
 path = "/echo-rust"
+method = "ANY"
+
+# ─────────────── Go HTTP ───────────────
+# A STOCK aws-lambda-go (`lambda.Start`) binary — no riz library. The same
+# binary runs unmodified on AWS Lambda and on riz, because riz speaks the AWS
+# Lambda Runtime API. Build: cd examples/lambdas/echo-go && go build -o echo-go .
+
+[function.echo-go]
+runtime = "go"
+handler = "./examples/lambdas/echo-go/echo-go"
+timeout_ms = 5000
+concurrency = 2
+[[function.echo-go.routes]]
+path = "/echo-go"
 method = "ANY"
 
 # ─────────────── WASM (wasm32-wasip1 under wasmtime) ───────────────

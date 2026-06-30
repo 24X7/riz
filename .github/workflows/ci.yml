@@ -47,17 +47,25 @@ jobs:
       # cross-runtime leg) skip when their wasm32-wasip1 artifacts are
       # missing — build them HERE so the claims actually run in CI instead
       # of passing by skip.
-      - name: Build WASM fixtures (broker / guard / echo guests)
+      - name: Build WASM fixtures (broker / guard / echo / orders guests)
         run: |
           cargo build --release --target wasm32-wasip1 --manifest-path tests/fixtures/broker-wasm/Cargo.toml
           cargo build --release --target wasm32-wasip1 --manifest-path tests/fixtures/guard-wasm/Cargo.toml
           cargo build --release --target wasm32-wasip1 --manifest-path examples/lambdas/echo-wasm/Cargo.toml
+          cargo build --release --target wasm32-wasip1 --manifest-path examples/lambdas/orders-wasm/Cargo.toml
 
       # Build the stock aws-lambda-go echo fixture so the Go runtime-parity leg
       # runs in CI (proves an UNMODIFIED official Go binary works via the AWS
       # Lambda Runtime API) instead of passing by skip.
       - name: Build echo-go fixture
         run: (cd examples/lambdas/echo-go && go build -o echo-go .)
+
+      # Build the official-runtime Rust example handlers (release, the paths
+      # examples/riz.all.toml references). This makes the Rust runtime-parity
+      # legs AND the end-to-end smoke harness (tests/e2e_smoke_all.rs) run for
+      # real in CI instead of passing by skip when target/release is empty.
+      - name: Build release example handlers (echo-rust / chat-rust)
+        run: cargo build --release -p echo-rust -p chat-rust
 
       # nextest, never `cargo test` — process-per-test isolation plus the
       # leak signal (a child process outliving its test fails the run).

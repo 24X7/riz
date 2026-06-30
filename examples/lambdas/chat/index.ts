@@ -7,6 +7,9 @@
 // the local @connections management endpoint:
 //   POST http://localhost:3000/_riz/connections/{connectionId}
 //   body: the raw message bytes
+//
+// RIZ_TEST_BASE_URL overrides the @connections base URL for integration tests
+// that bind to ephemeral ports (mirrors chat-python / chat-rust).
 
 export const handler = async (event: any) => {
   const route = event.requestContext.routeKey;
@@ -24,7 +27,8 @@ export const handler = async (event: any) => {
 
   // $default: echo the message back to the sender.
   const incoming = event.body ?? "";
-  await fetch(`http://localhost:3000/_riz/connections/${id}`, {
+  const base = process.env.RIZ_TEST_BASE_URL ?? "http://localhost:3000";
+  await fetch(`${base}/_riz/connections/${id}`, {
     method: "POST",
     body: `echo: ${incoming}`,
   });

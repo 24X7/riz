@@ -141,6 +141,36 @@ There's also a dedicated `tests/scaffold_e2e.rs` that exercises the full scaffol
 cargo nextest run --test scaffold_e2e
 ```
 
+### End-to-end: every example, every runtime
+
+`examples/smoke-all.sh` is the **assertion harness** that boots the real `riz`
+binary against `examples/riz.all.toml` and verifies — with status-code **and**
+response-body assertions — that every example handler works together across all
+six runtimes (Bun, Node, Python, Rust, Go, WASM), plus the WebSocket round-trips,
+REQUEST authorizers, CORS, response cache, the MCP surface, the LLM gateway, and
+`/_riz/health` + `/_riz/metrics`. It prints `✓`/`✗` per check and **exits
+non-zero on any failure**, so a regression in any example or runtime is caught.
+
+It is wired into nextest via `tests/e2e_smoke_all.rs`, so it runs on the same
+`cargo nextest run` / CI path as everything else:
+
+```bash
+# Runs automatically as part of the full suite…
+cargo nextest run
+
+# …or on its own (skips cleanly if the full toolchain isn't present):
+cargo nextest run --test e2e_smoke_all
+
+# Or run the harness directly for the full ✓/✗ report on any port:
+PORT=3939 bash examples/smoke-all.sh
+```
+
+The harness builds the example artifacts it needs (release `echo-rust` /
+`chat-rust`, the `echo-go` binary, and the `echo-wasm` / `orders-wasm` guests),
+so it needs the full toolchain: `bun`, `node`, `python3`, `go`, and the
+`wasm32-wasip1` rust target. "All examples work together" can't be proven
+without them, so a missing toolchain fails loudly rather than passing by skip.
+
 ### Benchmark
 
 The throughput/latency benchmark hammers a release-mode `riz` running a single Bun ping handler with [`wrk`](https://github.com/wg/wrk). Two ways to run it.
