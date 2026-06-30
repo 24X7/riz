@@ -1,0 +1,8 @@
+# Code owners for riz.
+#
+# Combined with branch protection on `main` (require a pull request + require
+# review from Code Owners), this means every change must be approved by the
+# repository owner before it can be merged — nobody but @24X7 can approve a
+# merge into main. The owner can still merge their own PRs (GitHub forbids
+# self-approval, so admin bypass is what prevents an owner lockout).
+*       @24X7

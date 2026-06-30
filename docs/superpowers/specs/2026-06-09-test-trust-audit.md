@@ -21,7 +21,7 @@ These pass unconditionally and prove nothing about the system under test. They a
 
 ### 2. Bare `#[ignore]` without a reason string
 
-`#[ignore]` on its own is not permitted. The required form is `#[ignore = "reason"]`. Without a reason the skip is invisible: reviewers can't tell if it's a known flaky test, a missing runtime dependency, or a forgotten stub. The `= "reason"` form produces readable `nextest --list` output and is already the project norm (see `wave_9_acceptance.rs`, `authorizer_integration.rs`).
+`#[ignore]` on its own is not permitted. The required form is `#[ignore = "reason"]`. Without a reason the skip is invisible: reviewers can't tell if it's a known flaky test, a missing runtime dependency, or a forgotten stub. The `= "reason"` form produces readable `nextest --list` output and is already the project norm (see `authorizer_integration.rs`).
 
 ### 3. Empty test bodies
 
