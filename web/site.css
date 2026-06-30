@@ -234,8 +234,12 @@ h2.sec{
 h2.sec em{font-style:normal;color:var(--acid)}
 .sec-sub{margin-top:1.1rem;max-width:660px;font-size:1.08rem;color:var(--t-mid)}
 
-/* "where to start" use-case grid (home) */
-.usecases{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;margin-top:1.7rem}
+/* "where to start": copy + a compact terminal side-by-side, then the use cases */
+.use-top{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:2.4rem;align-items:start;margin-top:.3rem}
+.use-top .termdemo{margin-top:.45rem}
+.use-copy .sec{margin-top:.2rem}
+@media (max-width:880px){.use-top{grid-template-columns:minmax(0,1fr);gap:1.5rem}}
+.usecases{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;margin-top:1.8rem}
 .uc{
   background:var(--ink-2);border:1px solid var(--line-2);border-radius:13px;
   padding:1.2rem 1.3rem;font-size:.95rem;line-height:1.55;color:var(--t-mid);
@@ -243,12 +247,6 @@ h2.sec em{font-style:normal;color:var(--acid)}
 }
 .uc b{display:block;margin-bottom:.35rem;color:var(--acid);font-weight:700;font-size:1rem}
 .uc em{color:var(--t-max);font-style:normal;font-weight:600}
-.v01{
-  margin-top:1.5rem;max-width:660px;font-size:.92rem;color:var(--t-mid);
-  border-left:2px solid var(--acid);padding-left:.9rem;
-}
-.v01 b{color:var(--t-max)}
-.v01 a{color:var(--acid)}
 
 /* hero terminal demo (animated by web/demo.js; static + readable without JS) */
 .termdemo{
@@ -265,8 +263,8 @@ h2.sec em{font-style:normal;color:var(--acid)}
 .td-dot:nth-child(3){background:#28C840}
 .td-title{margin-left:.5rem;font-family:var(--mono);font-size:.76rem;color:var(--t-mid)}
 .td-screen{
-  margin:0;padding:1.1rem 1.25rem;min-height:31rem;
-  font-family:var(--mono);font-size:.86rem;line-height:1.62;color:var(--t-mid);
+  margin:0;padding:1rem 1.1rem;min-height:17.5rem;
+  font-family:var(--mono);font-size:.8rem;line-height:1.6;color:var(--t-mid);
   white-space:pre-wrap;overflow-wrap:break-word;
 }
 .td-line{min-height:1.42em}
@@ -278,7 +276,7 @@ h2.sec em{font-style:normal;color:var(--acid)}
 .td-agent{color:var(--acid)}
 .td-typing::after{content:'▮';color:var(--acid);animation:blink 1.05s steps(1) infinite}
 @media (max-width:640px){
-  .td-screen{font-size:.74rem;min-height:25rem;padding:.9rem .95rem}
+  .td-screen{font-size:.76rem;min-height:15rem;padding:.85rem .9rem}
   .td-title{font-size:.7rem}
 }
 

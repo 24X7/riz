@@ -124,38 +124,6 @@
   </div>
 </header>
 
-<!-- ════════ HERO TERMINAL DEMO (animated by demo.js; static fallback below) ════════ -->
-<div class="wrap">
-  <div class="termdemo" aria-label="Demo: a plain handler becomes an agent-callable MCP tool in four commands">
-    <div class="td-bar" aria-hidden="true">
-      <span class="td-dot"></span><span class="td-dot"></span><span class="td-dot"></span>
-      <span class="td-title">riz — write a function, get an agent tool</span>
-    </div>
-    <pre class="td-screen" id="td-screen">$ riz init typescript-http orders && cd orders
-  ✓ scaffolded orders/
-
-# api/orders.ts — a plain AWS-Lambda-shaped handler
-export const handler = async (e) => ({
-  statusCode: 200,
-  body: JSON.stringify({ id: e.pathParameters.id, total: 4299 }),
-});
-
-$ riz run
-  ▸ orders ready on :3000  ·  MCP at /_riz/mcp
-
-$ curl localhost:3000/orders/1042
-  {"id":"1042","total":4299}
-
-# point an agent at it — no SDK, no glue
-$ claude mcp add riz --transport http localhost:3000/_riz/mcp
-  ✓ riz · 1 tool (get_order)
-
-# the agent calls your function as a typed tool
-agent ▸ tools/call get_order { "id": "1042" }
-  ← {"id":"1042","total":4299}</pre>
-  </div>
-</div>
-
 <!-- ════════ STAT BAR ════════ -->
 <div class="statbar">
   <div class="statbar-in">
@@ -279,24 +247,44 @@ agent ▸ tools/call get_order { "id": "1042" }
 <section id="use">
   <div class="wrap">
     <div class="sec-kicker">where to start</div>
-    <h2 class="sec">Vibe-code a service.<br/>Ship it <em>production-grade.</em></h2>
-    <p class="sec-sub">
-      Have an LLM write a handler, declare it in <code style="font-family:var(--mono);font-size:.85em">riz.toml</code>, and the
-      runtime makes it production — isolation, supervised respawn, graceful drain, live
-      observability — while the agent layer, a WASM sandbox for the generated code, and the
-      LLM gateway come already wired. You write functions; riz brings the substrate. Reach for
-      it first when one of these is you:
-    </p>
+    <div class="use-top">
+      <div class="use-copy">
+        <h2 class="sec">Vibe-code a service.<br/>Ship it <em>production-grade.</em></h2>
+        <p class="sec-sub">
+          Have an LLM write a handler, declare it in <code style="font-family:var(--mono);font-size:.85em">riz.toml</code>, and
+          the runtime makes it production — isolation, supervised respawn, graceful drain, live
+          observability — while the agent layer, a WASM sandbox for the generated code, and the
+          LLM gateway come already wired. You write functions; riz brings the substrate. Reach for
+          it first when one of these is you:
+        </p>
+      </div>
+      <div class="termdemo" aria-label="Demo: a plain handler becomes an agent-callable MCP tool">
+        <div class="td-bar" aria-hidden="true">
+          <span class="td-dot"></span><span class="td-dot"></span><span class="td-dot"></span>
+          <span class="td-title">function → agent tool</span>
+        </div>
+        <pre class="td-screen" id="td-screen"># orders.ts — a plain handler
+export const handler = (e) => order(e.pathParameters.id)
+
+$ riz run
+  ▸ orders ready · MCP at /_riz/mcp
+
+$ curl :3000/orders/1042
+  {"id":"1042","total":4299}
+
+$ claude mcp add riz …/_riz/mcp
+  ✓ riz · 1 tool: get_order
+
+agent ▸ get_order {"id":"1042"}
+  ← {"id":"1042","total":4299}</pre>
+      </div>
+    </div>
     <div class="usecases">
       <div class="uc"><b>Give agents safe, typed access to real APIs.</b> Declare a function — that <em>is</em> the integration. Claude, Cursor, or your own agents call it as a typed MCP tool: no wrapper service, no SDK glue.</div>
       <div class="uc"><b>Run code an LLM wrote.</b> <code style="font-family:var(--mono);font-size:.85em">runtime = "wasm"</code> executes untrusted code deny-by-default under wasmtime, reaching Postgres only through host-enforced capability grants.</div>
       <div class="uc"><b>Run Lambda-shaped functions without AWS.</b> Locally, in CI, or self-hosted — the same handler moves to real Lambda unchanged, and back.</div>
       <div class="uc"><b>Self-host steady-traffic APIs.</b> No per-request cold start, no per-invocation bill — and you scale it like any container (Cloud Run / Fargate / Azure).</div>
     </div>
-    <p class="v01">
-      <b>v0.1 today —</b> ready for local, CI, internal agent tools, and controlled self-hosted
-      services. Not yet a managed-HA fleet; <a href="compare.html">where Lambda still wins →</a>
-    </p>
   </div>
 </section>
 
