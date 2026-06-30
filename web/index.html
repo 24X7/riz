@@ -25,6 +25,7 @@
   <!-- Turbo Drive: same-origin .html nav without full reloads. Self-hosted; routing/extensions unchanged. -->
   <script src="turbo.min.js"></script>
   <script defer src="nav.js"></script>
+  <script defer src="demo.js"></script>
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -40,7 +41,7 @@
     "softwareVersion": "0.1",
     "license": "https://www.apache.org/licenses/LICENSE-2.0",
     "codeRepository": "https://github.com/24X7/riz",
-    "programmingLanguage": ["TypeScript","JavaScript","Python","Rust","WebAssembly"],
+    "programmingLanguage": ["TypeScript","JavaScript","Python","Rust","Go","WebAssembly"],
     "keywords": ["AWS Lambda","serverless","MCP","Model Context Protocol","agent tools","LLM gateway","WASM","WASI","Rust","self-hosted","runtime"],
     "featureList": [
       "Every function auto-exposed as a typed MCP tool at /_riz/mcp (spec 2025-11-25) — zero SDK, zero glue",
@@ -52,7 +53,7 @@
       "Resource broker: sandboxed WASM queries Postgres (Neon/Supabase/any PG) via capability grants — no sockets, no DSNs in guest memory",
       "WASM guards (guard_in/guard_out): one .wasm policy validates, scrubs, or redacts across all six runtimes, fail-closed",
       "OpenAI-compatible LLM gateway with provider routing, SSE streaming, embeddings, and bearer-gated budget caps that fail closed",
-      "Always-on per-child safety profile: RLIMIT_CORE=0, NOFILE=4096, FSIZE=100MiB, NPROC=256, PR_SET_PDEATHSIG=SIGKILL, NO_NEW_PRIVS",
+      "Always-on per-child safety profile: RLIMIT_CORE=0, NOFILE=4096, FSIZE=100MiB, NPROC=4096, PR_SET_PDEATHSIG=SIGKILL, NO_NEW_PRIVS",
       "Supervised crash-respawn with a liveness watcher and a graceful 30s in-flight drain",
       "S3 hot-swap deploys with health-check and automatic rollback; riz.toml + handler-source hot-reload",
       "Real percentile observability (P50–P99) + Prometheus at /_riz/metrics + OpenTelemetry OTLP export with token-aware GenAI tracing",
@@ -122,6 +123,38 @@
     </p>
   </div>
 </header>
+
+<!-- ════════ HERO TERMINAL DEMO (animated by demo.js; static fallback below) ════════ -->
+<div class="wrap">
+  <div class="termdemo" aria-label="Demo: a plain handler becomes an agent-callable MCP tool in four commands">
+    <div class="td-bar" aria-hidden="true">
+      <span class="td-dot"></span><span class="td-dot"></span><span class="td-dot"></span>
+      <span class="td-title">riz — write a function, get an agent tool</span>
+    </div>
+    <pre class="td-screen" id="td-screen">$ riz init typescript-http orders && cd orders
+  ✓ scaffolded orders/
+
+# api/orders.ts — a plain AWS-Lambda-shaped handler
+export const handler = async (e) => ({
+  statusCode: 200,
+  body: JSON.stringify({ id: e.pathParameters.id, total: 4299 }),
+});
+
+$ riz run
+  ▸ orders ready on :3000  ·  MCP at /_riz/mcp
+
+$ curl localhost:3000/orders/1042
+  {"id":"1042","total":4299}
+
+# point an agent at it — no SDK, no glue
+$ claude mcp add riz --transport http localhost:3000/_riz/mcp
+  ✓ riz · 1 tool (get_order)
+
+# the agent calls your function as a typed tool
+agent ▸ tools/call get_order { "id": "1042" }
+  ← {"id":"1042","total":4299}</pre>
+  </div>
+</div>
 
 <!-- ════════ STAT BAR ════════ -->
 <div class="statbar">

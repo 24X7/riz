@@ -42,7 +42,7 @@ method = "GET"
 
 ## Production primitives the runtime brings for free
 
-- **Always-on child safety profile** — every spawned handler process gets `RLIMIT_CORE=0`, `RLIMIT_NOFILE=4096`, `RLIMIT_FSIZE=100MiB`; on Linux also `PR_SET_PDEATHSIG(SIGKILL)` (kernel kills orphans if the daemon dies), `PR_SET_NO_NEW_PRIVS` (no privilege escalation), `RLIMIT_NPROC=256` (fork-bomb cap). Applied in `pre_exec` after fork, before execve.
+- **Always-on child safety profile** — every spawned handler process gets `RLIMIT_CORE=0`, `RLIMIT_NOFILE=4096`, `RLIMIT_FSIZE=100MiB`; on Linux also `PR_SET_PDEATHSIG(SIGKILL)` (kernel kills orphans if the daemon dies), `PR_SET_NO_NEW_PRIVS` (no privilege escalation), `RLIMIT_NPROC=4096` (fork-bomb cap). Applied in `pre_exec` after fork, before execve.
 - **Opt-in per-function caps** — `memory_mb` → `RLIMIT_AS`, `cpu_time_secs` → `RLIMIT_CPU` (kills runaway loops), `allowed_paths` → Linux Landlock filesystem allowlist (kernel 5.13+).
 - **Supervised lifecycle** — per-function process pool with semaphore-bounded concurrency, liveness watcher, automatic respawn on crash/timeout, two-phase **30-second graceful drain** on SIGTERM/SIGINT.
 - **Hot-reload** — edit `riz.toml` or handler source (`index.ts` / `app.py` / `src/main.rs`), save, the next request hits the new code. Debounced recursive watcher → per-function hot-swap.
