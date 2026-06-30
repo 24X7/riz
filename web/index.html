@@ -25,6 +25,7 @@
   <!-- Turbo Drive: same-origin .html nav without full reloads. Self-hosted; routing/extensions unchanged. -->
   <script src="turbo.min.js"></script>
   <script defer src="nav.js"></script>
+  <script defer src="demo.js"></script>
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -40,7 +41,7 @@
     "softwareVersion": "0.1",
     "license": "https://www.apache.org/licenses/LICENSE-2.0",
     "codeRepository": "https://github.com/24X7/riz",
-    "programmingLanguage": ["TypeScript","JavaScript","Python","Rust","WebAssembly"],
+    "programmingLanguage": ["TypeScript","JavaScript","Python","Rust","Go","WebAssembly"],
     "keywords": ["AWS Lambda","serverless","MCP","Model Context Protocol","agent tools","LLM gateway","WASM","WASI","Rust","self-hosted","runtime"],
     "featureList": [
       "Every function auto-exposed as a typed MCP tool at /_riz/mcp (spec 2025-11-25) — zero SDK, zero glue",
@@ -52,7 +53,7 @@
       "Resource broker: sandboxed WASM queries Postgres (Neon/Supabase/any PG) via capability grants — no sockets, no DSNs in guest memory",
       "WASM guards (guard_in/guard_out): one .wasm policy validates, scrubs, or redacts across all six runtimes, fail-closed",
       "OpenAI-compatible LLM gateway with provider routing, SSE streaming, embeddings, and bearer-gated budget caps that fail closed",
-      "Always-on per-child safety profile: RLIMIT_CORE=0, NOFILE=4096, FSIZE=100MiB, NPROC=256, PR_SET_PDEATHSIG=SIGKILL, NO_NEW_PRIVS",
+      "Always-on per-child safety profile: RLIMIT_CORE=0, NOFILE=4096, FSIZE=100MiB, NPROC=4096, PR_SET_PDEATHSIG=SIGKILL, NO_NEW_PRIVS",
       "Supervised crash-respawn with a liveness watcher and a graceful 30s in-flight drain",
       "S3 hot-swap deploys with health-check and automatic rollback; riz.toml + handler-source hot-reload",
       "Real percentile observability (P50–P99) + Prometheus at /_riz/metrics + OpenTelemetry OTLP export with token-aware GenAI tracing",
@@ -127,7 +128,7 @@
 <div class="statbar">
   <div class="statbar-in">
     <span><b class="acid">900+</b> tests, every claim pinned to one</span>
-    <span><b>5</b> runtimes — bun · node · python · rust · wasm</span>
+    <span><b>6</b> runtimes — bun · node · python · rust · go · wasm</span>
     <span><b>0</b> per-request cold starts</span>
     <span><b>91k</b> req/s · p99 &lt; 1ms <span style="opacity:.6">(bench recipe in repo)</span></span>
     <span><b>1</b> binary you own</span>
@@ -238,6 +239,51 @@
       <span>Every capability sentence on this site is pinned to a passing test —
       the <a href="https://github.com/24X7/riz/blob/main/tests/claims/registry.toml" target="_blank">claims registry</a>
       maps claim → proof and CI fails when copy drifts from code. Marketing that can't lie.</span>
+    </div>
+  </div>
+</section>
+
+<!-- ════════ WHERE TO START — vibe-code + the first use case ════════ -->
+<section id="use">
+  <div class="wrap">
+    <div class="sec-kicker">where to start</div>
+    <div class="use-top">
+      <div class="use-copy">
+        <h2 class="sec">Vibe-code a service.<br/>Ship it <em>production-grade.</em></h2>
+        <p class="sec-sub">
+          Have an LLM write a handler, declare it in <code style="font-family:var(--mono);font-size:.85em">riz.toml</code>, and
+          the runtime makes it production — isolation, supervised respawn, graceful drain, live
+          observability — while the agent layer, a WASM sandbox for the generated code, and the
+          LLM gateway come already wired. You write functions; riz brings the substrate. Reach for
+          it first when one of these is you:
+        </p>
+      </div>
+      <div class="termdemo" aria-label="Demo: a plain handler becomes an agent-callable MCP tool">
+        <div class="td-bar" aria-hidden="true">
+          <span class="td-dot"></span><span class="td-dot"></span><span class="td-dot"></span>
+          <span class="td-title">function → agent tool</span>
+        </div>
+        <pre class="td-screen" id="td-screen"># orders.ts — a plain handler
+export const handler = (e) => order(e.pathParameters.id)
+
+$ riz run
+  ▸ orders ready · MCP at /_riz/mcp
+
+$ curl :3000/orders/1042
+  {"id":"1042","total":4299}
+
+$ claude mcp add riz …/_riz/mcp
+  ✓ riz · 1 tool: get_order
+
+agent ▸ get_order {"id":"1042"}
+  ← {"id":"1042","total":4299}</pre>
+      </div>
+    </div>
+    <div class="usecases">
+      <div class="uc"><b>Give agents safe, typed access to real APIs.</b> Declare a function — that <em>is</em> the integration. Claude, Cursor, or your own agents call it as a typed MCP tool: no wrapper service, no SDK glue.</div>
+      <div class="uc"><b>Run code an LLM wrote.</b> <code style="font-family:var(--mono);font-size:.85em">runtime = "wasm"</code> executes untrusted code deny-by-default under wasmtime, reaching Postgres only through host-enforced capability grants.</div>
+      <div class="uc"><b>Run Lambda-shaped functions without AWS.</b> Locally, in CI, or self-hosted — the same handler moves to real Lambda unchanged, and back.</div>
+      <div class="uc"><b>Self-host steady-traffic APIs.</b> No per-request cold start, no per-invocation bill — and you scale it like any container (Cloud Run / Fargate / Azure).</div>
     </div>
   </div>
 </section>
