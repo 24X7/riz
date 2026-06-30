@@ -146,14 +146,21 @@ timeout_ms = 5000
 concurrency = 2
 # On-box safety caps applied to this handler's child process:
 #   cpu_time_secs → RLIMIT_CPU (SIGXCPU then SIGKILL on runaway loops)
-#   allowed_paths → Linux Landlock filesystem allowlist (no-op off Linux)
 #   memory_mb     → RLIMIT_AS  (mirrors AWS Lambda MemorySize) — available but
 #                   left off here: Bun/Python JITs reserve large virtual address
 #                   space, so a low RLIMIT_AS is platform-sensitive. Opt in per host.
+#   allowed_paths → Linux Landlock filesystem allowlist (a no-op off Linux). It
+#                   is enforced in pre_exec, i.e. BEFORE execve, so for a SCRIPTED
+#                   runtime the allowlist must ALSO include the interpreter and
+#                   its shared libraries (python3 + /usr, /lib*) or the child
+#                   can't exec at all (EACCES). The interpreter path varies per
+#                   host, so it's left off this portable demo; for true
+#                   deny-by-default filesystem isolation see the WASM examples
+#                   (echo-wasm / orders-wasm), where allowed_paths are WASI
+#                   preopens applied inside the wasmtime sandbox.
 # (An always-on profile — RLIMIT_CORE=0, fd/file-size caps, PDEATHSIG,
 #  NO_NEW_PRIVS — applies to every handler regardless of these opt-ins.)
 cpu_time_secs = 10
-allowed_paths = ["./examples/lambdas/echo-python", "/tmp"]
 [[function.echo-python.routes]]
 path = "/echo-python"
 method = "ANY"
