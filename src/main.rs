@@ -34,7 +34,16 @@ use tracing_subscriber::EnvFilter;
 #[command(
     name = "riz",
     version,
-    about = "Self-hosted AWS Lambda runtime — HTTP API v2 + WebSocket, MCP-native"
+    about = "Self-hosted AWS Lambda runtime — HTTP API v2 + WebSocket, MCP-native",
+    after_help = "\
+Getting started:
+  riz init typescript-http my-app   scaffold a project (then: cd my-app && riz run)
+  riz init --list                   list the available templates
+  riz run                           start ./riz.toml in the current directory
+  riz --dev run                     start with the live TUI dashboard
+  riz doctor                        pre-flight check your riz.toml + runtimes
+
+Every function is also an MCP tool at /_riz/mcp.  Docs: https://riz.dev"
 )]
 struct Cli {
     /// Config file. Defaults to ./riz.toml in the current directory.
