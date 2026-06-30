@@ -63,11 +63,7 @@
     function nextLine() {
       if (done()) return;
       if (i >= SEQ.length) {
-        // hold the finished frame, then restart the loop
-        setTimeout(function () {
-          if (!done()) animate(screen);
-        }, 4200);
-        return;
+        return; // type out once, then leave the filled terminal in place
       }
       var l = SEQ[i++];
       var el = lineEl(l.c);
@@ -119,14 +115,17 @@
       return;
     }
 
-    // Only animate while visible — saves cycles when scrolled away.
+    // Start empty and type out when it scrolls into view (it's below the fold,
+    // so the empty state is never on screen) — no filled→clear→retype flash.
     if ("IntersectionObserver" in window) {
-      renderStatic(screen); // a sensible first paint before it scrolls in
+      screen.textContent = "";
       var io = new IntersectionObserver(
-        function (entries) {
+        function (entries, obs) {
           entries.forEach(function (en) {
-            if (en.isIntersecting) animate(screen);
-            else run++; // off-screen → cancel
+            if (en.isIntersecting) {
+              obs.disconnect(); // play exactly once, then leave it filled
+              animate(screen);
+            }
           });
         },
         { threshold: 0.25 }
