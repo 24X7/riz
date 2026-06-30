@@ -29,6 +29,11 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
       - name: cargo fmt
         run: cargo fmt --all -- --check
 
@@ -47,6 +52,12 @@ jobs:
           cargo build --release --target wasm32-wasip1 --manifest-path tests/fixtures/broker-wasm/Cargo.toml
           cargo build --release --target wasm32-wasip1 --manifest-path tests/fixtures/guard-wasm/Cargo.toml
           cargo build --release --target wasm32-wasip1 --manifest-path examples/lambdas/echo-wasm/Cargo.toml
+
+      # Build the stock aws-lambda-go echo fixture so the Go runtime-parity leg
+      # runs in CI (proves an UNMODIFIED official Go binary works via the AWS
+      # Lambda Runtime API) instead of passing by skip.
+      - name: Build echo-go fixture
+        run: (cd examples/lambdas/echo-go && go build -o echo-go .)
 
       # nextest, never `cargo test` — process-per-test isolation plus the
       # leak signal (a child process outliving its test fails the run).

@@ -81,7 +81,10 @@ async fn unresponsive_worker_is_killed_and_respawned() {
 
     let initial_pid = {
         let stats = mgr.pool_stats().await;
-        let badfn = stats.iter().find(|p| p.name == "badfn").expect("pool exists");
+        let badfn = stats
+            .iter()
+            .find(|p| p.name == "badfn")
+            .expect("pool exists");
         assert_eq!(badfn.pids.len(), 1, "concurrency=1 → exactly one process");
         badfn.pids[0]
     };
@@ -100,7 +103,10 @@ async fn unresponsive_worker_is_killed_and_respawned() {
     // The timeout arm kills + respawns before invoke returns (it's awaited).
     let new_pid = {
         let stats = mgr.pool_stats().await;
-        let badfn = stats.iter().find(|p| p.name == "badfn").expect("pool exists");
+        let badfn = stats
+            .iter()
+            .find(|p| p.name == "badfn")
+            .expect("pool exists");
         assert_eq!(badfn.pids.len(), 1, "respawn must keep concurrency=1");
         badfn.pids[0]
     };

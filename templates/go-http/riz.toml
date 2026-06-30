@@ -1,0 +1,12 @@
+# Go HTTP function. Build the binary first, then `riz run`:
+#   go build -o hello .
+#   riz run
+#   curl 'http://localhost:3000/hello?name=alice'
+
+[function.hello]
+runtime = "go"            # exec the native binary; riz serves the AWS Runtime API
+handler = "./hello"       # the compiled binary (go build -o hello .)
+
+[[function.hello.routes]]
+path = "/hello"
+method = "GET"

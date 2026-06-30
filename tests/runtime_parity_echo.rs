@@ -58,6 +58,18 @@ fn echo_rust_available() -> bool {
             .unwrap_or(false)
 }
 
+fn echo_go_binary() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/lambdas/echo-go/echo-go")
+}
+
+fn echo_go_available() -> bool {
+    let bin = echo_go_binary();
+    bin.exists()
+        && std::fs::metadata(&bin)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false)
+}
+
 // ---------- shared server boot ----------
 
 /// Boot a full riz server with the supplied config TOML, return the bound
@@ -299,6 +311,46 @@ method = "GET"
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.expect("json");
     assert_canonical_echo_shape(&body, "echo-rust", "/echo", "GET", TIMEOUT_MS);
+}
+
+#[tokio::test]
+async fn go_echo_emits_canonical_shape() {
+    // A STOCK aws-lambda-go binary (no riz library) running via riz's AWS
+    // Lambda Runtime API.
+    if !echo_go_available() {
+        eprintln!(
+            "SKIP: echo-go binary not built at {}. \
+             Run `(cd examples/lambdas/echo-go && go build -o echo-go .)` first.",
+            echo_go_binary().display()
+        );
+        return;
+    }
+    let handler = echo_go_binary();
+    let config_toml = format!(
+        r#"
+[server]
+port = 0
+host = "127.0.0.1"
+
+[function.echo-go]
+runtime = "go"
+handler = "{handler}"
+timeout_ms = {TIMEOUT_MS}
+concurrency = 1
+
+[[function.echo-go.routes]]
+path = "/echo"
+method = "GET"
+"#,
+        handler = handler.display()
+    );
+    let addr = boot_riz(&config_toml).await;
+    let url = format!("http://{addr}/echo");
+    wait_for_ready(&url).await;
+    let resp = reqwest::get(&url).await.expect("GET");
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.expect("json");
+    assert_canonical_echo_shape(&body, "echo-go", "/echo", "GET", TIMEOUT_MS);
 }
 
 #[tokio::test]

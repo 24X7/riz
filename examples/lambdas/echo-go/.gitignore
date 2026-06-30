@@ -1,0 +1,2 @@
+# Build artifact (built by CI / `go build -o echo-go .`)
+/echo-go

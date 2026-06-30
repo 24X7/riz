@@ -34,6 +34,7 @@ pub const BUILTINS: &[(&str, &str, &str, &str)] = &[
     ("python-http", "templates/python-http", "HTTP", "Python"),
     ("rust-http", "templates/rust-http", "HTTP", "Rust"),
     ("nodejs-http", "templates/nodejs-http", "HTTP", "Node.js"),
+    ("go-http", "templates/go-http", "HTTP", "Go"),
     (
         "typescript-websocket",
         "templates/typescript-websocket",
