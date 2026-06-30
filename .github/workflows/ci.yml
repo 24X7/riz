@@ -87,17 +87,3 @@ jobs:
       # examples/smoke-all.sh + tests/e2e_smoke_all.rs).
       - name: cargo nextest run (e2e smoke — full example fleet, isolated)
         run: cargo nextest run --test e2e_smoke_all
-
-  acceptance-future:
-    name: Future-wave acceptance (informational)
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@nextest
-      - uses: oven-sh/setup-bun@v1
-        with: { bun-version: latest }
-      - name: Run #[ignore]-gated wave acceptance tests
-        run: cargo nextest run --workspace --run-ignored ignored-only
