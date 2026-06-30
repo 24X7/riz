@@ -124,6 +124,21 @@ nav{
 .nav-links a:hover{color:var(--t-max)}
 .nav-links a.on{color:var(--acid)}
 .nav-right{margin-left:auto;display:flex;align-items:center;gap:.9rem}
+/* Mobile hamburger — hidden on desktop, revealed in the ≤640px query below.
+   Injected into every nav by web/nav.js. */
+.nav-toggle{
+  display:none;width:42px;height:42px;padding:0;cursor:pointer;
+  flex-direction:column;align-items:center;justify-content:center;gap:5px;
+  background:transparent;border:1px solid var(--line);border-radius:9px;
+}
+.nav-toggle span{
+  display:block;width:18px;height:2px;border-radius:2px;background:var(--t-mid);
+  transition:transform .18s ease,opacity .18s ease;
+}
+.nav-toggle:hover span{background:var(--t-max)}
+nav.menu-open .nav-toggle span:nth-child(1){transform:translateY(7px) rotate(45deg)}
+nav.menu-open .nav-toggle span:nth-child(2){opacity:0}
+nav.menu-open .nav-toggle span:nth-child(3){transform:translateY(-7px) rotate(-45deg)}
 .agent-chip{
   font-family:var(--mono);font-size:.68rem;font-weight:700;
   color:var(--acid);border:1px solid var(--acid-30);border-radius:3px;
@@ -511,7 +526,22 @@ footer{border-top:1px solid var(--line);margin-top:4rem;background:var(--ink-2)}
 }
 @media (max-width: 640px){
   .caps{grid-template-columns:minmax(0,1fr)}
-  .nav-links{display:none}
+  /* Hamburger nav: the toggle appears, the agent chip folds away to save room
+     (GitHub stays reachable), and the links become a dropdown panel under the
+     bar that nav.js opens via `nav.menu-open`. */
+  .nav-toggle{display:inline-flex}
+  .nav-right .agent-chip{display:none}
+  .nav-links{
+    display:flex;flex-direction:column;gap:0;margin:0;padding:.3rem 0;
+    position:absolute;top:var(--nav-h);left:0;right:0;
+    background:rgba(10,10,11,0.98);backdrop-filter:blur(12px);
+    border-bottom:1px solid var(--line);
+    max-height:0;overflow:hidden;opacity:0;pointer-events:none;
+    transition:max-height .24s ease,opacity .18s ease;
+  }
+  nav.menu-open .nav-links{max-height:75vh;overflow:auto;opacity:1;pointer-events:auto}
+  .nav-links a{padding:.85rem 18px;font-size:.98rem;border-top:1px solid var(--line)}
+  .nav-links a:first-child{border-top:none}
   /* tighter side gutters reclaim ~20px of usable width on phones */
   .wrap,.nav-in,.statbar-in,.doc-shell,.foot-in,.agent-block,.foot-base-in{
     padding-left:18px;padding-right:18px;
