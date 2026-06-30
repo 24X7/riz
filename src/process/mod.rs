@@ -5,8 +5,8 @@ pub mod node;
 pub mod pool;
 pub mod python;
 pub mod runtime;
-pub mod rust;
 pub mod safety;
+pub mod static_binary;
 pub mod wasm;
 
 use crate::config::FunctionConfig;

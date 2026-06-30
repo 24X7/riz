@@ -2,7 +2,7 @@ use crate::config::{FunctionConfig, RuntimeKind};
 use crate::process::bun::BunRuntime;
 use crate::process::node::NodeRuntime;
 use crate::process::python::PythonRuntime;
-use crate::process::rust::RustRuntime;
+use crate::process::static_binary::StaticBinaryRuntime;
 use crate::process::wasm::WasmRuntime;
 use tokio::process::Command;
 
@@ -16,7 +16,8 @@ pub trait LambdaRuntime: Send + Sync + 'static {
 pub struct RuntimeRegistry {
     bun: BunRuntime,
     python: PythonRuntime,
-    rust: RustRuntime,
+    rust: StaticBinaryRuntime,
+    go: StaticBinaryRuntime,
     node: NodeRuntime,
     wasm: WasmRuntime,
 }
@@ -26,7 +27,10 @@ impl RuntimeRegistry {
         Ok(Self {
             bun: BunRuntime::new()?,
             python: PythonRuntime::new()?,
-            rust: RustRuntime::new(),
+            // Rust and Go are both pre-compiled native binaries — same spawner,
+            // different name. See `static_binary::StaticBinaryRuntime`.
+            rust: StaticBinaryRuntime::new("rust"),
+            go: StaticBinaryRuntime::new("go"),
             node: NodeRuntime::new()?,
             wasm: WasmRuntime::new(),
         })
@@ -37,6 +41,7 @@ impl RuntimeRegistry {
             RuntimeKind::Bun => &self.bun,
             RuntimeKind::Python => &self.python,
             RuntimeKind::Rust => &self.rust,
+            RuntimeKind::Go => &self.go,
             RuntimeKind::Node => &self.node,
             RuntimeKind::Wasm => &self.wasm,
         }

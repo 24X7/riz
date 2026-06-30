@@ -598,7 +598,10 @@ async fn run_doctor(config_path: &str) -> anyhow::Result<()> {
             config::RuntimeKind::Bun => needs_bun = true,
             config::RuntimeKind::Python => needs_python = true,
             config::RuntimeKind::Node => needs_node = true,
-            config::RuntimeKind::Rust => {
+            // Rust and Go handlers are pre-compiled native binaries — there's
+            // no run-time toolchain to check, just that the binary exists
+            // (verified in the per-function handler-file pass below).
+            config::RuntimeKind::Rust | config::RuntimeKind::Go => {
                 needs_rust_bin.push((name.clone(), fc.handler.clone()));
             }
             // WASM needs no external toolchain at run time — wasmtime is
@@ -687,7 +690,7 @@ async fn run_doctor(config_path: &str) -> anyhow::Result<()> {
                     record(Finding::Fail);
                 }
             }
-            config::RuntimeKind::Rust => {
+            config::RuntimeKind::Rust | config::RuntimeKind::Go => {
                 if fc.handler.exists() {
                     report(Finding::Pass, &label, &handler_str);
                     record(Finding::Pass);
@@ -698,7 +701,11 @@ async fn run_doctor(config_path: &str) -> anyhow::Result<()> {
                         &format!("binary not built: {handler_str}"),
                     );
                     record(Finding::Warn);
-                    println!("       Hint: cargo build --release");
+                    let hint = match fc.runtime {
+                        config::RuntimeKind::Go => "go build -o <handler> .",
+                        _ => "cargo build --release",
+                    };
+                    println!("       Hint: {hint}");
                 }
             }
             config::RuntimeKind::Wasm => {
