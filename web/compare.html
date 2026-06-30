@@ -4,13 +4,13 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>riz — vs AWS Lambda, vs web frameworks. Honestly.</title>
-  <meta name="description" content="Where riz sits against AWS Lambda and against Express/FastAPI/Axum — including the honest rows where the other thing wins. The Lambda programming model self-hosted, scaled like a container on Cloud Run / ECS+Fargate / Azure Container Apps, with the agent layer built in."/>
+  <meta name="description" content="Where riz sits against AWS Lambda and against Express/FastAPI/Axum — including the honest rows where the other thing wins. The Lambda programming model self-hosted, run always-on as a container on Cloud Run / App Runner / Azure Container Apps (no cold start), with the agent layer built in."/>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%230A0A0B'/><rect x='28' y='20' width='44' height='60' fill='%23CFFF04'/></svg>"/>
   <link rel="apple-touch-icon" href="apple-touch-icon.png"/>
   <meta property="og:type" content="website"/>
   <meta property="og:site_name" content="riz"/>
   <meta property="og:title" content="riz — vs AWS Lambda, vs web frameworks. Honestly."/>
-  <meta property="og:description" content="Where riz sits against AWS Lambda and against Express/FastAPI/Axum — including the honest rows where the other thing wins. The Lambda programming model self-hosted, scaled like a container on Cloud Run / ECS+Fargate / Azure Container Apps, with the agent layer built in."/>
+  <meta property="og:description" content="Where riz sits against AWS Lambda and against Express/FastAPI/Axum — including the honest rows where the other thing wins. The Lambda programming model self-hosted, run always-on as a container on Cloud Run / App Runner / Azure Container Apps (no cold start), with the agent layer built in."/>
   <meta name="twitter:card" content="summary_large_image"/>
   <meta property="og:image" content="https://riz.dev/og.png"/>
   <meta property="og:image:width" content="1200"/>
@@ -127,44 +127,45 @@
 <section style="padding-top:1.5rem">
   <div class="wrap">
     <div class="sec-kicker">scaling</div>
-    <h2 class="sec">Scale it like a container,<br/><em>not a function.</em></h2>
+    <h2 class="sec">Run it always-on.<br/><em>No cold start, ever.</em></h2>
     <p class="sec-sub">
-      riz is one static binary. Put it in a container and the horizontal scale,
-      managed HA, and scale-to-zero come from the platform you already deploy
-      containers on — while each instance serves <b>many concurrent requests</b>
-      from its warm pools (Cloud-Run-style per-instance concurrency), not one
-      request per environment like Lambda. You scale by adding warm containers,
-      never by paying a cold start on every call.
+      riz handlers are HTTP API services with no per-request cold start — so you run riz
+      <b>always-on</b>. Wrap the binary in a container, deploy it on a managed HTTP container
+      service, keep a <b>warm floor</b> (a minimum of one instance), and let the platform
+      autoscale <em>up</em> on load. Each instance serves many concurrent requests from its warm
+      pools — not one request per environment like Lambda — so even the first request after a
+      spike lands on a warm instance.
     </p>
     <div class="cmp">
       <table>
         <thead>
-          <tr><th>Container platform</th><th class="riz-col">How it autoscales riz</th><th>Scale-to-zero</th></tr>
+          <tr><th>Managed HTTP service</th><th class="riz-col">How it runs riz</th><th>Always-on warm floor</th></tr>
         </thead>
         <tbody>
           <tr>
             <th>Google Cloud Run</th>
-            <td>Autoscales instances on request load behind a managed global LB; one instance takes <span class="y">up to 1000 concurrent requests</span> — you set per-instance concurrency + min/max instances.</td>
-            <td><span class="y">Yes</span> — idle → 0; <code>min-instances</code> keeps a warm floor</td>
+            <td>Autoscales instances on request load behind a managed global LB; one instance takes <span class="y">up to 1000 concurrent requests</span>.</td>
+            <td><code>min-instances ≥ 1</code> keeps warm instances ready</td>
           </tr>
           <tr>
-            <th>AWS ECS + Fargate</th>
-            <td>Run the container as a Fargate service behind an ALB; <span class="y">Application Auto Scaling</span> adds tasks on CPU / request target-tracking. Serverless containers — no EC2 to manage.</td>
-            <td class="dim">Min tasks (0 via scheduled / target scaling)</td>
+            <th>AWS App Runner</th>
+            <td>Purpose-built for HTTP APIs — managed HTTPS + load balancing; autoscales on per-instance <span class="y">concurrency</span>.</td>
+            <td><span class="y">Inherent</span> — a min provisioned-instance floor; never scales to 0</td>
           </tr>
           <tr>
             <th>Azure Container Apps</th>
-            <td><span class="y">KEDA</span> autoscales replicas on concurrent HTTP requests — or queue depth, CPU, and event sources.</td>
-            <td><span class="y">Yes</span> — idle HTTP → 0 replicas</td>
+            <td><span class="y">KEDA</span> autoscales replicas on concurrent HTTP requests.</td>
+            <td><code>minReplicas ≥ 1</code> keeps a warm floor</td>
           </tr>
         </tbody>
       </table>
     </div>
     <p class="sec-sub" style="margin-top:1.1rem">
-      Self-managed Kubernetes, Nomad, or a plain VM behind a load balancer work
-      the same way — riz is just a process. The runtime stays single-node and
-      predictable; the fleet is your platform's job, exactly as it already is for
-      every other container you run.
+      Scale-to-zero is offered by all three — but it reintroduces a container cold start on the
+      first request after idle, the exact thing riz exists to avoid. Keep the min-instance floor
+      on the hot path; save scale-to-zero for dev/preview. Want more control? <b>ECS on Fargate</b>,
+      self-managed Kubernetes, Nomad, or a plain VM behind a load balancer all work the same — riz
+      is just a process; the fleet is your platform's job.
     </p>
   </div>
 </section>
