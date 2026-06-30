@@ -1,18 +1,15 @@
-//! BUG-01 regression: pipe desync on non-JSON lambda output.
+//! BUG-01 regression (Runtime-API era): an unresponsive worker must be
+//! killed + respawned, never left to wedge the pool.
 //!
-//! Trigger condition: a handler emits a stdout line that is not valid JSON.
-//! Before the fix (`src/process/mod.rs` parse-failure arm), the bad-response
-//! path returned an error but left the process alive with a desynced pipe —
-//! subsequent requests on the same PID would read stale bytes (silent
-//! cross-request data leak, P0).
+//! Original BUG-01 was a stdout pipe-desync on non-JSON output. With compiled
+//! runtimes now speaking the AWS Lambda Runtime API (not stdin/stdout), the
+//! analogous hazard is a worker that connects but never answers an invocation
+//! (a hung or broken official runtime client). `invoke()` must time out and
+//! `handle_process_failure()` must kill + respawn the worker so the next
+//! request gets a fresh, healthy process — not a stuck PID.
 //!
-//! The fix calls `handle_process_failure()` which kills the process group and
-//! respawns. This regression test proves the kill+respawn happened by spawning
-//! a real subprocess (a tiny shell script that emits garbage to stdout) and
-//! verifying the pool's PID changed after `invoke()` returned InvalidResponse.
-//!
-//! Would FAIL if someone removed `handle_process_failure` from the parse arm
-//! (the PID would stay the same, exposing the desync regression).
+//! Would FAIL if the runtime-api timeout arm stopped killing + respawning (the
+//! PID would stay the same, exposing a wedged worker).
 
 use riz::config::{FunctionConfig, Protocol, RouteSpec, RuntimeKind};
 use riz::process::runtime::RuntimeRegistry;
@@ -23,18 +20,18 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-/// Write a shell script that reads one stdin line (the riz envelope) and
-/// echoes a non-JSON string to stdout, then exits. The TempDir guard must be
-/// kept alive for the duration of the test — when it drops, the script is
-/// deleted.
-fn make_bad_response_script() -> (tempfile::TempDir, PathBuf) {
+/// A "handler" that never speaks the Runtime API — it just sleeps, modelling a
+/// hung/broken official runtime client. riz must time out and respawn it.
+fn make_unresponsive_script() -> (tempfile::TempDir, PathBuf) {
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
 
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("bad-response.sh");
+    let path = dir.path().join("hung-handler.sh");
     let mut f = std::fs::File::create(&path).expect("create");
-    writeln!(f, "#!/bin/sh\nread line\necho 'not json'\n").expect("write");
+    // Stay alive (so it's not a crash-respawn storm) but never poll the
+    // Runtime API → every invocation times out.
+    writeln!(f, "#!/bin/sh\nsleep 60\n").expect("write");
     drop(f);
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
     (dir, path)
@@ -42,16 +39,11 @@ fn make_bad_response_script() -> (tempfile::TempDir, PathBuf) {
 
 fn make_function_config(handler: PathBuf) -> FunctionConfig {
     FunctionConfig {
-        runtime: RuntimeKind::Rust, // Rust runtime execs the handler binary directly
+        runtime: RuntimeKind::Rust, // compiled runtime → AWS Runtime API transport
         protocol: Protocol::Http,
         handler,
-        // Generous timeout: under heavy parallel test load the handler process
-        // can be CPU-starved. If it doesn't emit its (malformed) line before
-        // this deadline, invoke() returns Timeout instead of the InvalidResponse
-        // this test asserts on. 15s gives starvation plenty of headroom while
-        // still bounding a truly-hung process.
-        timeout_ms: 15000,
-        integration_timeout_ms: 15000,
+        timeout_ms: 2000,
+        integration_timeout_ms: 2000,
         stage_variables: Default::default(),
         cache_ttl_secs: None,
         concurrency: 1,
@@ -72,8 +64,8 @@ fn make_function_config(handler: PathBuf) -> FunctionConfig {
 }
 
 #[tokio::test]
-async fn parse_failure_kills_and_respawns_the_process() {
-    let (_dir_guard, script) = make_bad_response_script();
+async fn unresponsive_worker_is_killed_and_respawned() {
+    let (_dir_guard, script) = make_unresponsive_script();
     let cfg = make_function_config(script);
 
     let registry = Arc::new(RuntimeRegistry::new().expect("registry init"));
@@ -87,50 +79,36 @@ async fn parse_failure_kills_and_respawns_the_process() {
         .await
         .expect("spawn_all");
 
-    // Capture initial PID.
     let initial_pid = {
         let stats = mgr.pool_stats().await;
-        let badfn = stats
-            .iter()
-            .find(|p| p.name == "badfn")
-            .expect("pool exists");
+        let badfn = stats.iter().find(|p| p.name == "badfn").expect("pool exists");
         assert_eq!(badfn.pids.len(), 1, "concurrency=1 → exactly one process");
         badfn.pids[0]
     };
     assert!(initial_pid > 0, "spawned process must have a real PID");
 
-    // Invoke — script emits "not json", parse fails inside `invoke`.
+    // Invoke — the worker never answers the Runtime API, so invoke times out.
     let event = make_event("GET", "/ping");
-    let result = mgr.invoke("badfn", &event, 15000).await;
-
+    let result = mgr.invoke("badfn", &event, 2000).await;
     match result {
-        Err(PoolError::InvalidResponse(name, _)) => {
+        Err(PoolError::Timeout(name, _)) => {
             assert_eq!(name, "badfn", "error must carry the function name");
         }
-        other => panic!("expected InvalidResponse, got {other:?}"),
+        other => panic!("expected Timeout, got {other:?}"),
     }
 
-    // The handle_process_failure call inside the parse-failure arm runs to
-    // completion before invoke returns (it's awaited). So by the time we
-    // observe pool_stats(), the new PID should already be in place.
+    // The timeout arm kills + respawns before invoke returns (it's awaited).
     let new_pid = {
         let stats = mgr.pool_stats().await;
-        let badfn = stats
-            .iter()
-            .find(|p| p.name == "badfn")
-            .expect("pool exists");
-        assert_eq!(
-            badfn.pids.len(),
-            1,
-            "respawn must keep concurrency=1 invariant"
-        );
+        let badfn = stats.iter().find(|p| p.name == "badfn").expect("pool exists");
+        assert_eq!(badfn.pids.len(), 1, "respawn must keep concurrency=1");
         badfn.pids[0]
     };
 
     assert_ne!(
         initial_pid, new_pid,
-        "BUG-01 regression: parse-failure arm must kill+respawn the process. \
-         Same PID ({initial_pid}) twice indicates the pipe is desynced."
+        "BUG-01 regression: the timeout arm must kill+respawn the worker. \
+         Same PID ({initial_pid}) twice indicates a wedged worker."
     );
     assert!(new_pid > 0, "respawned PID must be > 0");
 }

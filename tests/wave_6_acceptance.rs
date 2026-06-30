@@ -36,12 +36,21 @@ method = "GET"
 }
 
 #[test]
-fn riz_rust_runtime_crate_provides_run_helper() {
-    assert!(
-        std::path::Path::new("crates/riz-rust-runtime/src/lib.rs").exists()
-            || std::path::Path::new("crates/riz-rust-runtime/Cargo.toml").exists(),
-        "missing crates/riz-rust-runtime — Wave 6 runtime crate not shipped"
-    );
+fn rust_examples_use_the_official_runtime_not_a_riz_helper() {
+    // riz speaks the AWS Lambda Runtime API, so a Rust handler uses the OFFICIAL
+    // `lambda_runtime` crate with no riz library — the same binary runs on AWS.
+    for ex in ["echo-rust", "chat-rust"] {
+        let cargo = std::fs::read_to_string(format!("examples/lambdas/{ex}/Cargo.toml"))
+            .unwrap_or_else(|e| panic!("read {ex} Cargo.toml: {e}"));
+        assert!(
+            cargo.contains("lambda_runtime"),
+            "{ex} must use the official lambda_runtime crate"
+        );
+        assert!(
+            !cargo.contains("riz-rust-runtime") && !cargo.contains("riz_rust_runtime"),
+            "{ex} must NOT depend on a riz helper crate — the goal is no code changes"
+        );
+    }
 }
 
 #[test]

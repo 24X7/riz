@@ -1,5 +1,6 @@
 use crate::config::FunctionConfig;
-use crate::process::runtime::RuntimeRegistry;
+use crate::process::runtime::{RuntimeRegistry, WorkerTransport};
+use crate::process::runtime_api::WorkerEndpoint;
 use crate::state::{LogEntry, RizState};
 use anyhow::Context;
 use std::sync::atomic::{AtomicBool, AtomicU32};
@@ -13,11 +14,24 @@ pub(super) const CRASH_THRESHOLD: u32 = 5;
 
 pub(super) struct ProcessHandle {
     pub(super) pid: u32,
-    pub(super) stdin: ChildStdin,
-    pub(super) stdout: BufReader<ChildStdout>,
     #[allow(dead_code)]
     pub(super) spawned_at: Instant,
     pub(super) _child: Child,
+    pub(super) transport: HandleTransport,
+}
+
+/// How riz exchanges events/responses with this worker child.
+pub(super) enum HandleTransport {
+    /// bun/node/python: riz writes a line-JSON envelope to stdin and reads the
+    /// response line from stdout.
+    Stdio {
+        stdin: ChildStdin,
+        stdout: BufReader<ChildStdout>,
+    },
+    /// rust/go: the child is an unmodified official AWS runtime client polling
+    /// its per-worker AWS Runtime API endpoint. riz hands invocations to (and
+    /// receives responses from) the endpoint.
+    RuntimeApi { endpoint: WorkerEndpoint },
 }
 
 /// One pool per FUNCTION (not per route). All routes belonging to a
@@ -48,7 +62,13 @@ pub(super) async fn spawn_with_cold_start_record(
     pool: &Arc<RoutePool>,
     function_name: &str,
 ) -> anyhow::Result<ProcessHandle> {
-    let handle = spawn_process(&pool.config, &pool.runtime_registry, &pool.log_tx).await?;
+    let handle = spawn_process(
+        &pool.config,
+        function_name,
+        &pool.runtime_registry,
+        &pool.log_tx,
+    )
+    .await?;
     pool.riz_state.note_cold_start(function_name).await;
     Ok(handle)
 }
@@ -56,15 +76,48 @@ pub(super) async fn spawn_with_cold_start_record(
 #[tracing::instrument(skip(cfg, registry, log_tx), fields(handler = ?cfg.handler, runtime = ?cfg.runtime))]
 pub(super) async fn spawn_process(
     cfg: &FunctionConfig,
+    function_name: &str,
     registry: &RuntimeRegistry,
     log_tx: &mpsc::Sender<LogEntry>,
 ) -> anyhow::Result<ProcessHandle> {
     let runtime = registry.get(&cfg.runtime);
-    tracing::debug!(runtime = runtime.name(), handler = ?cfg.handler, "spawning lambda process");
+    let transport_kind = runtime.transport();
+    tracing::debug!(runtime = runtime.name(), handler = ?cfg.handler, ?transport_kind, "spawning lambda process");
     let mut cmd = runtime.spawn_command(cfg);
-    cmd.stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+
+    // RuntimeApi (rust/go): provision a per-worker AWS Lambda Runtime API
+    // endpoint and expose it to the unmodified official runtime client via the
+    // standard AWS env vars. The event is delivered over HTTP, not stdin.
+    let api_endpoint = if transport_kind == WorkerTransport::RuntimeApi {
+        let ep = WorkerEndpoint::start().await?;
+        cmd.env("AWS_LAMBDA_RUNTIME_API", ep.addr.to_string())
+            .env("AWS_LAMBDA_FUNCTION_NAME", function_name)
+            .env("AWS_LAMBDA_FUNCTION_VERSION", "$LATEST")
+            .env(
+                "AWS_LAMBDA_FUNCTION_MEMORY_SIZE",
+                cfg.memory_mb
+                    .map(|m| m.to_string())
+                    .unwrap_or_else(|| "128".into()),
+            )
+            .env("_HANDLER", cfg.handler.to_string_lossy().to_string());
+        Some(ep)
+    } else {
+        None
+    };
+
+    // stdio: stdin+stdout are the event channel. runtime-api: stdin is unused
+    // (events arrive over HTTP) and stdout is captured as logs.
+    match transport_kind {
+        WorkerTransport::Stdio => {
+            cmd.stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped());
+        }
+        WorkerTransport::RuntimeApi => {
+            cmd.stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped());
+        }
+    }
+    cmd.stderr(std::process::Stdio::piped())
         // Safety net: if a ProcessHandle is dropped without going through the
         // explicit drain/kill path (e.g. a pool torn down at shutdown, a handle
         // dropped on respawn, or an integration test ending while a slow handler
@@ -105,41 +158,63 @@ pub(super) async fn spawn_process(
         .with_context(|| format!("failed to spawn {:?}", cfg.handler))?;
 
     let pid = child.id().unwrap_or(0);
-    let stdin = child.stdin.take().expect("stdin piped");
-    let stdout = BufReader::new(child.stdout.take().expect("stdout piped"));
+
+    // Tag logs with the handler filename — best signal we have at this layer.
+    let tag = cfg
+        .handler
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "lambda".into());
 
     if let Some(stderr) = child.stderr.take() {
-        // Tag stderr logs with the handler filename — best signal we have
-        // about which function it came from at this layer.
-        let tag = cfg
-            .handler
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "lambda".into());
-        let tx = log_tx.clone();
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                if line.trim().is_empty() {
-                    continue;
-                }
-                let _ = tx.try_send(LogEntry {
-                    timestamp: std::time::SystemTime::now(),
-                    level: "WARN".into(),
-                    message: format!("stderr: {line}"),
-                    route_key: Some(tag.clone()),
-                });
-            }
-        });
+        tail_to_logs(stderr, tag.clone(), "stderr", log_tx.clone());
     }
+
+    let transport = match transport_kind {
+        WorkerTransport::Stdio => {
+            let stdin = child.stdin.take().expect("stdin piped");
+            let stdout = BufReader::new(child.stdout.take().expect("stdout piped"));
+            HandleTransport::Stdio { stdin, stdout }
+        }
+        WorkerTransport::RuntimeApi => {
+            // The runtime-api child uses HTTP for events; its stdout is just
+            // handler logs (e.g. println!/fmt.Println) — tail it like stderr.
+            if let Some(stdout) = child.stdout.take() {
+                tail_to_logs(stdout, tag, "stdout", log_tx.clone());
+            }
+            HandleTransport::RuntimeApi {
+                endpoint: api_endpoint.expect("runtime-api endpoint provisioned above"),
+            }
+        }
+    };
 
     Ok(ProcessHandle {
         pid,
-        stdin,
-        stdout,
         spawned_at: Instant::now(),
         _child: child,
+        transport,
     })
+}
+
+/// Tail a child stream (stdout/stderr) into the log channel, line by line.
+fn tail_to_logs<R>(stream: R, tag: String, which: &'static str, tx: mpsc::Sender<LogEntry>)
+where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(stream).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let _ = tx.try_send(LogEntry {
+                timestamp: std::time::SystemTime::now(),
+                level: "WARN".into(),
+                message: format!("{which}: {line}"),
+                route_key: Some(tag.clone()),
+            });
+        }
+    });
 }
 
 #[cfg(unix)]

@@ -1,15 +1,16 @@
 use crate::config::FunctionConfig;
-use crate::process::runtime::LambdaRuntime;
+use crate::process::runtime::{LambdaRuntime, WorkerTransport};
 use tokio::process::Command;
 
-/// Runtime adapter for **pre-compiled native binaries** that speak the riz
-/// line-JSON stdin/stdout protocol. Used by both `runtime = "rust"` and
-/// `runtime = "go"`: there is no intermediate adapter script — the user's
-/// binary IS the adapter (the `riz-rust-runtime` / `riz-go-runtime` helper
-/// crates implement the envelope loop). Riz simply `exec`s the binary path
-/// from `handler` with stdin/stdout piped, exactly the same for every
-/// language. The only per-language difference is the `name` reported to logs
-/// and `/_riz/health`.
+/// Runtime adapter for **pre-compiled native binaries** that are UNMODIFIED
+/// official AWS Lambda runtime clients (Go `aws-lambda-go`, Rust
+/// `lambda_runtime`, any `provided.al2023`). Used by `runtime = "rust"` and
+/// `runtime = "go"`: there is no riz library and no code change — the binary
+/// speaks the real **AWS Lambda Runtime API**, which riz serves per worker
+/// (see [`crate::process::runtime_api`]). This adapter just `exec`s the binary;
+/// the pool provisions the Runtime-API endpoint and sets `AWS_LAMBDA_RUNTIME_API`
+/// (the `RuntimeApi` transport). The only per-language difference is the `name`
+/// reported to logs and `/_riz/health`.
 pub struct StaticBinaryRuntime {
     name: &'static str,
 }
@@ -35,6 +36,12 @@ impl LambdaRuntime for StaticBinaryRuntime {
 
     fn name(&self) -> &'static str {
         self.name
+    }
+
+    /// Native binaries are unmodified official AWS Lambda runtime clients — they
+    /// speak the Lambda Runtime API over `AWS_LAMBDA_RUNTIME_API`, not stdio.
+    fn transport(&self) -> WorkerTransport {
+        WorkerTransport::RuntimeApi
     }
 }
 

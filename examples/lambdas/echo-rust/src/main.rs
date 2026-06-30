@@ -1,31 +1,28 @@
+// echo-rust — the Rust leg of riz's cross-runtime parity matrix.
+//
+// Written with the OFFICIAL AWS Lambda Rust runtime (`lambda_runtime`) — there
+// is NO riz library. This exact binary runs unmodified on AWS Lambda and on
+// riz, because riz implements the AWS Lambda Runtime API. Emits the canonical
+// echo shape shared by echo-bun / echo-node / echo-python / echo-go.
+
 use aws_lambda_events::apigw::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
 use http::HeaderMap;
-use riz_rust_runtime::{run, Context};
+use lambda_runtime::{run, service_fn, Error, LambdaEvent};
 
 async fn handler(
-    event: ApiGatewayV2httpRequest,
-    ctx: Context,
-) -> Result<ApiGatewayV2httpResponse, Box<dyn std::error::Error + Send + Sync>> {
-    // FOOTGUN: aws_lambda_events::query_map::QueryMap deserializes correctly
-    // from the AWS v2 single-string shape (`{"name": "alice"}`) BUT its
-    // default Serialize impl emits the multi-value shape (`{"name": ["alice"]}`)
-    // when used through serde_json::json! / serde_json::Value. The field-level
-    // `serialize_with = aws_api_gateway_v2::serialize_query_string_parameters`
-    // hint on ApiGatewayV2httpRequest only applies when serializing the WHOLE
-    // struct — not when re-serializing the field standalone.
-    //
-    // Flatten manually to single-value form so the response body matches what
-    // the Bun and Python adapters emit. Every Rust Lambda handler that needs
-    // to re-emit queryStringParameters faces this exact gotcha.
-    let qs_flat: std::collections::HashMap<String, String> = event
+    event: LambdaEvent<ApiGatewayV2httpRequest>,
+) -> Result<ApiGatewayV2httpResponse, Error> {
+    let (req, ctx) = (event.payload, event.context);
+
+    // queryStringParameters: flatten the single-value AWS v2 shape (the default
+    // Serialize of QueryMap emits the multi-value form when re-serialized).
+    let qs_flat: std::collections::HashMap<String, String> = req
         .query_string_parameters
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
 
-    // HeaderMap doesn't directly serialize as a JSON object via serde_json::json!
-    // — flatten to a HashMap<String, String> of lowercased name → first value.
-    let headers_flat: std::collections::HashMap<String, String> = event
+    let headers_flat: std::collections::HashMap<String, String> = req
         .headers
         .iter()
         .map(|(k, v)| {
@@ -36,27 +33,35 @@ async fn handler(
         })
         .collect();
 
+    // remainingMs from the Runtime-API deadline (Unix-millis), like AWS.
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let remaining_ms = (ctx.deadline as i64 - now_ms).max(0);
+
     let body = serde_json::json!({
-        "echo": event.raw_path,
-        "method": event.request_context.http.method.as_str(),
-        "functionName": ctx.function_name,
+        "echo": req.raw_path,
+        "method": req.request_context.http.method.as_str(),
+        "functionName": ctx.env_config.function_name,
         "invokedFunctionArn": ctx.invoked_function_arn,
-        "awsRequestId": ctx.aws_request_id,
-        "remainingMs": ctx.get_remaining_time_in_millis(),
-        "body": event.body,
-        "isBase64Encoded": event.is_base64_encoded,
-        "pathParameters": event.path_parameters,
+        "awsRequestId": ctx.request_id,
+        "remainingMs": remaining_ms,
+        "body": req.body,
+        "isBase64Encoded": req.is_base64_encoded,
+        "pathParameters": req.path_parameters,
         "queryStringParameters": qs_flat,
-        "stageVariables": event.stage_variables,
-        "cookies": event.cookies,
+        "stageVariables": req.stage_variables,
+        "cookies": req.cookies,
         "requestHeaders": headers_flat,
     });
+
     let mut resp_headers = HeaderMap::new();
     resp_headers.insert("content-type", "application/json".parse().unwrap());
     resp_headers.insert("x-riz-echo", "ok".parse().unwrap());
 
-    // Honor ?status=NNN for the parity-H error-status test.
-    let status_code: i64 = event
+    // Honor ?status=NNN for the parity error-status test.
+    let status_code: i64 = req
         .query_string_parameters
         .first("status")
         .and_then(|s| s.parse().ok())
@@ -72,6 +77,7 @@ async fn handler(
     })
 }
 
-fn main() {
-    run(handler);
+#[tokio::main]
+async fn main() -> Result<(), Error> {
+    run(service_fn(handler)).await
 }

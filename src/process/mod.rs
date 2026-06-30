@@ -5,6 +5,7 @@ pub mod node;
 pub mod pool;
 pub mod python;
 pub mod runtime;
+pub mod runtime_api;
 pub mod safety;
 pub mod static_binary;
 pub mod wasm;
@@ -13,8 +14,11 @@ use crate::config::FunctionConfig;
 use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
 use crate::process::liveness::{handle_process_failure, spawn_liveness_watcher};
 pub use crate::process::pool::kill_process_group;
-use crate::process::pool::{spawn_process, spawn_with_cold_start_record, ProcessHandle, RoutePool};
+use crate::process::pool::{
+    spawn_process, spawn_with_cold_start_record, HandleTransport, ProcessHandle, RoutePool,
+};
 use crate::process::runtime::RuntimeRegistry;
+use crate::process::runtime_api::Invocation;
 use crate::runtime::error_response;
 use crate::state::{LogEntry, RizState};
 use anyhow::Context;
@@ -25,7 +29,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
+use tokio::sync::{mpsc, oneshot, Mutex, RwLock, Semaphore};
 use tokio::time::{timeout, Duration};
 use tracing::{error, trace, warn};
 
@@ -122,6 +126,56 @@ pub struct HostStats {
     pub memory_rss_mb: f64,
     pub cpu_percent: f32,
     pub cores: usize,
+}
+
+/// Outcome of one AWS-Runtime-API round-trip to a worker.
+enum RtOutcome {
+    /// The handler responded (raw response JSON bytes from `/response`).
+    Response(Vec<u8>),
+    /// The handler reported an error via `/error` — a normal result, NOT a
+    /// worker crash; the worker stays healthy.
+    HandlerError(String),
+    /// The worker dropped the response channel without answering (it crashed).
+    WorkerGone,
+    /// No response within the deadline.
+    Timeout,
+}
+
+/// Deliver one event to a runtime-API worker and await its response. The event
+/// is the RAW AWS event JSON (deadline + ARN ride in the `Lambda-Runtime-*`
+/// headers, per the AWS contract) — NOT riz's stdio envelope.
+async fn runtime_api_roundtrip<E: Serialize>(
+    sender: &mpsc::Sender<Invocation>,
+    function_name: &str,
+    request: &E,
+    timeout_ms: u64,
+) -> RtOutcome {
+    let event = match serde_json::to_vec(request) {
+        Ok(v) => v,
+        // A serialize failure is our bug, surfaced as a handler-style error.
+        Err(e) => return RtOutcome::HandlerError(format!("event serialize: {e}")),
+    };
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let (tx, rx) = oneshot::channel();
+    let inv = Invocation {
+        request_id: uuid::Uuid::new_v4().to_string(),
+        deadline_ms: now_ms + timeout_ms as i64,
+        invoked_arn: format!("arn:riz:lambda:local:000000000000:function:{function_name}"),
+        event,
+        respond: tx,
+    };
+    if sender.send(inv).await.is_err() {
+        return RtOutcome::WorkerGone;
+    }
+    match timeout(Duration::from_millis(timeout_ms), rx).await {
+        Ok(Ok(Ok(bytes))) => RtOutcome::Response(bytes),
+        Ok(Ok(Err(msg))) => RtOutcome::HandlerError(msg),
+        Ok(Err(_)) => RtOutcome::WorkerGone, // sender dropped → worker died
+        Err(_) => RtOutcome::Timeout,
+    }
 }
 
 impl ProcessManager {
@@ -279,6 +333,62 @@ impl ProcessManager {
         };
         let mut handle = arc.lock().await;
 
+        // RuntimeApi (rust/go): the unmodified official binary speaks the AWS
+        // Lambda Runtime API. A handler `/error` is a normal result (HTTP 502),
+        // NOT a worker crash, so this path is separate from the stdio match.
+        if let HandleTransport::RuntimeApi { endpoint } = &handle.transport {
+            let sender = endpoint.sender.clone();
+            let outcome = runtime_api_roundtrip(&sender, function_name, request, timeout_ms).await;
+            return match outcome {
+                RtOutcome::Response(bytes) => {
+                    pool.consecutive_crashes.store(0, Ordering::Relaxed);
+                    serde_json::from_slice(&bytes).map_err(|e| {
+                        PoolError::InvalidResponse(function_name.into(), e.to_string())
+                    })
+                }
+                RtOutcome::HandlerError(msg) => {
+                    pool.consecutive_crashes.store(0, Ordering::Relaxed);
+                    Ok(error_response(502, &format!("handler error: {msg}")))
+                }
+                RtOutcome::WorkerGone => {
+                    warn!("runtime-api worker on {function_name} exited without responding — restarting");
+                    handle_process_failure(&pool, &mut handle, function_name).await;
+                    spawn_liveness_watcher(
+                        handle.pid,
+                        arc.clone(),
+                        pool.clone(),
+                        function_name.to_string(),
+                    );
+                    Err(PoolError::Other(
+                        function_name.into(),
+                        anyhow::anyhow!("worker exited without responding"),
+                    ))
+                }
+                RtOutcome::Timeout => {
+                    warn!("lambda timeout on {function_name} after {timeout_ms}ms — killing and restarting");
+                    kill_process_group(handle.pid);
+                    let _ = handle._child.kill().await;
+                    match spawn_with_cold_start_record(&pool, function_name).await {
+                        Ok(new_handle) => {
+                            *handle = new_handle;
+                            spawn_liveness_watcher(
+                                handle.pid,
+                                arc.clone(),
+                                pool.clone(),
+                                function_name.to_string(),
+                            );
+                        }
+                        Err(spawn_err) => {
+                            error!("failed to respawn {function_name}: {spawn_err}");
+                            pool.healthy.store(false, Ordering::Relaxed);
+                        }
+                    }
+                    pool.restart_count.fetch_add(1, Ordering::Relaxed);
+                    Err(PoolError::Timeout(function_name.into(), timeout_ms))
+                }
+            };
+        }
+
         let payload = build_envelope_payload(request, function_name, timeout_ms)
             .map_err(|e| PoolError::Other(function_name.into(), e.into()))?
             + "\n";
@@ -296,15 +406,20 @@ impl ProcessManager {
         }
         let _pipe_guard = PipeDropGuard(guard_pid.clone());
 
-        let result = timeout(Duration::from_millis(timeout_ms), async {
-            handle.stdin.write_all(payload.as_bytes()).await?;
-            handle.stdin.flush().await?;
-            let mut line = String::new();
-            handle.stdout.read_line(&mut line).await?;
-            guard_pid_inner.store(0, std::sync::atomic::Ordering::Relaxed);
-            Ok::<String, anyhow::Error>(line)
-        })
-        .await;
+        let result = {
+            let HandleTransport::Stdio { stdin, stdout } = &mut handle.transport else {
+                unreachable!("RuntimeApi handled above")
+            };
+            timeout(Duration::from_millis(timeout_ms), async {
+                stdin.write_all(payload.as_bytes()).await?;
+                stdin.flush().await?;
+                let mut line = String::new();
+                stdout.read_line(&mut line).await?;
+                guard_pid_inner.store(0, std::sync::atomic::Ordering::Relaxed);
+                Ok::<String, anyhow::Error>(line)
+            })
+            .await
+        };
 
         match result {
             Ok(Ok(line)) => match serde_json::from_str(line.trim()) {
@@ -422,17 +537,79 @@ impl ProcessManager {
         };
         let mut handle = arc.lock().await;
 
+        // RuntimeApi (rust/go) generic-event path (WebSocket etc.). A handler
+        // `/error` is surfaced as a typed error; the worker stays healthy.
+        if let HandleTransport::RuntimeApi { endpoint } = &handle.transport {
+            let sender = endpoint.sender.clone();
+            let outcome = runtime_api_roundtrip(&sender, function_name, request, timeout_ms).await;
+            return match outcome {
+                RtOutcome::Response(bytes) => {
+                    pool.consecutive_crashes.store(0, Ordering::Relaxed);
+                    serde_json::from_slice(&bytes).map_err(|e| {
+                        PoolError::InvalidResponse(function_name.into(), e.to_string())
+                    })
+                }
+                RtOutcome::HandlerError(msg) => {
+                    pool.consecutive_crashes.store(0, Ordering::Relaxed);
+                    Err(PoolError::Other(
+                        function_name.into(),
+                        anyhow::anyhow!("handler error: {msg}"),
+                    ))
+                }
+                RtOutcome::WorkerGone => {
+                    warn!("runtime-api ws worker on {function_name} exited without responding — restarting");
+                    handle_process_failure(&pool, &mut handle, function_name).await;
+                    spawn_liveness_watcher(
+                        handle.pid,
+                        arc.clone(),
+                        pool.clone(),
+                        function_name.to_string(),
+                    );
+                    Err(PoolError::Other(
+                        function_name.into(),
+                        anyhow::anyhow!("worker exited without responding"),
+                    ))
+                }
+                RtOutcome::Timeout => {
+                    warn!(
+                        "ws handler timeout on {function_name} after {timeout_ms}ms — restarting"
+                    );
+                    kill_process_group(handle.pid);
+                    let _ = handle._child.kill().await;
+                    if let Ok(new_handle) = spawn_with_cold_start_record(&pool, function_name).await
+                    {
+                        *handle = new_handle;
+                        spawn_liveness_watcher(
+                            handle.pid,
+                            arc.clone(),
+                            pool.clone(),
+                            function_name.to_string(),
+                        );
+                    } else {
+                        pool.healthy.store(false, Ordering::Relaxed);
+                    }
+                    pool.restart_count.fetch_add(1, Ordering::Relaxed);
+                    Err(PoolError::Timeout(function_name.into(), timeout_ms))
+                }
+            };
+        }
+
         let payload = build_envelope_payload(request, function_name, timeout_ms)
             .map_err(|e| PoolError::Other(function_name.into(), e.into()))?
             + "\n";
-        let result = timeout(Duration::from_millis(timeout_ms), async {
-            handle.stdin.write_all(payload.as_bytes()).await?;
-            handle.stdin.flush().await?;
-            let mut line = String::new();
-            handle.stdout.read_line(&mut line).await?;
-            Ok::<String, anyhow::Error>(line)
-        })
-        .await;
+        let result = {
+            let HandleTransport::Stdio { stdin, stdout } = &mut handle.transport else {
+                unreachable!("RuntimeApi handled above")
+            };
+            timeout(Duration::from_millis(timeout_ms), async {
+                stdin.write_all(payload.as_bytes()).await?;
+                stdin.flush().await?;
+                let mut line = String::new();
+                stdout.read_line(&mut line).await?;
+                Ok::<String, anyhow::Error>(line)
+            })
+            .await
+        };
 
         match result {
             Ok(Ok(line)) => match serde_json::from_str(line.trim()) {
@@ -528,7 +705,7 @@ impl ProcessManager {
 
         let mut first_pid = 0;
         for _ in 0..new_config.concurrency {
-            let h = spawn_process(&new_config, registry, &pool.log_tx).await?;
+            let h = spawn_process(&new_config, function_name, registry, &pool.log_tx).await?;
             pool.riz_state.note_cold_start(function_name).await;
             if first_pid == 0 {
                 first_pid = h.pid;

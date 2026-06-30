@@ -8,8 +8,10 @@ edition = "2021"
 dist = false
 
 [dependencies]
-riz-rust-runtime = { path = "../../../crates/riz-rust-runtime" }
+# The OFFICIAL AWS Lambda Rust runtime — no riz library.
+lambda_runtime = "0.13"
 aws_lambda_events = { version = "0.15", default-features = false, features = ["apigw"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # reqwest with no TLS — localhost-only @connections POST has no need for

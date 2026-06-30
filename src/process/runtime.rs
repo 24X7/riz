@@ -6,11 +6,28 @@ use crate::process::static_binary::StaticBinaryRuntime;
 use crate::process::wasm::WasmRuntime;
 use tokio::process::Command;
 
+/// How riz talks to a worker process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkerTransport {
+    /// riz's line-JSON envelope over the child's stdin/stdout (bun/node/python:
+    /// riz's embedded adapter calls the user's exported handler).
+    Stdio,
+    /// The real **AWS Lambda Runtime API** over HTTP. The child is an UNMODIFIED
+    /// official runtime client (Go `aws-lambda-go`, Rust `lambda_runtime`, any
+    /// `provided.al2023`) that polls `AWS_LAMBDA_RUNTIME_API`. No riz library.
+    RuntimeApi,
+}
+
 pub trait LambdaRuntime: Send + Sync + 'static {
     fn spawn_command(&self, route: &FunctionConfig) -> Command;
     // Surfaced in runtime adapter logging and introspection endpoints.
     #[allow(dead_code)]
     fn name(&self) -> &'static str;
+    /// Transport for this runtime. Defaults to stdio (scripted adapters);
+    /// compiled native binaries override to the AWS Runtime API.
+    fn transport(&self) -> WorkerTransport {
+        WorkerTransport::Stdio
+    }
 }
 
 pub struct RuntimeRegistry {

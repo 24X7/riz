@@ -1,30 +1,35 @@
-// AWS API Gateway v2 HTTP Lambda handler in Rust.
-// Runs on riz (https://riz.dev) via the riz-rust-runtime helper crate —
-// no special host wrapper; the binary is the lambda.
+// AWS API Gateway v2 HTTP Lambda handler in Rust, using the OFFICIAL AWS Lambda
+// Rust runtime (`lambda_runtime`). No riz library — this exact binary runs
+// unmodified on AWS Lambda and on riz (riz speaks the AWS Lambda Runtime API).
 //
-// Build: `cargo build --release` then point riz.toml's handler at
+// Build: `cargo build --release`, then point riz.toml's handler at
 // `./target/release/hello`.
 
 use aws_lambda_events::apigw::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
 use http::HeaderMap;
-use riz_rust_runtime::{run, Context};
+use lambda_runtime::{run, service_fn, Error, LambdaEvent};
 
 async fn handler(
-    event: ApiGatewayV2httpRequest,
-    ctx: Context,
-) -> Result<ApiGatewayV2httpResponse, Box<dyn std::error::Error + Send + Sync>> {
-    let name = event
+    event: LambdaEvent<ApiGatewayV2httpRequest>,
+) -> Result<ApiGatewayV2httpResponse, Error> {
+    let (req, ctx) = (event.payload, event.context);
+    let name = req
         .query_string_parameters
         .first("name")
         .unwrap_or("world")
         .to_string();
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
     let body = serde_json::json!({
         "message": format!("hello, {name}"),
-        "method": event.request_context.http.method.as_str(),
-        "path": event.raw_path,
-        "functionName": ctx.function_name,
-        "awsRequestId": ctx.aws_request_id,
-        "remainingMs": ctx.get_remaining_time_in_millis(),
+        "method": req.request_context.http.method.as_str(),
+        "path": req.raw_path,
+        "functionName": ctx.env_config.function_name,
+        "awsRequestId": ctx.request_id,
+        "remainingMs": (ctx.deadline as i64 - now_ms).max(0),
     });
 
     let mut headers = HeaderMap::new();
@@ -40,6 +45,7 @@ async fn handler(
     })
 }
 
-fn main() {
-    run(handler);
+#[tokio::main]
+async fn main() -> Result<(), Error> {
+    run(service_fn(handler)).await
 }
