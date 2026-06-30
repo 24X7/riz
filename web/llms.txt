@@ -1,6 +1,6 @@
 # Riz
 
-> Self-hosted AWS Lambda runtime harness in one ~35 MB Rust binary. Write a plain AWS-Lambda-shaped HTTP/WebSocket handler — no web framework to pick — and the runtime makes it production-grade for free: always-on per-process safety profile, supervised crash-respawn + liveness, graceful 30s drain, hot-reload, S3 hot-swap deploys with health-check auto-rollback, P50–P99 observability + Prometheus + OpenTelemetry. Every function auto-becomes a typed **MCP tool** an agent can call the moment riz boots — zero glue. Five runtimes (Bun, Node.js, Python, Rust, capability-sandboxed WASM). OpenAI-compatible LLM gateway built in. Apache-2.0.
+> Self-hosted AWS Lambda runtime harness in one ~35 MB Rust binary. Write a plain AWS-Lambda-shaped HTTP/WebSocket handler — no web framework to pick — and the runtime makes it production-grade for free: always-on per-process safety profile, supervised crash-respawn + liveness, graceful 30s drain, hot-reload, S3 hot-swap deploys with health-check auto-rollback, P50–P99 observability + Prometheus + OpenTelemetry. Every function auto-becomes a typed **MCP tool** an agent can call the moment riz boots — zero glue. Six runtimes (Bun, Node.js, Python, Rust, Go, capability-sandboxed WASM) — Rust and Go run UNMODIFIED official AWS Lambda binaries via the real Lambda Runtime API, no riz library. OpenAI-compatible LLM gateway built in. Apache-2.0.
 
 Riz runs handlers written for AWS Lambda + API Gateway v2 on your own box, **unmodified**, using the canonical `aws_lambda_events` wire shape. It is a **runtime harness, not a framework**: you write the function, riz brings the production substrate around it. One `[function.<name>]` block = one warm process pool = N routes, mirroring AWS exactly. No per-request cold start (warm pre-spawned pool per function; cold starts happen only at boot, respawn, or hot-swap — WASM is sub-millisecond).
 
@@ -33,7 +33,7 @@ riz run                                                 # 3. boot — HTTP API +
 
 ```toml
 [function.api]
-runtime = "node"            # bun | node | python | rust | wasm
+runtime = "node"            # bun | node | python | rust | go | wasm
 handler = "index.handler"   # AWS-style: file index.mjs + export handler
 [[function.api.routes]]
 path = "/accounts/{id}"
@@ -49,15 +49,16 @@ method = "GET"
 - **Hot-swap deploys from S3** — `POST /_riz/deploy` drains in-flight invocations over 30s, promotes the new pool atomically, and auto-rolls-back on health-check failure.
 - **No per-request cold start** — warm pre-spawned pool per function. Cold starts only at boot/respawn/hot-swap. WASM cold start is sub-millisecond.
 
-## Five runtimes — one wire protocol, parity-tested
+## Six runtimes — one wire protocol, parity-tested
 
 - **Bun** — TypeScript / JavaScript (`runtime = "bun"`); Bun adapter embedded in the binary.
 - **Node.js** — `runtime = "node"`, `handler = "index.handler"` → file `index.mjs` + export `handler`. The #1 production Lambda runtime; existing Node Lambda code drops in unmodified.
 - **Python** — `runtime = "python"`, `handler = "app.lambda_handler"` → file `app.py` + attribute `lambda_handler`. Adapter embedded in the binary.
-- **Rust** — `runtime = "rust"`, `handler = "./target/release/my-handler"`; native binary speaking line-delimited JSON over stdin/stdout. Reference crate `riz-rust-runtime`.
+- **Rust** — `runtime = "rust"`, `handler = "./target/release/my-handler"`. An UNMODIFIED official AWS Lambda Rust binary (`lambda_runtime` / cargo-lambda) — **no riz library, no code change.** riz implements the AWS Lambda Runtime API, so the same binary runs on AWS and on riz.
+- **Go** — `runtime = "go"`, `handler = "./my-binary"`. An UNMODIFIED official AWS Lambda Go binary (`github.com/aws/aws-lambda-go`, `lambda.Start`) — same as Rust: no riz library, runs via the Runtime API.
 - **WASM (WASI)** — `runtime = "wasm"`; a `wasm32-wasip1` module under wasmtime, deny-by-default filesystem + network, capabilities granted explicitly in `riz.toml`. Sub-millisecond cold start; for untrusted / LLM-generated code.
 
-Every HTTP capability (verbs, path params, headers, cookies, binary bodies, stage variables) returns an **identical** response across all five runtimes — cross-runtime parity is a tested matrix.
+Compiled runtimes (Rust, Go, any `provided.al2023` custom runtime) speak the **real AWS Lambda Runtime API** that riz serves per worker (`AWS_LAMBDA_RUNTIME_API`); scripted runtimes (Bun/Node/Python) use riz's embedded adapter calling your exported `handler`. Either way you write a stock AWS Lambda handler — no riz import. Every HTTP capability (verbs, path params, headers, cookies, binary bodies, stage variables) returns an **identical** response across all six runtimes — cross-runtime parity is a tested matrix.
 
 ## Agent-native: every function is an MCP tool
 

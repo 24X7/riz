@@ -134,16 +134,19 @@ between AWS and riz **unchanged** — same `index.handler` resolution, same
 ```toml
 # riz.toml
 [function.api]
-runtime = "node"                 # bun | node | python | rust | wasm
+runtime = "node"                 # bun | node | python | rust | go | wasm
 handler = "index.handler"
 [[function.api.routes]]
 path = "/accounts/{id}"
 method = "GET"
 ```
 
-Five runtimes, one wire protocol — **parity-tested** so the same request gets an
-identical response from Bun, Node.js, Python, Rust, and a `wasm32-wasip1` module
-under wasmtime's WASI sandbox. WebSocket handlers get
+Six runtimes, one wire protocol — **parity-tested** so the same request gets an
+identical response from Bun, Node.js, Python, Rust, Go, and a `wasm32-wasip1`
+module under wasmtime's WASI sandbox. **Rust and Go run UNMODIFIED official AWS
+Lambda binaries** (`lambda_runtime` / `aws-lambda-go`) — riz implements the AWS
+Lambda Runtime API, so the same binary runs on AWS and on riz with no riz
+library and no code change. WebSocket handlers get
 the AWS `$connect`/`$default`/`$disconnect` lifecycle plus a local `@connections`
 management API to push messages back to clients.
 
@@ -261,7 +264,7 @@ A complete full-stack demo lives in [`examples/typescript-todo`](examples/typesc
 **Runtimes & protocols**
 - AWS **HTTP API Gateway v2** — full request/response shape, all 7 verbs, `{id}` / `{proxy+}` paths, `$default` catch-all, stage variables, real Lambda context
 - AWS **WebSocket APIs** — `$connect`/`$default`/`$disconnect` + `@connections` management API (GET/POST/DELETE/LIST) for server→client push
-- **Five runtimes** — Bun (TS/JS), Node.js, Python, Rust, and capability-sandboxed **WASM** (`wasm32-wasip1` under wasmtime/WASI) — cross-runtime parity-tested
+- **Six runtimes** — Bun (TS/JS), Node.js, Python, **Rust**, **Go**, and capability-sandboxed **WASM** (`wasm32-wasip1` under wasmtime/WASI) — cross-runtime parity-tested. Rust + Go are unmodified official AWS Lambda binaries run via the AWS Lambda Runtime API (no riz library).
 
 **Agent + AI surface**
 - **MCP server** at `/_riz/mcp` (JSON-RPC 2.0, spec 2025-11-25) — every function is a tool, automatically

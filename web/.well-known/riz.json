@@ -2,7 +2,7 @@
   "$schema": "https://schema.org/SoftwareApplication",
   "name": "riz",
   "tagline": "Self-hosted AWS Lambda runtime where every function becomes a typed MCP tool.",
-  "description": "Runtime harness, not a framework. Write a plain AWS-Lambda-shaped HTTP/WebSocket handler with no web framework to pick, and riz makes it production-grade: always-on per-process safety profile, supervised crash-respawn + liveness, graceful 30s drain, hot-reload, S3 hot-swap deploys with health-check auto-rollback, and P50-P99 observability. Every function auto-exposes as a typed MCP tool at /_riz/mcp the moment riz boots. Five runtimes; OpenAI-compatible LLM gateway built in.",
+  "description": "Runtime harness, not a framework. Write a plain AWS-Lambda-shaped HTTP/WebSocket handler with no web framework to pick, and riz makes it production-grade: always-on per-process safety profile, supervised crash-respawn + liveness, graceful 30s drain, hot-reload, S3 hot-swap deploys with health-check auto-rollback, and P50-P99 observability. Every function auto-exposes as a typed MCP tool at /_riz/mcp the moment riz boots. Six runtimes (incl. unmodified official Rust + Go binaries via the AWS Lambda Runtime API); OpenAI-compatible LLM gateway built in.",
   "category": "Self-hosted AWS Lambda + API Gateway v2 runtime / MCP server / LLM gateway",
   "version": "0.1",
   "license": "Apache-2.0",
@@ -17,7 +17,7 @@
     "riz init typescript-http my-app && cd my-app",
     "riz run"
   ],
-  "runtimes": ["bun", "node", "python", "rust", "wasm"],
+  "runtimes": ["bun", "node", "python", "rust", "go", "wasm"],
   "wire_compat": "AWS API Gateway v2 HTTP + WebSocket payloads via aws_lambda_events — handlers move between AWS and riz unchanged",
   "cold_start": "No per-request cold start. Warm pre-spawned process pool per function; cold starts only at boot, respawn, or hot-swap. WASM cold start is sub-millisecond.",
   "mcp": {
@@ -45,13 +45,13 @@
     "Opt-in per-function caps: memory_mb (RLIMIT_AS), cpu_time_secs (RLIMIT_CPU), allowed_paths (Linux Landlock)",
     "Supervised crash-respawn + liveness watcher + graceful 30s in-flight drain",
     "Hot-reload of riz.toml and handler source; S3 hot-swap deploys with health-check auto-rollback",
-    "Five runtimes (Bun, Node.js, Python, Rust, capability-sandboxed WASM) — cross-runtime parity-tested",
+    "Six runtimes (Bun, Node.js, Python, Rust, Go, capability-sandboxed WASM) — Rust and Go run unmodified official AWS Lambda binaries via the real Lambda Runtime API (no riz library); cross-runtime parity-tested",
     "OpenAI-compatible LLM gateway with routing, fallback, streaming, embeddings, budget caps",
     "P50-P99 percentile observability, Prometheus /_riz/metrics, OpenTelemetry OTLP export with GenAI token tracing",
     "JWT/JWKS + REQUEST Lambda authorizers (RS256/ES256: Auth0, Cognito, Okta, WorkOS, Clerk)",
     "Capability-sandboxed WASI runtime — deny-by-default filesystem and network for untrusted / LLM-generated code",
     "Resource broker: a [function.x.capabilities] grant lets sandboxed WASM query Postgres (Neon/Supabase/any PG) host-side — no sockets, no DSNs in guest memory; deadlines, rate limits, payload caps enforced",
-    "WASM guards: guard_in/guard_out run a .wasm policy on every request/response across all five runtimes — validate, scrub, redact PII, or deny; failures fail closed",
+    "WASM guards: guard_in/guard_out run a .wasm policy on every request/response across all six runtimes — validate, scrub, redact PII, or deny; failures fail closed",
     "Static file serving: point [static] at a dir to colocate an SPA/landing on the same binary and origin (no second host, no CORS) and let a live instance serve its own llms.txt + .well-known/riz.json; functions and /_riz/* always win, traversal/symlink/dotfiles rejected"
   ],
   "when_to_use": [

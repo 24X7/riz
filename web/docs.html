@@ -109,7 +109,7 @@ port = <span class="n">3000</span>
 host = <span class="s">"127.0.0.1"</span>
 
 <span class="k">[function.api]</span>
-runtime = <span class="s">"bun"</span>            <span class="c"># bun | node | python | rust | wasm</span>
+runtime = <span class="s">"bun"</span>            <span class="c"># bun | node | python | rust | go | wasm</span>
 handler = <span class="s">"src/index.handler"</span>  <span class="c"># AWS file.export resolution</span>
 timeout_ms = <span class="n">30000</span>         <span class="c"># handler kill + respawn deadline</span>
 concurrency = <span class="n">10</span>           <span class="c"># pool size = max in-flight</span>
@@ -121,8 +121,8 @@ method = <span class="s">"GET"</span></pre>
     <h3>Function fields</h3>
     <table>
       <tr><th>key</th><th>default</th><th>what it does</th></tr>
-      <tr><td><code>runtime</code></td><td>—</td><td><code>bun</code> · <code>node</code> · <code>python</code> · <code>rust</code> · <code>wasm</code></td></tr>
-      <tr><td><code>handler</code></td><td>—</td><td>AWS-style <code>file.export</code>; for rust/wasm, a path to the artifact</td></tr>
+      <tr><td><code>runtime</code></td><td>—</td><td><code>bun</code> · <code>node</code> · <code>python</code> · <code>rust</code> · <code>go</code> · <code>wasm</code> (rust/go = unmodified official AWS Lambda binaries via the Runtime API)</td></tr>
+      <tr><td><code>handler</code></td><td>—</td><td>AWS-style <code>file.export</code>; for rust/go/wasm, a path to the artifact</td></tr>
       <tr><td><code>timeout_ms</code></td><td>30000</td><td>handler deadline — exceeded = child killed + respawned</td></tr>
       <tr><td><code>integration_timeout_ms</code></td><td>30000</td><td>gateway wait — exceeded = 504 to the client</td></tr>
       <tr><td><code>concurrency</code></td><td>1</td><td>worker processes in the pool (≥ 1 enforced)</td></tr>

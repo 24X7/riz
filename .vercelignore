@@ -1,0 +1,17 @@
+# Deploy ONLY web/ to Vercel — never the Rust runtime / build code, so the
+# Vercel deployment stays tiny. The Vercel project's Root Directory is set to
+# `web`, which scopes the deploy; this list is belt-and-suspenders for the
+# source upload.
+/src
+/target
+/tests
+/crates
+/examples
+/docs
+/benches
+/assets
+/templates
+/.github
+/Cargo.toml
+/Cargo.lock
+*.rs
