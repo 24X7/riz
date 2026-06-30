@@ -234,6 +234,21 @@ h2.sec{
 h2.sec em{font-style:normal;color:var(--acid)}
 .sec-sub{margin-top:1.1rem;max-width:660px;font-size:1.08rem;color:var(--t-mid)}
 
+/* "where to start" use-case grid (home) */
+.usecases{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;margin-top:1.7rem}
+.uc{
+  background:var(--ink-2);border:1px solid var(--line);border-radius:13px;
+  padding:1.15rem 1.25rem;font-size:.96rem;line-height:1.55;color:var(--t-mid);
+}
+.uc b{color:var(--t-max);font-weight:600}
+.uc em{color:var(--acid);font-style:normal}
+.v01{
+  margin-top:1.5rem;max-width:660px;font-size:.92rem;color:var(--t-mid);
+  border-left:2px solid var(--acid);padding-left:.9rem;
+}
+.v01 b{color:var(--t-max)}
+.v01 a{color:var(--acid)}
+
 /* ════════ CAPABILITY CARDS — the ONE treatment, everywhere ════════
    Anatomy (never deviate): glyph · name · claim · facts ·  proof · link  */
 .caps{
@@ -526,6 +541,7 @@ footer{border-top:1px solid var(--line);margin-top:4rem;background:var(--ink-2)}
 }
 @media (max-width: 640px){
   .caps{grid-template-columns:minmax(0,1fr)}
+  .usecases{grid-template-columns:minmax(0,1fr)}
   /* Hamburger nav: the toggle appears, the agent chip folds away to save room
      (GitHub stays reachable), and the links become a dropdown panel under the
      bar that nav.js opens via `nav.menu-open`. */

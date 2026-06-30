@@ -127,12 +127,37 @@
 <div class="statbar">
   <div class="statbar-in">
     <span><b class="acid">900+</b> tests, every claim pinned to one</span>
-    <span><b>5</b> runtimes — bun · node · python · rust · wasm</span>
+    <span><b>6</b> runtimes — bun · node · python · rust · go · wasm</span>
     <span><b>0</b> per-request cold starts</span>
     <span><b>91k</b> req/s · p99 &lt; 1ms <span style="opacity:.6">(bench recipe in repo)</span></span>
     <span><b>1</b> binary you own</span>
   </div>
 </div>
+
+<!-- ════════ WHERE TO START — vibe-code + the first use case ════════ -->
+<section id="use">
+  <div class="wrap">
+    <div class="sec-kicker">where to start</div>
+    <h2 class="sec">Vibe-code a service.<br/>Ship it <em>production-grade.</em></h2>
+    <p class="sec-sub">
+      Have an LLM write a handler, declare it in <code style="font-family:var(--mono);font-size:.85em">riz.toml</code>, and the
+      runtime makes it production — isolation, supervised respawn, graceful drain, live
+      observability — while the agent layer, a WASM sandbox for the generated code, and the
+      LLM gateway come already wired. You write functions; riz brings the substrate. Reach for
+      it first when one of these is you:
+    </p>
+    <div class="usecases">
+      <div class="uc"><b>Give agents safe, typed access to real APIs.</b> Declare a function — that <em>is</em> the integration. Claude, Cursor, or your own agents call it as a typed MCP tool: no wrapper service, no SDK glue.</div>
+      <div class="uc"><b>Run code an LLM wrote.</b> <code style="font-family:var(--mono);font-size:.85em">runtime = "wasm"</code> executes untrusted code deny-by-default under wasmtime, reaching Postgres only through host-enforced capability grants.</div>
+      <div class="uc"><b>Run Lambda-shaped functions without AWS.</b> Locally, in CI, or self-hosted — the same handler moves to real Lambda unchanged, and back.</div>
+      <div class="uc"><b>Self-host steady-traffic APIs.</b> No per-request cold start, no per-invocation bill — and you scale it like any container (Cloud Run / Fargate / Azure).</div>
+    </div>
+    <p class="v01">
+      <b>v0.1 today —</b> ready for local, CI, internal agent tools, and controlled self-hosted
+      services. Not yet a managed-HA fleet; <a href="compare.html">where Lambda still wins →</a>
+    </p>
+  </div>
+</section>
 
 <!-- ════════ CAPABILITIES — six cards, ONE treatment ════════ -->
 <section id="caps">
