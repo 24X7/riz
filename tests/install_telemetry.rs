@@ -1,8 +1,9 @@
-//! The install-telemetry endpoint (`web/api/install.js`) records each install
-//! execution with platform fields + Vercel geo headers and returns 204. It's a
-//! zero-dependency Node function; this test runs it through a mock request and
-//! asserts the structured event it logs. Skips cleanly if node is absent (CI
-//! has it, so there it runs for real).
+//! The install beacon (`web/api/install.js`) records each install-script event
+//! (`stage=start|success`) with platform fields + Vercel geo headers, emits one
+//! clean tagged-JSON log line, and returns 204. It's a zero-dependency Node
+//! function; this test runs it through a mock request and asserts the structured
+//! event it logs. Skips cleanly if node is absent (CI has it, so there it runs
+//! for real).
 //!
 //! Run: `cargo nextest run --test install_telemetry`
 
@@ -38,16 +39,17 @@ console.log("STATUS=" + status + " ENDED=" + ended);
     (stdout, stderr, out.status.success())
 }
 
+/// The beacon logs one clean JSON line tagged `riz-install`. Find and parse it.
 fn parse_event(stdout: &str) -> serde_json::Value {
-    let line = stdout
+    stdout
         .lines()
-        .find(|l| l.starts_with("riz-install "))
-        .unwrap_or_else(|| panic!("no `riz-install` log line in:\n{stdout}"));
-    serde_json::from_str(line.trim_start_matches("riz-install ")).expect("event is valid JSON")
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l.trim()).ok())
+        .find(|v| v["tag"] == "riz-install")
+        .unwrap_or_else(|| panic!("no `tag:\"riz-install\"` JSON log line in:\n{stdout}"))
 }
 
 #[test]
-fn install_endpoint_logs_geo_platform_event_and_returns_204() {
+fn beacon_logs_tagged_geo_platform_event_and_returns_204() {
     if !node_available() {
         eprintln!("SKIP install_telemetry: node not on PATH");
         return;
@@ -71,6 +73,8 @@ fn install_endpoint_logs_geo_platform_event_and_returns_204() {
     );
 
     let v = parse_event(&stdout);
+    // clean tagged JSON — filterable in Vercel Logs / drains
+    assert_eq!(v["tag"], "riz-install");
     assert_eq!(v["event"], "install");
     assert_eq!(v["stage"], "success");
     // platform (sent by the install script)
@@ -93,13 +97,13 @@ fn install_endpoint_logs_geo_platform_event_and_returns_204() {
 }
 
 #[test]
-fn install_endpoint_is_robust_to_missing_geo_and_params() {
+fn beacon_is_robust_to_missing_geo_and_params() {
     if !node_available() {
         eprintln!("SKIP install_telemetry: node not on PATH");
         return;
     }
-    // No query params, no geo headers — must still return 204 and log nulls,
-    // defaulting stage to "start".
+    // No query params, no geo headers — must still return 204 and log a tagged
+    // event with nulls, defaulting stage to "start".
     let (stdout, stderr, ok) = run_handler("/api/install", "{}");
     assert!(ok, "node failed: {stderr}");
     assert!(
@@ -107,6 +111,7 @@ fn install_endpoint_is_robust_to_missing_geo_and_params() {
         "expected 204 even with no data; got:\n{stdout}"
     );
     let v = parse_event(&stdout);
+    assert_eq!(v["tag"], "riz-install");
     assert_eq!(v["event"], "install");
     assert_eq!(v["stage"], "start", "stage should default to start");
     assert!(v["os"].is_null());
