@@ -62,6 +62,7 @@
     <a href="#static">Static files</a>
     <span class="grp">Operate</span>
     <a href="#endpoints">Endpoints</a>
+    <a href="#observability">Observability</a>
     <a href="#cli">CLI</a>
     <a href="#lifecycle">Lifecycle</a>
   </aside>
@@ -217,6 +218,23 @@ required = <span class="n">true</span></pre>
       <tr><td><code>POST /cache/invalidate</code></td><td>bearer</td><td>evict cached responses by key or prefix</td></tr>
     </table>
     <p>"bearer" = gated when <code>RIZ_AUTH_BEARER_TOKEN</code> / <code>[auth] bearer_token</code> is set (constant-time compare); open for local dev when unset.</p>
+
+    <h2 id="observability">Observability</h2>
+    <p>riz exports <b>traces</b> as <b>OTLP/HTTP-JSON</b> to <code>&lt;endpoint&gt;/v1/traces</code> — spec-correct hex ids, a <code>service.name = riz</code> resource attribute — so any OTLP backend accepts them. There is exactly <b>one</b> export path: every backend below is the same POST with a different <code>endpoint</code> + <code>headers</code>. Independently, <code>GET /_riz/metrics</code> serves <b>Prometheus</b> text.</p>
+    <pre data-riz-toml><span class="k">[telemetry]</span>
+enabled  = true
+endpoint = "http://localhost:4318"   <span class="c"># any OTLP/HTTP collector or agent base URL</span>
+
+<span class="k">[telemetry.headers]</span>           <span class="c"># optional — added verbatim to every export</span>
+<span class="c"># x-honeycomb-team = "your-key"</span></pre>
+    <table>
+      <tr><th>backend</th><th><code>endpoint</code></th><th><code>[telemetry.headers]</code></th></tr>
+      <tr><td>OTel Collector · Grafana Tempo · Jaeger</td><td><code>http://localhost:4318</code></td><td>—</td></tr>
+      <tr><td>Datadog — Agent / Collector OTLP receiver</td><td><code>http://localhost:4318</code></td><td>— (enable the agent's OTLP ingest on <code>:4318</code>)</td></tr>
+      <tr><td>Honeycomb</td><td><code>https://api.honeycomb.io</code></td><td><code>x-honeycomb-team</code></td></tr>
+      <tr><td>AWS X-Ray — via ADOT / OTel Collector</td><td><code>http://localhost:4318</code></td><td>—</td></tr>
+    </table>
+    <p>The GA route to any vendor is an OTLP collector/agent — riz never speaks a vendor wire protocol (no StatsD, no X-Ray UDP). Datadog's <b>agentless</b> OTLP trace intake (a <code>dd-api-key</code> header straight to Datadog) is GA for metrics/logs but <b>Preview for traces</b>; use the Agent/Collector path until you have access. LLM-gateway spans carry OpenTelemetry <b>GenAI</b> attributes (<code>gen_ai.usage.input_tokens</code> / <code>output_tokens</code>, <code>gen_ai.request.model</code>, <code>gen_ai.provider.name</code>), so Datadog LLM Observability and similar classify them automatically. Copy-paste blocks for every backend: <code>docs/integrations/observability.md</code>.</p>
 
     <h2 id="cli">CLI</h2>
     <table>
