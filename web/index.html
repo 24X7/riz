@@ -25,6 +25,7 @@
   <!-- Turbo Drive: same-origin .html nav without full reloads. Self-hosted; routing/extensions unchanged. -->
   <script src="turbo.min.js"></script>
   <script defer src="nav.js"></script>
+  <script defer src="/_vercel/insights/script.js"></script>
   <script defer src="demo.js"></script>
   <script type="application/ld+json">
   {
@@ -114,7 +115,7 @@
     <div class="install-line">
       <span class="ps">$</span>
       <span class="cmd">curl -fsSL https://riz.dev/install | sh</span>
-      <button onclick="navigator.clipboard.writeText('curl -fsSL https://riz.dev/install | sh');this.textContent='copied'">copy</button>
+      <button onclick="navigator.clipboard.writeText('curl -fsSL https://riz.dev/install | sh');this.textContent='copied';if(window.va)window.va('event',{name:'install'})">copy</button>
     </div>
     <p class="agent-aside">
       // reading this as an agent? <a href="llms.txt" data-turbo="false">llms.txt</a> ·
