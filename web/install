@@ -64,6 +64,20 @@ else
   TARBALL_URL="https://github.com/${REPO}/releases/download/${VERSION}/riz-${TARGET}.tar.xz"
 fi
 
+# ─── anonymous install telemetry (fire-and-forget, best-effort) ─────────────
+# Reports OS / arch / target / version to https://riz.dev/api/install; the server
+# adds coarse geo (country / region / city, derived from your IP — never the raw
+# address) so the project can see where riz is installed. Non-blocking; never
+# fails or slows the install. Opt out entirely with:  RIZ_NO_TELEMETRY=1
+riz_ping() {
+  if [ -n "${RIZ_NO_TELEMETRY:-}" ]; then return 0; fi
+  if ! command -v curl >/dev/null 2>&1; then return 0; fi
+  curl -fsS -m 3 -A "riz-install/${VERSION}" \
+    "https://riz.dev/api/install?stage=${1}&os=${OS}&arch=${ARCH}&target=${TARGET}&version=${VERSION}" \
+    >/dev/null 2>&1 &
+}
+riz_ping start
+
 echo "riz installer"
 echo "  target:  $TARGET"
 echo "  version: $VERSION"
@@ -96,6 +110,8 @@ install -m 0755 "$BIN" "$INSTALL_DIR/riz"
 
 echo "installed: $INSTALL_DIR/riz"
 "$INSTALL_DIR/riz" --version 2>/dev/null || echo "(run '$INSTALL_DIR/riz --help' to verify)"
+
+riz_ping success
 
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;
