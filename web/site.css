@@ -430,6 +430,9 @@ h2.sec em{font-style:normal;color:var(--acid)}
 }
 .doc-side a:hover{color:var(--t-max)}
 .doc-side a.on{color:var(--acid);border-left-color:var(--acid)}
+/* keep long code lines inside their block (scroll) instead of widening the page */
+.doc-main{min-width:0}
+.doc-main pre{max-width:100%;overflow-x:auto}
 .doc-main h1{
   font-size:2.5rem;font-weight:700;letter-spacing:-0.035em;color:var(--t-max);
   margin-bottom:.8rem;line-height:1.05;
@@ -561,7 +564,25 @@ footer{border-top:1px solid var(--line);margin-top:4rem;background:var(--ink-2)}
   .step{grid-template-columns:64px minmax(0,1fr)}
   .step .well{grid-column:1 / -1}
   .doc-shell{grid-template-columns:minmax(0,1fr)}
-  .doc-side{position:static;flex-direction:row;flex-wrap:wrap;border-left:none;gap:.4rem}
+  /* mobile: the side nav becomes a clean horizontal scroll strip of pills,
+     sticky under the top nav — no wrapping jumble, no inline group labels */
+  .doc-side{
+    position:sticky;top:var(--nav-h);z-index:6;
+    flex-direction:row;flex-wrap:nowrap;overflow-x:auto;gap:.45rem;
+    border-left:none;padding:.6rem 0;margin:0 0 1.4rem;
+    background:rgba(10,10,11,0.94);backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line);scrollbar-width:none;
+  }
+  .doc-side::-webkit-scrollbar{display:none}
+  .doc-side .grp{display:none}
+  .doc-side a{
+    white-space:nowrap;flex:0 0 auto;margin-left:0;padding:.4rem .8rem;
+    border-left:none;border-radius:8px;background:var(--ink-2);
+    border:1px solid var(--line);font-size:.85rem;
+  }
+  .doc-side a.on{color:var(--acid);border-color:var(--acid-30);background:var(--acid-08)}
+  /* wide tables scroll within their block instead of dragging the page wide */
+  .doc-main table{display:block;overflow-x:auto;white-space:nowrap}
   .foot-in{grid-template-columns:1fr 1fr}
   /* one column: the code panel pins to the top, steps scroll beneath it */
   .scrolly{display:block}
