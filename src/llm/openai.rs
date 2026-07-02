@@ -51,6 +51,13 @@ impl OpenAiProvider {
         if let Some(m) = req.max_tokens {
             body["max_tokens"] = serde_json::json!(m);
         }
+        // Tool calling passes through verbatim — same wire format upstream.
+        if !req.tools.is_empty() {
+            body["tools"] = serde_json::json!(req.tools);
+        }
+        if let Some(tc) = &req.tool_choice {
+            body["tool_choice"] = tc.clone();
+        }
 
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
         let mut rb = self.client.post(&url).json(&body);
@@ -133,13 +140,12 @@ mod tests {
     fn req(model: &str) -> ChatRequest {
         ChatRequest {
             model: model.into(),
-            messages: vec![ChatMessage {
-                role: "user".into(),
-                content: "hi".into(),
-            }],
+            messages: vec![ChatMessage::text("user", "hi")],
             stream: false,
             temperature: None,
             max_tokens: None,
+            tools: vec![],
+            tool_choice: None,
         }
     }
 
@@ -173,8 +179,67 @@ mod tests {
         let p = OpenAiProvider::new("openai".into(), base, Some("sk-test".into()));
         let out = p.chat(&req("openai/gpt-4o")).await.unwrap();
         assert_eq!(out.id, "chatcmpl-upstream");
-        assert_eq!(out.choices[0].message.content, "hi from upstream");
+        assert_eq!(out.choices[0].message.text_content(), "hi from upstream");
         assert_eq!(out.usage.total_tokens, 7);
+    }
+
+    #[tokio::test]
+    async fn forwards_tools_and_parses_tool_calls_response() {
+        // Upstream echoes the request body into a header-free capture and
+        // answers with an OpenAI tool-call turn (content: null).
+        let (tx, rx) = std::sync::mpsc::channel::<serde_json::Value>();
+        let base = spawn(axum::Router::new().route(
+            "/chat/completions",
+            axum::routing::post(move |axum::Json(body): axum::Json<serde_json::Value>| {
+                tx.send(body).unwrap();
+                async {
+                    axum::Json(serde_json::json!({
+                        "id": "chatcmpl-t",
+                        "object": "chat.completion",
+                        "created": 1,
+                        "model": "gpt-4o",
+                        "choices": [{
+                            "index": 0,
+                            "message": {
+                                "role": "assistant",
+                                "content": null,
+                                "tool_calls": [{
+                                    "id": "call_up1",
+                                    "type": "function",
+                                    "function": {"name": "lookup_order", "arguments": "{\"order_id\":\"42\"}"}
+                                }]
+                            },
+                            "finish_reason": "tool_calls"
+                        }],
+                        "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}
+                    }))
+                }
+            }),
+        ))
+        .await;
+
+        let mut r = req("openai/gpt-4o");
+        r.tools = vec![serde_json::from_value(serde_json::json!({
+            "type": "function",
+            "function": {"name": "lookup_order", "parameters": {"type": "object"}}
+        }))
+        .unwrap()];
+        r.tool_choice = Some(serde_json::json!("auto"));
+
+        let p = OpenAiProvider::new("openai".into(), base, None);
+        let out = p.chat(&r).await.expect("tool-call response must parse");
+
+        let sent = rx.recv().unwrap();
+        assert_eq!(sent["tools"][0]["function"]["name"], "lookup_order");
+        assert_eq!(sent["tool_choice"], "auto");
+
+        assert_eq!(out.choices[0].finish_reason, "tool_calls");
+        assert_eq!(out.choices[0].message.content, None);
+        assert_eq!(out.choices[0].message.tool_calls[0].id, "call_up1");
+        assert_eq!(
+            out.choices[0].message.tool_calls[0].function.arguments,
+            "{\"order_id\":\"42\"}"
+        );
     }
 
     #[tokio::test]

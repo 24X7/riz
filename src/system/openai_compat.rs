@@ -168,12 +168,13 @@ fn stream_response(
     let id = resp.id;
     let created = resp.created;
     let model = resp.model;
-    let content = resp
-        .choices
-        .into_iter()
-        .next()
-        .map(|c| c.message.content)
-        .unwrap_or_default();
+    let (content, tool_calls, finish) = match resp.choices.into_iter().next() {
+        Some(c) if !c.message.tool_calls.is_empty() => {
+            (String::new(), c.message.tool_calls, "tool_calls")
+        }
+        Some(c) => (c.message.content.unwrap_or_default(), Vec::new(), "stop"),
+        None => (String::new(), Vec::new(), "stop"),
+    };
 
     let mut events: Vec<Result<Event, Infallible>> = Vec::new();
     // 1. Opening role delta.
@@ -184,21 +185,45 @@ fn stream_response(
         json!({ "role": "assistant" }),
         None,
     )));
-    // 2. Content deltas, preserving spacing so concatenation == the original.
-    for (i, word) in content.split(' ').enumerate() {
-        let piece = if i == 0 {
-            word.to_string()
-        } else {
-            format!(" {word}")
-        };
-        if piece.is_empty() {
-            continue;
+    if tool_calls.is_empty() {
+        // 2a. Content deltas, preserving spacing so concatenation == the original.
+        for (i, word) in content.split(' ').enumerate() {
+            let piece = if i == 0 {
+                word.to_string()
+            } else {
+                format!(" {word}")
+            };
+            if piece.is_empty() {
+                continue;
+            }
+            events.push(Ok(chunk_event(
+                &id,
+                created,
+                &model,
+                json!({ "content": piece }),
+                None,
+            )));
         }
+    } else {
+        // 2b. Tool-call turn: one delta carrying the indexed tool_calls array —
+        // the OpenAI streaming shape clients accumulate by index.
+        let calls: Vec<_> = tool_calls
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                json!({
+                    "index": i,
+                    "id": c.id,
+                    "type": "function",
+                    "function": { "name": c.function.name, "arguments": c.function.arguments },
+                })
+            })
+            .collect();
         events.push(Ok(chunk_event(
             &id,
             created,
             &model,
-            json!({ "content": piece }),
+            json!({ "tool_calls": calls }),
             None,
         )));
     }
@@ -208,7 +233,7 @@ fn stream_response(
         created,
         &model,
         json!({}),
-        Some("stop"),
+        Some(finish),
     )));
     events.push(Ok(Event::default().data("[DONE]")));
 

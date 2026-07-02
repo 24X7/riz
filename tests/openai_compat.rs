@@ -258,6 +258,164 @@ async fn streaming_returns_openai_sse_chunks() {
     assert!(body.contains("[DONE]"), "must end with [DONE]; got: {body}");
 }
 
+// ───────────────────────── Tool calling (OpenAI `tools`) ───────────────────
+// The agentic contract: a client sends `tools`, the model (mock here) answers
+// with `tool_calls`; the client executes and replies with a `role:"tool"`
+// message; the next turn produces a final text answer. All offline via mock.
+
+fn order_tool() -> serde_json::Value {
+    serde_json::json!({
+        "type": "function",
+        "function": {
+            "name": "lookup_order",
+            "description": "Look up an order by id",
+            "parameters": {
+                "type": "object",
+                "properties": { "order_id": { "type": "string" } },
+                "required": ["order_id"]
+            }
+        }
+    })
+}
+
+#[tokio::test]
+async fn chat_completions_with_tools_returns_tool_calls() {
+    let addr = boot(GATEWAY_CFG).await;
+    let base = format!("http://{addr}");
+    wait_ready(&base).await;
+
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/_riz/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": "mock",
+            "messages": [{"role": "user", "content": "where is order 42?"}],
+            "tools": [order_tool()]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let msg = &body["choices"][0]["message"];
+    assert_eq!(
+        body["choices"][0]["finish_reason"], "tool_calls",
+        "tools in the request must elicit a tool_calls turn: {body}"
+    );
+    assert_eq!(msg["role"], "assistant");
+    assert!(
+        msg["content"].is_null(),
+        "assistant tool_calls message carries content: null: {body}"
+    );
+    let call = &msg["tool_calls"][0];
+    assert_eq!(call["type"], "function");
+    assert_eq!(call["function"]["name"], "lookup_order");
+    assert!(
+        call["id"].as_str().unwrap().starts_with("call_"),
+        "tool call ids use the call_ prefix: {body}"
+    );
+    // `arguments` is a JSON-encoded STRING per the OpenAI wire format.
+    let args = call["function"]["arguments"].as_str().unwrap();
+    let _: serde_json::Value = serde_json::from_str(args).expect("arguments is a JSON string");
+}
+
+#[tokio::test]
+async fn chat_completions_tool_result_turn_returns_text() {
+    let addr = boot(GATEWAY_CFG).await;
+    let base = format!("http://{addr}");
+    wait_ready(&base).await;
+
+    // Full agent loop, turn 2: the client executed the tool and reports back.
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/_riz/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": "mock",
+            "messages": [
+                {"role": "user", "content": "where is order 42?"},
+                {"role": "assistant", "content": null, "tool_calls": [{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "lookup_order", "arguments": "{\"order_id\":\"42\"}"}
+                }]},
+                {"role": "tool", "tool_call_id": "call_1", "content": "{\"status\":\"shipped\"}"}
+            ],
+            "tools": [order_tool()]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(
+        body["choices"][0]["finish_reason"], "stop",
+        "after a tool result the turn must complete with text: {body}"
+    );
+    let content = body["choices"][0]["message"]["content"].as_str().unwrap();
+    assert!(
+        content.contains("shipped"),
+        "final answer must incorporate the tool result: {content}"
+    );
+}
+
+#[tokio::test]
+async fn chat_completions_tool_choice_none_returns_text() {
+    let addr = boot(GATEWAY_CFG).await;
+    let base = format!("http://{addr}");
+    wait_ready(&base).await;
+
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/_riz/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": "mock",
+            "messages": [{"role": "user", "content": "just chat"}],
+            "tools": [order_tool()],
+            "tool_choice": "none"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["choices"][0]["finish_reason"], "stop");
+    assert!(
+        body["choices"][0]["message"]["tool_calls"].is_null(),
+        "tool_choice: none must suppress tool calls: {body}"
+    );
+    assert!(body["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap()
+        .contains("just chat"));
+}
+
+#[tokio::test]
+async fn streaming_with_tools_emits_tool_call_chunks() {
+    let addr = boot(GATEWAY_CFG).await;
+    let base = format!("http://{addr}");
+    wait_ready(&base).await;
+
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/_riz/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": "mock",
+            "messages": [{"role": "user", "content": "where is order 42?"}],
+            "tools": [order_tool()],
+            "stream": true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("\"tool_calls\""),
+        "streamed tool-call turn must carry a tool_calls delta; got: {body}"
+    );
+    assert!(
+        body.contains("\"finish_reason\":\"tool_calls\""),
+        "streamed tool-call turn must finish with tool_calls; got: {body}"
+    );
+    assert!(body.contains("[DONE]"), "must end with [DONE]; got: {body}");
+}
+
 // ───────────────────────── Bearer gating (money endpoints) ─────────────────
 // The gateway endpoints spend real provider budget — when a bearer token is
 // configured they MUST 401 without it, exactly like the rest of /_riz/*.

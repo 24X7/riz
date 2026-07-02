@@ -12,7 +12,10 @@
 
 use serde::Deserialize;
 
-use super::types::{ChatChoice, ChatMessage, ChatRequest, ChatResponse, EmbeddingsResponse, Usage};
+use super::types::{
+    ChatChoice, ChatMessage, ChatRequest, ChatResponse, EmbeddingsResponse, Tool, ToolCall,
+    ToolCallFunction, Usage,
+};
 use super::ProviderError;
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -52,7 +55,7 @@ impl AnthropicProvider {
             ));
         }
         let model = strip_prefix(&req.model, &self.name);
-        let (system, messages) = split_system(&req.messages);
+        let (system, messages) = map_messages(&req.messages);
         let mut body = serde_json::json!({
             "model": model,
             "max_tokens": req.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
@@ -60,6 +63,13 @@ impl AnthropicProvider {
         });
         if !system.is_empty() {
             body["system"] = serde_json::json!(system);
+        }
+        // `tool_choice: "none"` (wants_tools() == false) omits tools entirely.
+        if req.wants_tools() {
+            body["tools"] = serde_json::json!(map_tools(&req.tools));
+            if let Some(tc) = req.tool_choice.as_ref().and_then(map_tool_choice) {
+                body["tool_choice"] = tc;
+            }
         }
 
         let url = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
@@ -100,6 +110,24 @@ impl AnthropicProvider {
             .map(|b| b.text.as_str())
             .collect::<Vec<_>>()
             .join("");
+        let tool_calls: Vec<ToolCall> = parsed
+            .content
+            .iter()
+            .filter(|b| b.block_type == "tool_use")
+            .map(|b| ToolCall {
+                id: b.id.clone(),
+                call_type: "function".into(),
+                function: ToolCallFunction {
+                    name: b.name.clone(),
+                    // OpenAI carries arguments as a JSON-encoded string.
+                    arguments: if b.input.is_null() {
+                        "{}".into()
+                    } else {
+                        b.input.to_string()
+                    },
+                },
+            })
+            .collect();
         let finish_reason = match parsed.stop_reason.as_deref() {
             Some("max_tokens") => "length",
             Some("tool_use") => "tool_calls",
@@ -107,6 +135,18 @@ impl AnthropicProvider {
         }
         .to_string();
 
+        let message = ChatMessage {
+            role: "assistant".into(),
+            // A pure tool-call turn is `content: null` on the OpenAI wire.
+            content: if content.is_empty() && !tool_calls.is_empty() {
+                None
+            } else {
+                Some(content)
+            },
+            tool_calls,
+            tool_call_id: None,
+            name: None,
+        };
         Ok(ChatResponse {
             id: format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()),
             object: "chat.completion".into(),
@@ -117,10 +157,7 @@ impl AnthropicProvider {
             model: req.model.clone(),
             choices: vec![ChatChoice {
                 index: 0,
-                message: ChatMessage {
-                    role: "assistant".into(),
-                    content,
-                },
+                message,
                 finish_reason,
             }],
             usage: Usage {
@@ -152,22 +189,90 @@ fn strip_prefix(model: &str, name: &str) -> String {
         .to_string()
 }
 
-/// Split OpenAI-style messages into Anthropic's (system, messages) shape: system
-/// turns are concatenated into the top-level system string; user/assistant turns
-/// pass through.
-fn split_system(messages: &[ChatMessage]) -> (String, Vec<serde_json::Value>) {
+/// Map OpenAI-style messages into Anthropic's (system, messages) shape:
+///   - system turns concatenate into the top-level `system` string;
+///   - assistant turns with `tool_calls` become `tool_use` content blocks;
+///   - `role: "tool"` results become `tool_result` blocks in a user turn,
+///     merging consecutive results into ONE user turn (Anthropic requires
+///     strictly alternating roles);
+///   - plain user/assistant turns pass through.
+fn map_messages(messages: &[ChatMessage]) -> (String, Vec<serde_json::Value>) {
     let system = messages
         .iter()
         .filter(|m| m.role == "system")
-        .map(|m| m.content.as_str())
+        .map(|m| m.text_content())
         .collect::<Vec<_>>()
         .join("\n\n");
-    let turns = messages
-        .iter()
-        .filter(|m| m.role != "system")
-        .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
-        .collect();
+
+    let mut turns: Vec<serde_json::Value> = Vec::new();
+    for m in messages.iter().filter(|m| m.role != "system") {
+        if m.role == "tool" {
+            let block = serde_json::json!({
+                "type": "tool_result",
+                "tool_use_id": m.tool_call_id.clone().unwrap_or_default(),
+                "content": m.text_content(),
+            });
+            if let Some(last) = turns.last_mut() {
+                if last["role"] == "user" && last["content"].is_array() {
+                    last["content"].as_array_mut().expect("checked").push(block);
+                    continue;
+                }
+            }
+            turns.push(serde_json::json!({ "role": "user", "content": [block] }));
+        } else if !m.tool_calls.is_empty() {
+            let mut blocks = Vec::new();
+            if !m.text_content().is_empty() {
+                blocks.push(serde_json::json!({ "type": "text", "text": m.text_content() }));
+            }
+            for c in &m.tool_calls {
+                let input: serde_json::Value = serde_json::from_str(&c.function.arguments)
+                    .unwrap_or_else(|_| serde_json::json!({}));
+                blocks.push(serde_json::json!({
+                    "type": "tool_use",
+                    "id": c.id,
+                    "name": c.function.name,
+                    "input": input,
+                }));
+            }
+            turns.push(serde_json::json!({ "role": "assistant", "content": blocks }));
+        } else {
+            turns.push(serde_json::json!({ "role": m.role, "content": m.text_content() }));
+        }
+    }
     (system, turns)
+}
+
+/// OpenAI `tools[]` → Anthropic `tools[]` (`parameters` → `input_schema`).
+fn map_tools(tools: &[Tool]) -> Vec<serde_json::Value> {
+    tools
+        .iter()
+        .map(|t| {
+            let mut tool = serde_json::json!({
+                "name": t.function.name,
+                "input_schema": t.function.parameters.clone()
+                    .unwrap_or_else(|| serde_json::json!({ "type": "object" })),
+            });
+            if let Some(d) = &t.function.description {
+                tool["description"] = serde_json::json!(d);
+            }
+            tool
+        })
+        .collect()
+}
+
+/// OpenAI `tool_choice` → Anthropic `tool_choice`. `"none"` never reaches here
+/// (the caller omits tools entirely); unknown shapes fall back to omitting.
+fn map_tool_choice(tc: &serde_json::Value) -> Option<serde_json::Value> {
+    match tc.as_str() {
+        Some("auto") => Some(serde_json::json!({ "type": "auto" })),
+        Some("required") => Some(serde_json::json!({ "type": "any" })),
+        Some(_) => None,
+        None => tc
+            .get("function")
+            .and_then(|f| f.get("name"))
+            .and_then(|n| n.as_str())
+            .map(|name| serde_json::json!({ "type": "tool", "name": name })),
+    }
 }
 
 #[derive(Deserialize)]
@@ -186,6 +291,13 @@ struct AnthropicBlock {
     block_type: String,
     #[serde(default)]
     text: String,
+    // `tool_use` block fields.
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    input: serde_json::Value,
 }
 
 #[derive(Deserialize, Default)]
@@ -201,25 +313,101 @@ mod tests {
     use super::*;
 
     #[test]
-    fn split_system_separates_system_from_turns() {
+    fn map_messages_separates_system_from_turns() {
         let msgs = vec![
-            ChatMessage {
-                role: "system".into(),
-                content: "be terse".into(),
-            },
-            ChatMessage {
-                role: "user".into(),
-                content: "hi".into(),
-            },
-            ChatMessage {
-                role: "assistant".into(),
-                content: "hello".into(),
-            },
+            ChatMessage::text("system", "be terse"),
+            ChatMessage::text("user", "hi"),
+            ChatMessage::text("assistant", "hello"),
         ];
-        let (system, turns) = split_system(&msgs);
+        let (system, turns) = map_messages(&msgs);
         assert_eq!(system, "be terse");
         assert_eq!(turns.len(), 2, "system turn must be removed from messages");
         assert_eq!(turns[0]["role"], "user");
+    }
+
+    #[test]
+    fn map_messages_converts_tool_turns_to_anthropic_blocks() {
+        let assistant_call: ChatMessage = serde_json::from_value(serde_json::json!({
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "lookup_order", "arguments": "{\"order_id\":\"42\"}"}
+            }]
+        }))
+        .unwrap();
+        let tool_result: ChatMessage = serde_json::from_value(serde_json::json!({
+            "role": "tool", "tool_call_id": "call_1", "content": "shipped"
+        }))
+        .unwrap();
+        let second_result: ChatMessage = serde_json::from_value(serde_json::json!({
+            "role": "tool", "tool_call_id": "call_2", "content": "in stock"
+        }))
+        .unwrap();
+
+        let msgs = vec![
+            ChatMessage::text("user", "where is order 42?"),
+            assistant_call,
+            tool_result,
+            second_result,
+        ];
+        let (_, turns) = map_messages(&msgs);
+        assert_eq!(
+            turns.len(),
+            3,
+            "consecutive tool results merge into one user turn"
+        );
+
+        let call_turn = &turns[1];
+        assert_eq!(call_turn["role"], "assistant");
+        assert_eq!(call_turn["content"][0]["type"], "tool_use");
+        assert_eq!(call_turn["content"][0]["name"], "lookup_order");
+        assert_eq!(
+            call_turn["content"][0]["input"]["order_id"], "42",
+            "arguments string must decode into the input object"
+        );
+
+        let result_turn = &turns[2];
+        assert_eq!(result_turn["role"], "user");
+        assert_eq!(result_turn["content"][0]["type"], "tool_result");
+        assert_eq!(result_turn["content"][0]["tool_use_id"], "call_1");
+        assert_eq!(result_turn["content"][1]["tool_use_id"], "call_2");
+    }
+
+    #[test]
+    fn maps_openai_tools_and_tool_choice_to_anthropic_shape() {
+        let tools: Vec<Tool> = vec![serde_json::from_value(serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "lookup_order",
+                "description": "find an order",
+                "parameters": {"type": "object", "properties": {"order_id": {"type": "string"}}}
+            }
+        }))
+        .unwrap()];
+        let mapped = map_tools(&tools);
+        assert_eq!(mapped[0]["name"], "lookup_order");
+        assert_eq!(mapped[0]["description"], "find an order");
+        assert_eq!(mapped[0]["input_schema"]["type"], "object");
+        assert!(
+            mapped[0].get("parameters").is_none(),
+            "must rename to input_schema"
+        );
+
+        assert_eq!(
+            map_tool_choice(&serde_json::json!("auto")).unwrap()["type"],
+            "auto"
+        );
+        assert_eq!(
+            map_tool_choice(&serde_json::json!("required")).unwrap()["type"],
+            "any"
+        );
+        let forced =
+            map_tool_choice(&serde_json::json!({"type":"function","function":{"name":"x"}}))
+                .unwrap();
+        assert_eq!(forced["type"], "tool");
+        assert_eq!(forced["name"], "x");
     }
 
     async fn spawn(app: axum::Router) -> String {
@@ -232,13 +420,12 @@ mod tests {
     fn req(model: &str) -> ChatRequest {
         ChatRequest {
             model: model.into(),
-            messages: vec![ChatMessage {
-                role: "user".into(),
-                content: "hi".into(),
-            }],
+            messages: vec![ChatMessage::text("user", "hi")],
             stream: false,
             temperature: None,
             max_tokens: None,
+            tools: vec![],
+            tool_choice: None,
         }
     }
 
@@ -267,13 +454,56 @@ mod tests {
 
         let p = AnthropicProvider::new("anthropic".into(), base, Some("sk-ant".into()));
         let out = p.chat(&req("anthropic/claude-opus-4-8")).await.unwrap();
-        assert_eq!(out.choices[0].message.content, "hello from claude");
+        assert_eq!(out.choices[0].message.text_content(), "hello from claude");
         assert_eq!(out.choices[0].finish_reason, "stop");
         assert_eq!(out.usage.prompt_tokens, 5);
         assert_eq!(out.usage.completion_tokens, 3);
         assert_eq!(out.usage.total_tokens, 8);
         // model echoes what the client sent (routed form)
         assert_eq!(out.model, "anthropic/claude-opus-4-8");
+    }
+
+    #[tokio::test]
+    async fn tool_use_response_maps_to_openai_tool_calls() {
+        let resp = serde_json::json!({
+            "id": "msg_t",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-opus-4-8",
+            "content": [
+                {"type": "tool_use", "id": "toolu_1", "name": "lookup_order",
+                 "input": {"order_id": "42"}}
+            ],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 5, "output_tokens": 3}
+        });
+        let base = spawn(axum::Router::new().route(
+            "/v1/messages",
+            axum::routing::post(move || {
+                let r = resp.clone();
+                async move { axum::Json(r) }
+            }),
+        ))
+        .await;
+
+        let p = AnthropicProvider::new("anthropic".into(), base, Some("sk-ant".into()));
+        let mut r = req("anthropic/claude-opus-4-8");
+        r.tools = vec![serde_json::from_value(serde_json::json!({
+            "type": "function", "function": {"name": "lookup_order"}
+        }))
+        .unwrap()];
+        let out = p.chat(&r).await.unwrap();
+
+        assert_eq!(out.choices[0].finish_reason, "tool_calls");
+        assert_eq!(
+            out.choices[0].message.content, None,
+            "pure tool turn is content: null"
+        );
+        let call = &out.choices[0].message.tool_calls[0];
+        assert_eq!(call.id, "toolu_1");
+        assert_eq!(call.function.name, "lookup_order");
+        let args: serde_json::Value = serde_json::from_str(&call.function.arguments).unwrap();
+        assert_eq!(args["order_id"], "42");
     }
 
     #[tokio::test]
