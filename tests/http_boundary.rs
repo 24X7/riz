@@ -139,6 +139,7 @@ async fn oversized_body_returns_413_for_routed_request() {
             timeout_ms: 1000,
             integration_timeout_ms: 30000,
             stage_variables: Default::default(),
+            env: Default::default(),
             cache_ttl_secs: None,
             concurrency: 1,
             routes: vec![riz::config::RouteSpec {
@@ -195,6 +196,7 @@ async fn auth_bypass_skips_cache() {
             timeout_ms: 100,
             integration_timeout_ms: 200,
             stage_variables: Default::default(),
+            env: Default::default(),
             cache_ttl_secs: Some(60),
             concurrency: 1,
             routes: vec![riz::config::RouteSpec {
@@ -318,6 +320,7 @@ async fn gateway_timeout_returns_504_for_routed_request() {
             timeout_ms: 60_000,
             integration_timeout_ms: 200, // fires before the 3000ms sleep completes
             stage_variables: Default::default(),
+            env: Default::default(),
             cache_ttl_secs: None,
             concurrency: 1,
             routes: vec![riz::config::RouteSpec {

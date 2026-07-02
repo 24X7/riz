@@ -475,6 +475,15 @@ pub struct FunctionConfig {
     /// function for simplicity.
     #[serde(default)]
     pub stage_variables: std::collections::HashMap<String, String>,
+    /// Per-function environment variables injected into the worker process at
+    /// spawn — the standard way to hand a handler its `DATABASE_URL` or API
+    /// keys without exporting them globally. Mirrors AWS Lambda's
+    /// `Environment.Variables`. riz's own variables (`AWS_LAMBDA_*`,
+    /// `_HANDLER`, runtime internals) win on conflict. Process runtimes only
+    /// (bun/node/python/rust/go); WASM guests keep their deny-by-default WASI
+    /// environment — use `stage_variables` or capability grants there.
+    #[serde(default)]
+    pub env: std::collections::HashMap<String, String>,
     /// Explicit routes this function serves. If empty, defaults to
     /// `[{ path: "/<name>", method: "ANY" }]`.
     #[serde(default)]
@@ -1420,6 +1429,7 @@ handler = "./h.ts"
             timeout_ms: 1000,
             integration_timeout_ms: 30000,
             stage_variables: Default::default(),
+            env: Default::default(),
             concurrency: 1,
             cache_ttl_secs: None,
             routes: vec![],

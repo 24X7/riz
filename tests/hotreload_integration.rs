@@ -22,6 +22,7 @@ fn bun_fn(handler: &str, concurrency: usize, ttl: Option<u64>) -> FunctionConfig
         timeout_ms: 5000,
         integration_timeout_ms: 30000,
         stage_variables: Default::default(),
+        env: Default::default(),
         cache_ttl_secs: ttl,
         concurrency,
         routes: vec![RouteSpec {

@@ -45,6 +45,7 @@ fn make_function_config(handler: PathBuf) -> FunctionConfig {
         timeout_ms: 2000,
         integration_timeout_ms: 2000,
         stage_variables: Default::default(),
+        env: Default::default(),
         cache_ttl_secs: None,
         concurrency: 1,
         routes: vec![RouteSpec {

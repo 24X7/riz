@@ -175,6 +175,7 @@ async fn request_authorizer_allows_valid_token() {
             concurrency: 1,
             cache_ttl_secs: None,
             stage_variables: Default::default(),
+            env: Default::default(),
             routes: vec![riz::config::RouteSpec {
                 path: "/auth".into(),
                 method: "ANY".into(),
@@ -201,6 +202,7 @@ async fn request_authorizer_allows_valid_token() {
             concurrency: 1,
             cache_ttl_secs: None,
             stage_variables: Default::default(),
+            env: Default::default(),
             routes: vec![riz::config::RouteSpec {
                 path: "/api".into(),
                 method: "GET".into(),
@@ -280,6 +282,7 @@ async fn request_authorizer_rejects_invalid_token() {
             concurrency: 1,
             cache_ttl_secs: None,
             stage_variables: Default::default(),
+            env: Default::default(),
             routes: vec![riz::config::RouteSpec {
                 path: "/auth".into(),
                 method: "ANY".into(),
@@ -306,6 +309,7 @@ async fn request_authorizer_rejects_invalid_token() {
             concurrency: 1,
             cache_ttl_secs: None,
             stage_variables: Default::default(),
+            env: Default::default(),
             routes: vec![riz::config::RouteSpec {
                 path: "/api".into(),
                 method: "GET".into(),
@@ -382,6 +386,7 @@ async fn authorizer_none_opt_out_allows_any_request() {
             concurrency: 1,
             cache_ttl_secs: None,
             stage_variables: Default::default(),
+            env: Default::default(),
             routes: vec![riz::config::RouteSpec {
                 path: "/api".into(),
                 method: "GET".into(),
