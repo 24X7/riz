@@ -1,8 +1,10 @@
 //! /_riz/mcp handler — full MCP-spec-compliant JSON-RPC 2.0 server.
 //!
 //! Supports the lifecycle (`initialize`, `notifications/initialized`, `ping`),
-//! tools (`tools/list`, `tools/call`), and empty implementations of
-//! `resources/list` + `prompts/list` so probing clients don't error.
+//! tools (`tools/list`, `tools/call`), resources (`resources/list` +
+//! `resources/read` — the live function registry and a generated llms.txt,
+//! see resources.rs), and an empty `prompts/list` so probing clients don't
+//! error.
 //!
 //! Each user function in the riz.toml becomes one MCP tool. tools/call
 //! assembles a ApiGatewayV2httpRequest from the supplied arguments and dispatches it
@@ -22,6 +24,7 @@
 
 mod encoding;
 mod protocol;
+mod resources;
 mod schema;
 mod tools;
 pub mod transport;
@@ -217,10 +220,14 @@ impl McpHandler {
             "tools/list" => self.tools_list_value().await,
             "tools/call" => self.tools_call_value(req.params).await,
 
-            // Resources / Prompts — Riz doesn't expose these, but return
-            // empty lists so probing clients don't choke on -32601.
-            "resources/list" => Ok(serde_json::json!({ "resources": [] })),
+            // Resources — the instance describes itself (live registry +
+            // llms.txt). See resources.rs.
+            "resources/list" => self.resources_list_value().await,
+            "resources/read" => self.resources_read_value(req.params).await,
             "resources/templates/list" => Ok(serde_json::json!({ "resourceTemplates": [] })),
+
+            // Prompts — not exposed, but an empty list keeps probing clients
+            // from choking on -32601.
             "prompts/list" => Ok(serde_json::json!({ "prompts": [] })),
 
             // Unknown method
@@ -592,14 +599,114 @@ mod tests {
         assert_eq!(resp.status_code, 202);
     }
 
+    /// A live instance describes itself over MCP: `resources/list` exposes the
+    /// function registry (JSON) and a generated llms.txt (the same when-to-use
+    /// card `riz scaffold static` writes, but always live).
     #[tokio::test]
-    async fn resources_list_returns_empty_array() {
+    async fn resources_list_exposes_registry_and_llms_txt() {
         let s = Arc::new(RizState::new());
+        s.register(user_state()).await;
         let h = McpHandler::new(s, None);
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"resources/list"}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
-        assert_eq!(body["result"]["resources"], serde_json::json!([]));
+        let resources = body["result"]["resources"].as_array().unwrap();
+        let uris: Vec<&str> = resources
+            .iter()
+            .map(|r| r["uri"].as_str().unwrap())
+            .collect();
+        assert!(uris.contains(&"riz://registry"), "got: {body}");
+        assert!(uris.contains(&"riz://llms.txt"), "got: {body}");
+        let reg = resources
+            .iter()
+            .find(|r| r["uri"] == "riz://registry")
+            .unwrap();
+        assert_eq!(reg["mimeType"], "application/json", "got: {body}");
+        let llms = resources
+            .iter()
+            .find(|r| r["uri"] == "riz://llms.txt")
+            .unwrap();
+        assert_eq!(llms["mimeType"], "text/markdown", "got: {body}");
+    }
+
+    #[tokio::test]
+    async fn resources_read_returns_live_contents() {
+        let s = Arc::new(RizState::new());
+        s.register(user_state()).await;
+        let h = McpHandler::new(s, None);
+
+        // The registry resource is the live function registry as JSON.
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"riz://registry"}}"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
+        let content = &body["result"]["contents"][0];
+        assert_eq!(content["uri"], "riz://registry", "got: {body}");
+        let reg: serde_json::Value =
+            serde_json::from_str(content["text"].as_str().unwrap()).expect("registry is JSON");
+        assert!(
+            reg["functions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f["name"] == "api"),
+            "registry must list the live function: {reg}"
+        );
+
+        // The llms.txt resource describes the same tool surface tools/list
+        // advertises.
+        let req = r#"{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"riz://llms.txt"}}"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
+        let text = body["result"]["contents"][0]["text"].as_str().unwrap();
+        assert!(
+            text.contains("### api"),
+            "llms.txt must list the tool: {text}"
+        );
+        assert!(
+            text.contains("/_riz/mcp"),
+            "must advertise the endpoint: {text}"
+        );
+
+        // Unknown uri → the MCP resource-not-found error.
+        let req =
+            r#"{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"riz://nope"}}"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
+        assert_eq!(body["error"]["code"], -32002, "got: {body}");
+    }
+
+    /// WS functions aren't callable tools, so the llms.txt resource must not
+    /// advertise them either (mirrors tools/list).
+    #[tokio::test]
+    async fn resources_llms_txt_excludes_websocket_functions() {
+        let s = Arc::new(RizState::new());
+        let mut ws_cfg = user_state().config.clone().expect("user_state has config");
+        ws_cfg.protocol = crate::config::Protocol::WebSocket;
+        s.register(FunctionState::user("chat-ws", ws_cfg, "$default", 0))
+            .await;
+        s.register(user_state()).await;
+        let h = McpHandler::new(s, None);
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"riz://llms.txt"}}"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
+        let text = body["result"]["contents"][0]["text"].as_str().unwrap();
+        assert!(
+            !text.contains("chat-ws"),
+            "WS functions must not appear: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn initialize_advertises_resources_capability() {
+        let s = Arc::new(RizState::new());
+        let h = McpHandler::new(s, None);
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
+        assert!(
+            body["result"]["capabilities"]["resources"].is_object(),
+            "resources capability must be advertised: {body}"
+        );
     }
 
     #[tokio::test]
