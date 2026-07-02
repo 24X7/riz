@@ -11,9 +11,10 @@
   "binary_size": "~35 MB single static Rust binary (wasmtime embedded)",
   "operating_systems": ["Linux", "macOS"],
   "architectures": ["x86_64", "aarch64"],
-  "install_one_liner": "cargo install --git https://github.com/24X7/riz",
+  "install_one_liner": "curl -fsSL https://riz.dev/install | sh",
+  "install_from_source": "cargo install --git https://github.com/24X7/riz",
   "adopt_in_3_lines": [
-    "cargo install --git https://github.com/24X7/riz",
+    "curl -fsSL https://riz.dev/install | sh",
     "riz init typescript-http my-app && cd my-app",
     "riz run"
   ],

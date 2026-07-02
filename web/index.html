@@ -131,7 +131,7 @@
     <span><b class="acid">900+</b> tests, every claim pinned to one</span>
     <span><b>6</b> runtimes — bun · node · python · rust · go · wasm</span>
     <span><b>0</b> per-request cold starts</span>
-    <span><b>91k</b> req/s · p99 &lt; 1ms <span style="opacity:.6">(bench recipe in repo)</span></span>
+    <span><b>91k</b> req/s · p99 &lt; 1ms <a href="https://github.com/24X7/riz/tree/main/benches" target="_blank" style="opacity:.6;color:inherit;text-decoration:underline">(bench recipe)</a></span>
     <span><b>1</b> binary you own</span>
   </div>
 </div>
@@ -300,7 +300,7 @@ agent ▸ get_order {"id":"1042"}
         <h3>1 · A handler you'd write anyway</h3>
         <p class="lead">No framework, no router, no middleware stack to choose. The AWS handler shape you already know — <b>if it runs on Lambda, it runs here.</b></p>
         <div class="well" style="margin-top:1.2rem">
-          <div class="well-hd"><b>index.ts</b><span>bun · node · python · rust · wasm</span></div>
+          <div class="well-hd"><b>index.ts</b><span>bun · node · python · rust · go · wasm</span></div>
           <pre><span class="k">export const</span> handler = <span class="k">async</span> (event) => ({
   statusCode: <span class="n">200</span>,
   body: JSON.stringify({

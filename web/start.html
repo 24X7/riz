@@ -63,6 +63,19 @@
 
 <section style="padding-top:3rem">
   <div class="wrap">
+    <!-- copy-all quickstart: the promised 3 lines, plus the agent hookup, in one block -->
+    <div class="well" style="margin-bottom:3rem">
+      <div class="well-hd"><b>adopt in 3 lines · agent hookup included</b>
+        <button onclick="navigator.clipboard.writeText('curl -fsSL https://riz.dev/install | sh\nriz init typescript-http my-app &amp;&amp; cd my-app\nriz --dev\n# second shell:\ncurl localhost:3000/hello\nclaude mcp add riz --transport http http://localhost:3000/_riz/mcp');this.textContent='copied';if(window.va)window.va('event',{name:'copy-quickstart'})">copy all</button>
+      </div>
+      <pre>curl -fsSL https://riz.dev/install | sh
+riz init typescript-http my-app &amp;&amp; cd my-app
+riz --dev
+<span class="c"># second shell:</span>
+curl localhost:3000/hello
+claude mcp add riz --transport http http://localhost:3000/_riz/mcp</pre>
+    </div>
+
     <!-- no-JS / reduced-motion fallback: reveal all panels, drop the sticky -->
     <noscript><style>
       .scrolly-sticky{position:static!important}
@@ -96,13 +109,13 @@ $ riz init --list</pre>
           <pre>$ riz --dev
 
 <span class="c"># http API + MCP server are both live:</span>
-<span class="c">#   http://localhost:3000/api</span>
+<span class="c">#   http://localhost:3000/hello</span>
 <span class="c">#   http://localhost:3000/_riz/mcp</span></pre>
         </div>
         <div class="well scrolly-panel" data-panel="3">
           <div class="well-hd"><b><span class="step-tag">04</span> · shell</b></div>
-          <pre>$ curl localhost:3000/api
-{"message":"hello from riz"}
+          <pre>$ curl localhost:3000/hello
+{"message":"hello, world", "functionName":"hello", …}
 
 <span class="c"># health · metrics · function registry</span>
 $ curl localhost:3000/_riz/health
@@ -115,9 +128,9 @@ $ curl localhost:3000/_riz/metrics</pre>
 
 $ riz mcp inspect
 <span class="k">✓</span> server riz 0.1 · protocol 2025-11-25
-<span class="k">✓</span> 1 tool: api  <span class="c">(typed params, SSE open)</span>
+<span class="k">✓</span> 1 tool: hello  <span class="c">(typed params, SSE open)</span>
 
-<span class="c"># in your agent: "call the api tool"</span></pre>
+<span class="c"># in your agent: "call the hello tool"</span></pre>
         </div>
       </div>
 

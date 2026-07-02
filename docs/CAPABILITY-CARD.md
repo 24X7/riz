@@ -1,7 +1,7 @@
 # riz · Capability Card
 
 > **Lambda for the agent era. Your APIs become MCP tools.**
-> Self-hosted AWS Lambda runtime in one ~10 MB Rust binary.
+> Self-hosted AWS Lambda runtime in one ~35 MB Rust binary.
 
 ---
 
@@ -11,7 +11,7 @@
 |---|---|
 | **What it is** | Self-hosted AWS HTTP API v2 + WebSocket Lambda runtime |
 | **The hook** | The moment `riz run` boots, every function is a typed MCP tool an agent can call |
-| **Binary size** | ~10 MB · single static Rust binary · no Docker · no GC pauses |
+| **Binary size** | ~35 MB · single static Rust binary (wasmtime embedded) · no Docker · no GC pauses |
 | **License** | Apache-2.0 |
 | **Links** | [github.com/24X7/riz](https://github.com/24X7/riz) · [riz.dev](https://riz.dev) |
 
@@ -24,10 +24,11 @@
 | **Bun** | TypeScript / JavaScript handlers |
 | **Node.js** | JS handlers via `node` |
 | **Python** | `python3` — same `index.handler` resolution |
-| **Rust** | Pre-compiled native binary |
+| **Rust** | Pre-compiled native binary — unmodified official `lambda_runtime` binaries via the real AWS Lambda Runtime API |
+| **Go** | Pre-compiled native binary — unmodified official `aws-lambda-go` binaries via the real AWS Lambda Runtime API |
 | **WASM** | `wasm32-wasip1` under wasmtime · WASI deny-by-default fs/net · capabilities granted explicitly in `riz.toml` |
 
-All five are **cross-runtime parity-tested** — every HTTP capability (verbs, path params, headers, cookies, binary bodies, stage variables) gets an identical response across all runtimes.
+All six are **cross-runtime parity-tested** — every HTTP capability (verbs, path params, headers, cookies, binary bodies, stage variables) gets an identical response across all runtimes.
 
 ---
 
@@ -81,6 +82,8 @@ claude mcp add riz-local --transport http http://localhost:3000/_riz/mcp
 | **Always-on child safety** | `RLIMIT_CORE=0` · FD caps · fork-bomb caps · no privilege escalation · `PR_SET_NO_NEW_PRIVS` (Linux) |
 | **Opt-in per-function caps** | `memory_mb` → `RLIMIT_AS` · `cpu_time_secs` → `RLIMIT_CPU` · `allowed_paths` → Linux Landlock fs allowlist |
 | **WASI sandbox** | `runtime = "wasm"` — deny-by-default filesystem + network; capabilities granted explicitly |
+| **WASM guards** | `guard_in` / `guard_out` run a `.wasm` policy on every request/response across all six runtimes — validate, scrub, redact PII, deny; failures fail closed |
+| **Resource broker** | `[function.x.capabilities]` grants let sandboxed WASM query Postgres (Neon/Supabase/any PG) host-side — no sockets or DSNs in guest memory; deadlines, rate limits, payload caps enforced |
 
 ---
 
@@ -108,7 +111,7 @@ This measures the riz dispatch path (routing + process pool bridge). Real throug
 
 | Command | What it does |
 |---|---|
-| `riz init <template>` | Scaffold a working project — 7 templates: `typescript-http` · `nodejs-http` · `python-http` · `rust-http` · `typescript-websocket` · `python-websocket` · `rust-websocket` |
+| `riz init <template>` | Scaffold a working project — 9 templates: `typescript-http` · `nodejs-http` · `python-http` · `rust-http` · `go-http` · `typescript-websocket` · `python-websocket` · `rust-websocket` · `typescript-todo` (full-stack: Bun API + React/Vite client) |
 | `riz run` | Headless (JSON logs to stdout) — the default subcommand |
 | `riz --dev` | Boots the Ratatui terminal dashboard with hot-reload (`--dev` goes before any subcommand) |
 | `riz validate` | Config check — parse + validate `riz.toml` |
@@ -123,8 +126,8 @@ This measures the riz dispatch path (routing + process pool bridge). Real throug
 
 | Metric | Value |
 |---|---|
-| **Test count** | 778 tests (`cargo nextest run`, ~60 s) |
-| **Parity matrix** | Every HTTP capability tested identically across all 5 runtimes |
+| **Test count** | 959 tests (`cargo nextest run`) |
+| **Parity matrix** | Every HTTP capability tested identically across all 6 runtimes |
 | **Bug tracker** | 20 / 20 production-readiness entries closed — each with a regression-gate test |
 
 ---
@@ -133,17 +136,15 @@ This measures the riz dispatch path (routing + process pool bridge). Real throug
 
 | Item | Summary |
 |---|---|
-| **WASM guards** | Pre/post-invoke `.wasm` guards — validate schemas, redact PII, scrub secrets, enforce response shape across every runtime |
-| **WASM resource broker** | Host-mediated capability access for WASI guests — brokered Postgres (Neon / Supabase), S3, KV under deny-by-default per-function grants with timeouts, concurrency caps, and rate limits ([design](superpowers/specs/2026-06-10-wasm-resource-broker-design.md)) |
+| **Broker: S3 + KV** | The Postgres broker shipped (see Auth & Security); S3 and KV grants under the same deny-by-default model are next ([design](superpowers/specs/2026-06-10-wasm-resource-broker-design.md)) |
 | **Gateway: Bedrock + Vertex** | Additional providers to the shipped OpenAI / Anthropic / Ollama routing |
 | **Semantic cache** | Similarity-based cache — targets 30–70% cost reduction on repetitive workloads |
 | **Record & replay** | `riz replay --since 1h` — diff handler responses against captured traffic; dataset export for fine-tuning |
 | **Eval harness** | `riz eval <function>` — rank prompt × model × guard combos on quality / cost / latency |
 | **Smarter MCP** | Per-route typed schemas auto-derived from TS / Python / Rust types; MCP over WebSocket; OAuth 2.1; federation |
-| **Go runtime** | Go support via static-binary protocol (thin `riz-go-runtime` module + templates) |
 | **Distributed tracing** | W3C Trace Context propagation across services + X-Ray segment mapping (the OTLP exporter itself already ships — see Observability) |
 | **Non-HTTP event sources** | SQS / SNS / S3 / EventBridge triggers |
 
 ---
 
-*Last updated: 2026-06-10*
+*Last updated: 2026-07-01*

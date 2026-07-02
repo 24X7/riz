@@ -8,8 +8,8 @@
 # License:  Apache-2.0 (same as riz)
 #
 # Release process: docs/release.md. Trigger is `git tag v0.X.Y && git push --tags`;
-# cargo-dist + GitHub Actions builds + uploads tarballs for all 4 targets. Until
-# a release tag exists with uploaded assets, this script exits with a 404 from
+# cargo-dist + GitHub Actions builds + uploads tarballs for all 4 targets. If a
+# tag is ever missing its uploaded assets, this script exits with a 404 from
 # GitHub — fall back to: `cargo install --git https://github.com/24X7/riz`.
 set -eu
 

@@ -891,9 +891,9 @@ def scaffolding_section() -> None:
     tpl_rows = []
     for ln in (r.stdout + r.stderr).splitlines():
         cells = re.split(r"\s{2,}", ln.strip())
-        if len(cells) >= 3 and ("-http" in cells[0] or "-websocket" in cells[0]):
+        if len(cells) >= 3 and ("-http" in cells[0] or "-websocket" in cells[0] or "-todo" in cells[0]):
             tpl_rows.append(cells[:3])
-    sub(f"riz init — {len(tpl_rows)} project templates embedded in the binary:")
+    sub(f"riz init — {len(tpl_rows)} project templates, fetched from git (never embedded):")
     render_table(["Template", "Scenario", "Language"], tpl_rows)
     sub("riz doctor — preflight (config, runtimes on PATH, port):")
     r = subprocess.run([str(BIN), "--config", str(CFG), "doctor"], capture_output=True, text=True, stdin=DEVNULL)
