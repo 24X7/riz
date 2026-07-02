@@ -180,11 +180,15 @@ POST /_riz/v1/chat/completions → <span class="k">412</span></pre>
           admin surface. A leaked URL without the token gets a <b>401, not your invoice.</b>
         </p>
         <p class="lead" style="margin-top:1rem">
-          Honest scope note, because that's how this site works: streaming today re-emits the
-          completed response as standard SSE chunks any streaming client reads correctly;
-          token-level upstream pass-through is on the roadmap, and the
+          Honest scope note, because that's how this site works: <code style="font-size:.82em;color:var(--t-hi)">stream: true</code>
+          is <b>true token-level pass-through</b> for OpenAI-compatible upstreams (OpenAI, Ollama,
+          any base_url) — the upstream's own chunks flow to your client byte-for-byte, and usage is
+          still metered from the final chunk
+          (<code style="font-size:.82em;color:var(--t-hi)">streaming_passes_upstream_chunks_through_verbatim</code>).
+          Anthropic and the mock provider still answer buffered and are re-emitted as standard SSE
+          chunks; Anthropic-native stream translation is the roadmap item the
           <a href="https://github.com/24X7/riz/blob/main/tests/claims/registry.toml" target="_blank" style="text-decoration:underline dotted">claims registry</a>
-          will say so the day it ships.
+          will pin the day it ships.
         </p>
         <div class="ledger" style="margin-top:1.4rem">
           <span class="tag">proof</span>

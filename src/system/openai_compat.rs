@@ -6,7 +6,9 @@
 //! (src/llm/) to the configured providers.
 //!
 //! Endpoints (mounted in server::build_app when `[gateway]` is enabled):
-//!   POST /_riz/v1/chat/completions   (non-streaming today; SSE next)
+//!   POST /_riz/v1/chat/completions   (buffered JSON, or SSE with stream:true —
+//!                                     true token passthrough for openai/ollama
+//!                                     kinds; synthesized chunks for the rest)
 //!   GET  /_riz/v1/models
 
 use std::collections::BTreeMap;
@@ -24,7 +26,9 @@ use axum::{
 use futures_util::stream;
 use serde_json::json;
 
-use crate::llm::{ChatRequest, ChatResponse, EmbeddingsRequest, Gateway, ProviderError};
+use crate::llm::{
+    ChatRequest, ChatResponse, ChatStream, EmbeddingsRequest, Gateway, ProviderError, Usage,
+};
 use crate::observability::ipc::{
     AttrValue, SpanKind, TelemetryEvent, GEN_AI_INPUT_TOKENS, GEN_AI_OPERATION,
     GEN_AI_OUTPUT_TOKENS, GEN_AI_PROVIDER, GEN_AI_REQUEST_MODEL, GEN_AI_SYSTEM,
@@ -47,65 +51,43 @@ pub async fn chat_completions(
     riz_state: Arc<crate::state::RizState>,
     Json(req): Json<ChatRequest>,
 ) -> Response {
-    let streaming = req.stream;
     let trace_id = new_trace_id();
     let request_span_id = new_span_id();
     let request_start = now_unix_nanos();
     let requested_model = req.model.clone();
 
+    if req.stream {
+        return chat_completions_streaming(
+            gw,
+            telemetry,
+            riz_state,
+            req,
+            trace_id,
+            request_span_id,
+            request_start,
+        )
+        .await;
+    }
+
     let outcome = gw.chat(&req).await;
 
-    // Child span for the gateway/LLM call, parented to the request span.
+    // Child span for the gateway/LLM call, parented to the request span. Also
+    // feeds the local token read-model (the --dev TUI) — same data, two sinks.
     if let Ok(resp) = &outcome {
-        // Same token data, two sinks: the OTLP span below (export) and the
-        // local read-model here (the --dev TUI, which must not depend on the
-        // export pipeline). Recording is non-blocking and won't stall the
-        // response path.
         riz_state.record_tokens(
             &resp.model,
             &gw.resolved_provider(&requested_model),
             resp.usage.prompt_tokens,
             resp.usage.completion_tokens,
         );
-        let mut attrs = BTreeMap::new();
-        // `gen_ai.operation.name` (current semconv) + both the legacy
-        // `gen_ai.system` and current `gen_ai.provider.name` so old and new
-        // OTel-GenAI consumers (e.g. Datadog LLM Observability) classify the span.
-        attrs.insert(
-            GEN_AI_OPERATION.to_string(),
-            AttrValue::String("chat".to_string()),
+        emit_genai_child_span(
+            &telemetry,
+            &trace_id,
+            &request_span_id,
+            request_start,
+            &resp.model,
+            &resp.usage,
         );
-        attrs.insert(
-            GEN_AI_SYSTEM.to_string(),
-            AttrValue::String("riz-gateway".to_string()),
-        );
-        attrs.insert(
-            GEN_AI_PROVIDER.to_string(),
-            AttrValue::String("riz-gateway".to_string()),
-        );
-        attrs.insert(
-            GEN_AI_REQUEST_MODEL.to_string(),
-            AttrValue::String(resp.model.clone()),
-        );
-        attrs.insert(
-            GEN_AI_INPUT_TOKENS.to_string(),
-            AttrValue::Int(resp.usage.prompt_tokens as i64),
-        );
-        attrs.insert(
-            GEN_AI_OUTPUT_TOKENS.to_string(),
-            AttrValue::Int(resp.usage.completion_tokens as i64),
-        );
-        let child_end = now_unix_nanos();
-        telemetry.emit(TelemetryEvent {
-            name: "chat.completions".to_string(),
-            kind: SpanKind::Client,
-            trace_id: trace_id.clone(),
-            span_id: new_span_id(),
-            parent_span_id: Some(request_span_id.clone()),
-            start_unix_nanos: request_start,
-            end_unix_nanos: child_end,
-            attributes: attrs,
-        });
     }
 
     let status: u16 = match &outcome {
@@ -114,9 +96,164 @@ pub async fn chat_completions(
         Err(ProviderError::BudgetExceeded) => 412,
         Err(_) => 502,
     };
+    emit_request_root_span(
+        &telemetry,
+        trace_id,
+        request_span_id,
+        request_start,
+        status,
+        requested_model,
+    );
 
-    // Request root span (Server). Emitted after the child so a collector sees a
-    // complete tree; ids link them regardless of arrival order.
+    match outcome {
+        Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
+        Err(e) => provider_error_response(e),
+    }
+}
+
+/// The `stream: true` path. Native-SSE providers (openai/ollama kinds) are
+/// proxied byte-for-byte — time-to-first-token is the upstream's. Providers
+/// without native streaming return buffered and are re-emitted as synthesized
+/// chunks (same SSE contract). Token accounting and the GenAI child span fire
+/// when usage is known: immediately for buffered, at stream end for proxied.
+#[allow(clippy::too_many_arguments)]
+async fn chat_completions_streaming(
+    gw: Arc<Gateway>,
+    telemetry: TelemetryHandle,
+    riz_state: Arc<crate::state::RizState>,
+    req: ChatRequest,
+    trace_id: String,
+    request_span_id: String,
+    request_start: u64,
+) -> Response {
+    let requested_model = req.model.clone();
+    let provider = gw.resolved_provider(&req.model);
+    let on_complete = {
+        let telemetry = telemetry.clone();
+        let trace_id = trace_id.clone();
+        let request_span_id = request_span_id.clone();
+        let model = req.model.clone();
+        move |usage: Usage| {
+            riz_state.record_tokens(
+                &model,
+                &provider,
+                usage.prompt_tokens,
+                usage.completion_tokens,
+            );
+            emit_genai_child_span(
+                &telemetry,
+                &trace_id,
+                &request_span_id,
+                request_start,
+                &model,
+                &usage,
+            );
+        }
+    };
+
+    let outcome = gw.chat_stream(&req, on_complete).await;
+    let status: u16 = match &outcome {
+        Ok(_) => 200,
+        Err(ProviderError::BadRequest(_)) => 400,
+        Err(ProviderError::BudgetExceeded) => 412,
+        Err(_) => 502,
+    };
+    // For a proxied stream the root span closes when headers go out — the
+    // GenAI child span (emitted at stream end) carries the full duration; a
+    // collector links them by id regardless of arrival order.
+    emit_request_root_span(
+        &telemetry,
+        trace_id,
+        request_span_id,
+        request_start,
+        status,
+        requested_model,
+    );
+
+    match outcome {
+        Ok(ChatStream::Upstream(stream)) => (
+            [
+                (axum::http::header::CONTENT_TYPE, "text/event-stream"),
+                (axum::http::header::CACHE_CONTROL, "no-cache"),
+            ],
+            axum::body::Body::from_stream(stream),
+        )
+            .into_response(),
+        Ok(ChatStream::Buffered(resp)) => stream_response(resp).into_response(),
+        Err(e) => provider_error_response(e),
+    }
+}
+
+fn provider_error_response(e: ProviderError) -> Response {
+    match e {
+        e @ ProviderError::BadRequest(_) => openai_error(StatusCode::BAD_REQUEST, &e.to_string()),
+        e @ ProviderError::BudgetExceeded => {
+            openai_error(StatusCode::PRECONDITION_FAILED, &e.to_string())
+        }
+        e => openai_error(StatusCode::BAD_GATEWAY, &e.to_string()),
+    }
+}
+
+/// The `chat.completions` **Client** child span carrying OTel GenAI token
+/// attributes. `gen_ai.operation.name` (current semconv) + both the legacy
+/// `gen_ai.system` and current `gen_ai.provider.name` so old and new
+/// OTel-GenAI consumers (e.g. Datadog LLM Observability) classify the span.
+fn emit_genai_child_span(
+    telemetry: &TelemetryHandle,
+    trace_id: &str,
+    parent_span_id: &str,
+    start_unix_nanos: u64,
+    model: &str,
+    usage: &Usage,
+) {
+    let mut attrs = BTreeMap::new();
+    attrs.insert(
+        GEN_AI_OPERATION.to_string(),
+        AttrValue::String("chat".to_string()),
+    );
+    attrs.insert(
+        GEN_AI_SYSTEM.to_string(),
+        AttrValue::String("riz-gateway".to_string()),
+    );
+    attrs.insert(
+        GEN_AI_PROVIDER.to_string(),
+        AttrValue::String("riz-gateway".to_string()),
+    );
+    attrs.insert(
+        GEN_AI_REQUEST_MODEL.to_string(),
+        AttrValue::String(model.to_string()),
+    );
+    attrs.insert(
+        GEN_AI_INPUT_TOKENS.to_string(),
+        AttrValue::Int(usage.prompt_tokens as i64),
+    );
+    attrs.insert(
+        GEN_AI_OUTPUT_TOKENS.to_string(),
+        AttrValue::Int(usage.completion_tokens as i64),
+    );
+    telemetry.emit(TelemetryEvent {
+        name: "chat.completions".to_string(),
+        kind: SpanKind::Client,
+        trace_id: trace_id.to_string(),
+        span_id: new_span_id(),
+        parent_span_id: Some(parent_span_id.to_string()),
+        start_unix_nanos,
+        end_unix_nanos: now_unix_nanos(),
+        attributes: attrs,
+    });
+}
+
+/// The request root **Server** span. Emitted after the child on the buffered
+/// path so a collector sees a complete tree; ids link them regardless of
+/// arrival order.
+fn emit_request_root_span(
+    telemetry: &TelemetryHandle,
+    trace_id: String,
+    span_id: String,
+    start_unix_nanos: u64,
+    status: u16,
+    requested_model: String,
+) {
     let mut req_attrs = BTreeMap::new();
     req_attrs.insert(
         "http.method".to_string(),
@@ -138,24 +275,12 @@ pub async fn chat_completions(
         name: "POST /_riz/v1/chat/completions".to_string(),
         kind: SpanKind::Server,
         trace_id,
-        span_id: request_span_id,
+        span_id,
         parent_span_id: None,
-        start_unix_nanos: request_start,
+        start_unix_nanos,
         end_unix_nanos: now_unix_nanos(),
         attributes: req_attrs,
     });
-
-    match outcome {
-        Ok(resp) if streaming => stream_response(resp).into_response(),
-        Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
-        Err(e @ ProviderError::BadRequest(_)) => {
-            openai_error(StatusCode::BAD_REQUEST, &e.to_string())
-        }
-        Err(e @ ProviderError::BudgetExceeded) => {
-            openai_error(StatusCode::PRECONDITION_FAILED, &e.to_string())
-        }
-        Err(e) => openai_error(StatusCode::BAD_GATEWAY, &e.to_string()),
-    }
 }
 
 /// Re-emit a completed response as an OpenAI streaming chunk sequence. The mock

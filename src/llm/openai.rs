@@ -33,18 +33,20 @@ impl OpenAiProvider {
         }
     }
 
-    pub async fn chat(&self, req: &ChatRequest) -> Result<ChatResponse, ProviderError> {
-        if req.messages.is_empty() {
-            return Err(ProviderError::BadRequest(
-                "chat request has no messages".into(),
-            ));
-        }
+    /// The chat-completions request body. Identical for buffered and streamed
+    /// calls except the `stream` flag; streamed requests also ask for the
+    /// final usage chunk (`stream_options.include_usage`) so the gateway can
+    /// meter them exactly.
+    fn chat_body(&self, req: &ChatRequest, stream: bool) -> serde_json::Value {
         let model = strip_prefix(&req.model, &self.name);
         let mut body = serde_json::json!({
             "model": model,
             "messages": req.messages,
-            "stream": false,
+            "stream": stream,
         });
+        if stream {
+            body["stream_options"] = serde_json::json!({ "include_usage": true });
+        }
         if let Some(t) = req.temperature {
             body["temperature"] = serde_json::json!(t);
         }
@@ -58,9 +60,16 @@ impl OpenAiProvider {
         if let Some(tc) = &req.tool_choice {
             body["tool_choice"] = tc.clone();
         }
+        body
+    }
 
+    /// POST the body and normalize connect/HTTP failures into `ProviderError`.
+    async fn send_chat(
+        &self,
+        body: &serde_json::Value,
+    ) -> Result<reqwest::Response, ProviderError> {
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
-        let mut rb = self.client.post(&url).json(&body);
+        let mut rb = self.client.post(&url).json(body);
         if let Some(key) = &self.api_key {
             rb = rb.bearer_auth(key);
         }
@@ -82,9 +91,45 @@ impl OpenAiProvider {
                 format!("HTTP {status}: {txt}"),
             ));
         }
+        Ok(resp)
+    }
+
+    pub async fn chat(&self, req: &ChatRequest) -> Result<ChatResponse, ProviderError> {
+        if req.messages.is_empty() {
+            return Err(ProviderError::BadRequest(
+                "chat request has no messages".into(),
+            ));
+        }
+        let resp = self.send_chat(&self.chat_body(req, false)).await?;
         resp.json::<ChatResponse>().await.map_err(|e| {
             ProviderError::Upstream(self.name.clone(), format!("malformed response: {e}"))
         })
+    }
+
+    /// Native SSE passthrough: send with `stream: true` and return the upstream
+    /// byte stream verbatim — it is already the OpenAI `chat.completion.chunk`
+    /// wire format, so nothing needs re-encoding. Errors before any byte flows
+    /// (connect failure, non-2xx) surface as normal `ProviderError`s and remain
+    /// fallback candidates; once the stream is returned, transport errors
+    /// surface as stream items.
+    pub async fn chat_stream(
+        &self,
+        req: &ChatRequest,
+    ) -> Result<
+        impl futures_util::Stream<Item = Result<bytes::Bytes, ProviderError>> + Send + 'static,
+        ProviderError,
+    > {
+        use futures_util::StreamExt;
+        if req.messages.is_empty() {
+            return Err(ProviderError::BadRequest(
+                "chat request has no messages".into(),
+            ));
+        }
+        let resp = self.send_chat(&self.chat_body(req, true)).await?;
+        let name = self.name.clone();
+        Ok(resp
+            .bytes_stream()
+            .map(move |r| r.map_err(|e| ProviderError::Unavailable(name.clone(), e.to_string()))))
     }
 
     pub async fn embed(

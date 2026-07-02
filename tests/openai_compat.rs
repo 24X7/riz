@@ -258,6 +258,103 @@ async fn streaming_returns_openai_sse_chunks() {
     assert!(body.contains("[DONE]"), "must end with [DONE]; got: {body}");
 }
 
+// ───────────────────────── Streaming passthrough ────────────────────────────
+// With a real (OpenAI-kind) provider, `stream: true` must PROXY the upstream
+// token stream — not buffer the whole completion and re-chunk it. The fake
+// upstream below splits content at NON-word boundaries ("Hel" / "lo wor" /
+// "ld!"); the buffered re-chunker can only split on spaces, so seeing those
+// exact pieces in the client stream proves true passthrough.
+
+async fn spawn_fake_openai_sse() -> String {
+    use axum::response::IntoResponse;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = axum::Router::new().route(
+        "/chat/completions",
+        axum::routing::post(|| async {
+            let chunk = |delta: &str, finish: &str| {
+                format!(
+                    "data: {{\"id\":\"chatcmpl-up\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{{\"index\":0,\"delta\":{delta},\"finish_reason\":{finish}}}]}}\n\n"
+                )
+            };
+            let body = [
+                chunk("{\"role\":\"assistant\"}", "null"),
+                chunk("{\"content\":\"Hel\"}", "null"),
+                chunk("{\"content\":\"lo wor\"}", "null"),
+                chunk("{\"content\":\"ld!\"}", "null"),
+                chunk("{}", "\"stop\""),
+                "data: {\"id\":\"chatcmpl-up\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":3,\"total_tokens\":10}}\n\n".to_string(),
+                "data: [DONE]\n\n".to_string(),
+            ]
+            .concat();
+            ([(http::header::CONTENT_TYPE, "text/event-stream")], body).into_response()
+        }),
+    );
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    format!("http://{addr}")
+}
+
+#[tokio::test]
+async fn streaming_passes_upstream_chunks_through_verbatim() {
+    let upstream = spawn_fake_openai_sse().await;
+    let cfg = format!(
+        r#"
+[server]
+port = 0
+host = "127.0.0.1"
+
+[gateway]
+default_provider = "up"
+
+[gateway.providers.up]
+kind = "openai"
+base_url = "{upstream}"
+"#
+    );
+    let addr = boot(&cfg).await;
+    let base = format!("http://{addr}");
+    wait_ready(&base).await;
+
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/_riz/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "say hello world"}],
+            "stream": true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let ctype = resp.headers()["content-type"].to_str().unwrap().to_string();
+    assert!(ctype.contains("text/event-stream"), "got {ctype}");
+    let body = resp.text().await.unwrap();
+
+    // The upstream's exact (non-word-boundary) delta pieces must survive —
+    // the buffered re-chunker can only produce space-split pieces.
+    assert!(
+        body.contains("\"content\":\"Hel\"")
+            && body.contains("\"content\":\"lo wor\"")
+            && body.contains("\"content\":\"ld!\""),
+        "upstream chunk boundaries must pass through verbatim; got: {body}"
+    );
+    assert!(body.contains("[DONE]"), "got: {body}");
+
+    // Usage from the final upstream chunk must land in the FinOps ledger.
+    let usage: serde_json::Value = reqwest::get(format!("{base}/_riz/v1/usage"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        usage["providers"]["up"]["tokens_in"].as_u64(),
+        Some(7),
+        "streamed usage must be recorded: {usage}"
+    );
+    assert_eq!(usage["providers"]["up"]["tokens_out"].as_u64(), Some(3));
+}
+
 // ───────────────────────── Tool calling (OpenAI `tools`) ───────────────────
 // The agentic contract: a client sends `tools`, the model (mock here) answers
 // with `tool_calls`; the client executes and replies with a `role:"tool"`
