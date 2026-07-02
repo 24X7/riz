@@ -2,10 +2,12 @@
 //!
 //! Riz's "AI gateway" slot: one config block ([gateway]) declares a set of
 //! providers and a fallback chain; the OpenAI-compatible HTTP endpoint
-//! (`/_riz/v1/*`, see src/system/openai_compat.rs) and every runtime's
-//! `ctx.invokeModel` route through here. v1 ships a deterministic `mock`
-//! provider (no network — for CI, demos, and offline dev) plus the real
-//! Anthropic / OpenAI / Ollama providers.
+//! (`/_riz/v1/*`, see src/system/openai_compat.rs) routes through here —
+//! handlers call it like any OpenAI server, by base_url. v1 ships a
+//! deterministic `mock` provider (no network — for CI, demos, and offline
+//! dev) plus the real Anthropic / OpenAI / Ollama providers, with OpenAI
+//! function-calling (`tools` / `tool_choice` / `tool_calls`) mapped across
+//! all of them.
 //!
 //! Provider dispatch is an enum (not `dyn`) — the set is small and fixed, so
 //! enum dispatch keeps it dependency-free and dyn-compatible without async-trait.
@@ -331,13 +333,12 @@ mod tests {
     fn user_req(model: &str, content: &str) -> ChatRequest {
         ChatRequest {
             model: model.to_string(),
-            messages: vec![ChatMessage {
-                role: "user".into(),
-                content: content.into(),
-            }],
+            messages: vec![ChatMessage::text("user", content)],
             stream: false,
             temperature: None,
             max_tokens: None,
+            tools: vec![],
+            tool_choice: None,
         }
     }
 
@@ -355,7 +356,7 @@ mod tests {
         assert_eq!(resp.model, "gpt-4o");
         assert_eq!(resp.choices.len(), 1);
         assert_eq!(resp.choices[0].message.role, "assistant");
-        assert!(resp.choices[0].message.content.contains("hello"));
+        assert!(resp.choices[0].message.text_content().contains("hello"));
         assert!(resp.usage.total_tokens > 0);
     }
 
@@ -364,7 +365,7 @@ mod tests {
         let gw = mock_gateway();
         // "mock/anything" → mock provider (the only one configured here).
         let resp = gw.chat(&user_req("mock/whatever", "ping")).await.unwrap();
-        assert!(resp.choices[0].message.content.contains("ping"));
+        assert!(resp.choices[0].message.text_content().contains("ping"));
     }
 
     #[tokio::test]
@@ -376,6 +377,8 @@ mod tests {
             stream: false,
             temperature: None,
             max_tokens: None,
+            tools: vec![],
+            tool_choice: None,
         };
         let err = gw.chat(&req).await.unwrap_err();
         assert!(matches!(err, ProviderError::BadRequest(_)));
@@ -392,7 +395,7 @@ kind = "mock"
         let cfg: crate::config::GatewayConfig = toml::from_str(toml_str).unwrap();
         let gw = Gateway::from_config(&cfg).expect("builds");
         let resp = gw.chat(&user_req("anything", "hi")).await.unwrap();
-        assert!(resp.choices[0].message.content.contains("hi"));
+        assert!(resp.choices[0].message.text_content().contains("hi"));
     }
 
     #[test]
@@ -428,9 +431,9 @@ kind = "ollama"
 
         let resp = gw.chat(&user_req("openai/gpt-4o", "hi")).await.unwrap();
         assert!(
-            resp.choices[0].message.content.contains("[mock:"),
+            resp.choices[0].message.text_content().contains("[mock:"),
             "fallback must reach the mock provider; got: {}",
-            resp.choices[0].message.content
+            resp.choices[0].message.text_content()
         );
     }
 
