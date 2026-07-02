@@ -33,7 +33,7 @@ token cost — summed across every completion in a multi-step tool/agent chain �
 **rolls up the span tree**. That rollup is proven deterministically in
 `tests/telemetry_token_spans.rs::multi_hop_agent_chain_rolls_up_token_usage_across_the_tree`
 (request → agent.turn → tool → chat.completions, summed across depth). The same
-totals show live in the `riz run --dev` **Tokens** panel (model · in→out) and
+totals show live in the `riz --dev` **Tokens** panel (model · in→out) and
 export via OTLP to Datadog / CloudWatch-X-Ray.
 
 What riz ships today: request + chat-completion spans with token attrs, and the

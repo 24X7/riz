@@ -93,7 +93,7 @@ $ riz init --list</pre>
         </div>
         <div class="well scrolly-panel" data-panel="2">
           <div class="well-hd"><b><span class="step-tag">03</span> · shell</b></div>
-          <pre>$ riz run --dev
+          <pre>$ riz --dev
 
 <span class="c"># http API + MCP server are both live:</span>
 <span class="c">#   http://localhost:3000/api</span>
@@ -147,7 +147,7 @@ $ riz mcp inspect
           <div>
             <h3>Boot it</h3>
             <p><code>riz run</code> is headless (JSON logs, production-shaped).
-            Add <code>--dev</code> for the live terminal dashboard — requests, logs, and
+            <code>riz --dev</code> adds the live terminal dashboard — requests, logs, and
             P50–P99 percentiles as you work. Edit the handler, save, the next request
             hits the new code.</p>
           </div>

@@ -1011,7 +1011,7 @@ async fn async_main() -> anyhow::Result<()> {
     let log_level = effective_log_level(cli.dev, cli.log_level.as_deref());
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
 
-    // TUI is driven SOLELY by --dev. `riz run --dev` turns the TUI on
+    // TUI is driven SOLELY by --dev. `riz --dev` turns the TUI on
     // and routes every log into its log panel; plain `riz run` is
     // headless with structured JSON logs on stdout. No --no-tui flag,
     // no TTY auto-detection — one mental model, one switch.

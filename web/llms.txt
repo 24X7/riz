@@ -29,7 +29,7 @@ riz run                                                 # 3. boot — HTTP API +
 
 `riz init` always fetches templates from a git location — never embedded in the binary. Official names (`riz init --list`) resolve to subdirs of the riz repo; you can also pass any `owner/repo`, `owner/repo/subdir`, git URL, or local path, so teams publish and use their own templates. `typescript-todo` is a full-stack template (Bun API + React/Vite client colocated on one binary).
 
-`riz run` is headless (JSON logs to stdout); add `--dev` for the live Ratatui TUI. A minimal `riz.toml`:
+`riz run` is headless (JSON logs to stdout); `riz --dev` adds the live Ratatui TUI (the `--dev` flag goes before any subcommand). A minimal `riz.toml`:
 
 ```toml
 [function.api]
@@ -88,7 +88,7 @@ riz mcp inspect        # initialize + tools/list, one-screen report with schemas
 - **Lambda authorizers** — REQUEST type (calls a user function) and JWT type (validates against a JWKS URL; RS256/ES256 — Auth0, Cognito, Okta, WorkOS, Clerk). Responses cached by source IP + Authorization hash for a configurable TTL.
 - **CORS** — `[cors]` auto-preflight, global + per-function override; OPTIONS → 204, origin echo, attacker-origin rejection.
 - **Admin gating** — bearer-token (`RIZ_AUTH_BEARER_TOKEN` or `[auth] bearer_token`) on `/_riz/*` with constant-time compare; `/_riz/health` stays open for liveness probes.
-- **Observability** — Prometheus at `/_riz/metrics` (`riz_invocations_total`, `riz_errors_total`, `riz_latency_ms`, `riz_cold_starts_total`, `riz_function_healthy`, `riz_uptime_seconds`); rich `/_riz/health`; `/_riz/registry`; a live Ratatui terminal dashboard (`riz run --dev`) with nearest-rank P50/P75/P90/P95/P99 over a 5-minute rolling window; hand-rolled OpenTelemetry OTLP/HTTP-JSON span export (one path fanning out to Datadog and CloudWatch/X-Ray) with token-aware OTel GenAI conventions.
+- **Observability** — Prometheus at `/_riz/metrics` (`riz_invocations_total`, `riz_errors_total`, `riz_latency_ms`, `riz_cold_starts_total`, `riz_function_healthy`, `riz_uptime_seconds`); rich `/_riz/health`; `/_riz/registry`; a live Ratatui terminal dashboard (`riz --dev`) with nearest-rank P50/P75/P90/P95/P99 over a 5-minute rolling window; hand-rolled OpenTelemetry OTLP/HTTP-JSON span export (one path fanning out to Datadog and CloudWatch/X-Ray) with token-aware OTel GenAI conventions.
 - **WebSocket** — `$connect` / `$disconnect` / `$default` lifecycle (`ApiGatewayWebsocketProxyRequest`), plus a `@connections` management API (`GET`/`POST`/`DELETE` at `/_riz/connections/{id}`, `GET /_riz/connections` to list) for server→client push. Bun, Python, and Rust handlers all supported and end-to-end tested.
 
 ## Site map (riz.dev — for deeper reading)

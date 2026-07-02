@@ -240,7 +240,7 @@ endpoint = "http://localhost:4318"   <span class="c"># any OTLP/HTTP collector o
     <h2 id="cli">CLI</h2>
     <table>
       <tr><th>command</th><th>does</th></tr>
-      <tr><td><code>riz run [--dev]</code></td><td>boot; <code>--dev</code> adds the live Ratatui dashboard</td></tr>
+      <tr><td><code>riz run</code> · <code>riz --dev</code></td><td>boot headless · boot with the live Ratatui dashboard (<code>--dev</code> goes before any subcommand; <code>run</code> is the default)</td></tr>
       <tr><td><code>riz init &lt;spec&gt; [dir] [--ref r] [--git]</code></td><td>scaffold from git — an official name (<code>--list</code>), <code>owner/repo[/subdir]</code>, a git URL, or a local path (never embedded)</td></tr>
       <tr><td><code>riz scaffold static [dir] [--wire] [--force]</code></td><td>generate <code>llms.txt</code> + <code>.well-known/riz.json</code> from your functions; <code>--wire</code> adds a <code>[static]</code> block</td></tr>
       <tr><td><code>riz validate</code> · <code>riz routes</code></td><td>config check · route table</td></tr>

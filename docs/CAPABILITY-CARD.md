@@ -91,7 +91,7 @@ claude mcp add riz-local --transport http http://localhost:3000/_riz/mcp
 | `/_riz/health` | Rich health check (open, no auth) |
 | `/_riz/metrics` | Prometheus-compatible scrape endpoint |
 | `/_riz/registry` | Live function registry |
-| **Terminal dashboard** | `riz run --dev` — Ratatui TUI with P50 / P75 / P90 / P95 / P99 latency over 5-min rolling window |
+| **Terminal dashboard** | `riz --dev` — Ratatui TUI with P50 / P75 / P90 / P95 / P99 latency over 5-min rolling window |
 | **OpenTelemetry** | Hand-rolled OTLP/HTTP-JSON span exporter — one export path fanning out to Datadog and CloudWatch/X-Ray (just different endpoint + headers). Token-aware span tree with OTel GenAI conventions (`gen_ai.usage.input_tokens` / `output_tokens`, `gen_ai.request.model`, `gen_ai.system`). |
 
 ---
@@ -109,8 +109,8 @@ This measures the riz dispatch path (routing + process pool bridge). Real throug
 | Command | What it does |
 |---|---|
 | `riz init <template>` | Scaffold a working project — 7 templates: `typescript-http` · `nodejs-http` · `python-http` · `rust-http` · `typescript-websocket` · `python-websocket` · `rust-websocket` |
-| `riz run` | Headless (JSON logs to stdout); `--dev` adds the live TUI |
-| `riz run --dev` | Boots the Ratatui terminal dashboard with hot-reload |
+| `riz run` | Headless (JSON logs to stdout) — the default subcommand |
+| `riz --dev` | Boots the Ratatui terminal dashboard with hot-reload (`--dev` goes before any subcommand) |
 | `riz validate` | Config check — parse + validate `riz.toml` |
 | `riz routes` | Print the full route table |
 | `riz mcp inspect` | `initialize` + `tools/list` one-screen report |
