@@ -374,6 +374,46 @@ mod tests {
         assert!(tools[0]["description"].as_str().unwrap().contains("api"));
     }
 
+    /// WebSocket functions have no request/response HTTP route in the Router —
+    /// a `tools/call` on one can never succeed. Advertising them in
+    /// `tools/list` hands agents a tool that 404s on first use, so they must
+    /// be excluded, and calling one by name must be "unknown tool", not a
+    /// dispatched 404 envelope.
+    #[tokio::test]
+    async fn websocket_functions_are_not_advertised_or_callable_as_tools() {
+        let s = Arc::new(RizState::new());
+        let mut ws_cfg = user_state().config.clone().expect("user_state has config");
+        ws_cfg.protocol = crate::config::Protocol::WebSocket;
+        s.register(FunctionState::user("chat-ws", ws_cfg, "$default", 0))
+            .await;
+        s.register(user_state()).await;
+        let h = McpHandler::new(s, None);
+
+        // tools/list: only the HTTP function appears.
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+        let resp = h.invoke(evt(req)).await.unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
+        let tools = body["result"]["tools"].as_array().unwrap();
+        assert_eq!(
+            tools.len(),
+            1,
+            "WS functions must not be advertised as tools: {body}"
+        );
+        assert_eq!(tools[0]["name"], "api");
+
+        // tools/call on the WS function: unknown tool, not a 404 envelope.
+        let call = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"chat-ws","arguments":{}}}"#;
+        let resp = h.invoke(evt(call)).await.unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("unknown function"),
+            "calling a WS function must be the same JSON-RPC error as a nonexistent tool: {body}"
+        );
+    }
+
     #[tokio::test]
     async fn tools_list_excludes_system_functions() {
         let s = Arc::new(RizState::new());

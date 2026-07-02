@@ -45,6 +45,46 @@ fn sample_config() -> riz::config::Config {
 
 // ───────────────────────────── pure generators ──────────────────────────────
 
+/// WebSocket functions can't be dispatched by tools/call (no HTTP route), so
+/// the generated agent-discovery files must not advertise them as tools —
+/// mirroring the live /_riz/mcp tools/list behavior.
+#[test]
+fn websocket_functions_are_not_advertised_in_generated_files() {
+    let cfg: riz::config::Config = toml::from_str(
+        r#"
+[function.orders]
+runtime = "node"
+handler = "orders.handler"
+
+[function.chat]
+runtime = "bun"
+protocol = "websocket"
+handler = "chat.handler"
+[[function.chat.routes]]
+path = "/ws"
+method = "GET"
+"#,
+    )
+    .expect("config parses");
+
+    let txt = riz::scaffold::generate_llms_txt(&cfg);
+    assert!(txt.contains("### orders"), "http tool missing:\n{txt}");
+    assert!(
+        !txt.contains("### chat"),
+        "WS function must not appear as a tool in llms.txt:\n{txt}"
+    );
+
+    let json = riz::scaffold::generate_well_known(&cfg);
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let names: Vec<&str> = v["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["orders"], "WS function must not be a tool: {v}");
+}
+
 #[test]
 fn llms_txt_lists_every_function_as_a_tool_with_routes_and_runtime() {
     let cfg = sample_config();

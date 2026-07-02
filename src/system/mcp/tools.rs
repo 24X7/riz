@@ -50,6 +50,12 @@ impl McpHandler {
             if !matches!(f.kind, FunctionKind::User) {
                 continue;
             }
+            // WebSocket functions have no request/response HTTP route in the
+            // Router — a tools/call on one can never succeed, so advertising
+            // them would hand agents a tool that 404s on first use.
+            if is_websocket(f) {
+                continue;
+            }
             // MCP tool name = function name directly (no transformation needed
             // now that we're function-centric).
             let name = f.name.clone();
@@ -97,7 +103,9 @@ impl McpHandler {
             let functions = self.riz_state.functions.read().await;
             let f = functions
                 .get(&parsed.name)
-                .filter(|f| matches!(f.kind, FunctionKind::User))
+                // WS functions aren't advertised (no HTTP route to dispatch) —
+                // calling one by name is the same error as a nonexistent tool.
+                .filter(|f| matches!(f.kind, FunctionKind::User) && !is_websocket(f))
                 .ok_or_else(|| JsonRpcError {
                     code: -32602,
                     message: format!("unknown function: {}", parsed.name),
@@ -286,4 +294,13 @@ impl McpHandler {
         })?;
         Ok(value)
     }
+}
+
+/// True when the function speaks the WebSocket lifecycle ($connect/$default/
+/// $disconnect) — those mount as upgrade routes, not request/response HTTP
+/// routes, so the MCP tool surface cannot dispatch to them.
+fn is_websocket(f: &crate::state::FunctionState) -> bool {
+    f.config
+        .as_ref()
+        .is_some_and(|c| matches!(c.protocol, crate::config::Protocol::WebSocket))
 }
