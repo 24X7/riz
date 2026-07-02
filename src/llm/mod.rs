@@ -13,7 +13,11 @@
 //! enum dispatch keeps it dependency-free and dyn-compatible without async-trait.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+use std::task::Poll;
+
+use futures_util::Stream;
 
 pub mod anthropic;
 pub mod cost;
@@ -21,7 +25,7 @@ pub mod mock;
 pub mod openai;
 pub mod types;
 
-pub use types::{ChatRequest, ChatResponse, EmbeddingsRequest, EmbeddingsResponse};
+pub use types::{ChatRequest, ChatResponse, EmbeddingsRequest, EmbeddingsResponse, Usage};
 
 use anthropic::AnthropicProvider;
 use cost::ProviderUsage;
@@ -287,6 +291,125 @@ impl Gateway {
         Err(last_err.unwrap())
     }
 
+    /// Route a `stream: true` chat request. Providers with native SSE
+    /// (`openai`/`ollama` kinds) are proxied token-by-token — the upstream's
+    /// own `chat.completion.chunk` bytes flow through untouched, so
+    /// time-to-first-token is the provider's, not "after the whole
+    /// completion". Providers without native streaming here (mock, anthropic)
+    /// return a buffered response the HTTP layer re-emits as synthesized
+    /// chunks — same SSE contract, no token-level latency win.
+    ///
+    /// Fallback semantics: failures BEFORE any byte flows walk the chain
+    /// exactly like [`chat`](Self::chat) (an upstream that rejects the
+    /// streaming request is retried buffered on the same provider first);
+    /// once bytes flow there is no falling back.
+    ///
+    /// `on_complete` fires exactly once when the outcome's usage is known —
+    /// immediately for buffered responses, at stream end (or client
+    /// disconnect, best-effort approximated) for proxied streams. The ledger
+    /// (`/_riz/v1/usage`, budget) is recorded internally either way.
+    pub async fn chat_stream(
+        self: &Arc<Self>,
+        req: &ChatRequest,
+        on_complete: impl FnOnce(Usage) + Send + 'static,
+    ) -> Result<ChatStream, ProviderError> {
+        if self.over_budget() {
+            return Err(ProviderError::BudgetExceeded);
+        }
+        let order = self.attempt_order(&req.model);
+        if order.is_empty() {
+            return Err(ProviderError::Unavailable(
+                req.model.clone(),
+                "no provider configured for this model and no fallback available".into(),
+            ));
+        }
+        let mut on_complete: Option<Box<dyn FnOnce(Usage) + Send>> = Some(Box::new(on_complete));
+        let mut last_err = None;
+        for name in order {
+            match &self.providers[&name] {
+                Provider::OpenAi(p) => match p.chat_stream(req).await {
+                    Ok(stream) => {
+                        let gw = Arc::clone(self);
+                        let model = req.model.clone();
+                        let prompt_approx = req
+                            .messages
+                            .iter()
+                            .map(|m| types::approx_tokens(m.text_content()))
+                            .sum::<u32>();
+                        let done = on_complete.take().expect("consumed once");
+                        let tee = UsageTee {
+                            inner: Box::pin(stream),
+                            line_buf: String::new(),
+                            usage: None,
+                            approx_completion: 0,
+                            prompt_approx,
+                            on_end: Some(Box::new(move |usage: Usage| {
+                                gw.record_usage(
+                                    &name,
+                                    &model,
+                                    usage.prompt_tokens,
+                                    usage.completion_tokens,
+                                );
+                                done(usage);
+                            })),
+                        };
+                        return Ok(ChatStream::Upstream(Box::pin(tee)));
+                    }
+                    Err(e @ ProviderError::BadRequest(_)) => return Err(e),
+                    // The upstream answered but refused the STREAMING request
+                    // (e.g. an OpenAI-compatible server without
+                    // stream_options) — it may still serve buffered. Retry
+                    // this provider once before walking the chain.
+                    Err(e @ ProviderError::Upstream(_, _)) => {
+                        tracing::warn!(
+                            "gateway: provider '{name}' rejected the stream request ({e}); retrying buffered"
+                        );
+                        match p.chat(req).await {
+                            Ok(resp) => {
+                                self.record_usage(
+                                    &name,
+                                    &req.model,
+                                    resp.usage.prompt_tokens,
+                                    resp.usage.completion_tokens,
+                                );
+                                (on_complete.take().expect("consumed once"))(resp.usage.clone());
+                                return Ok(ChatStream::Buffered(resp));
+                            }
+                            Err(e2) => {
+                                tracing::warn!(
+                                    "gateway: provider '{name}' failed: {e2}; trying next"
+                                );
+                                last_err = Some(e2);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("gateway: provider '{name}' failed: {e}; trying next");
+                        last_err = Some(e);
+                    }
+                },
+                provider => match provider.chat(req).await {
+                    Ok(resp) => {
+                        self.record_usage(
+                            &name,
+                            &req.model,
+                            resp.usage.prompt_tokens,
+                            resp.usage.completion_tokens,
+                        );
+                        (on_complete.take().expect("consumed once"))(resp.usage.clone());
+                        return Ok(ChatStream::Buffered(resp));
+                    }
+                    Err(e @ ProviderError::BadRequest(_)) => return Err(e),
+                    Err(e) => {
+                        tracing::warn!("gateway: provider '{name}' failed: {e}; trying next");
+                        last_err = Some(e);
+                    }
+                },
+            }
+        }
+        Err(last_err.unwrap())
+    }
+
     /// Route an embeddings request through the provider chain (same routing +
     /// fallback semantics as [`chat`](Self::chat)).
     pub async fn embed(&self, req: EmbeddingsRequest) -> Result<EmbeddingsResponse, ProviderError> {
@@ -322,6 +445,104 @@ impl Gateway {
             }
         }
         Err(last_err.unwrap())
+    }
+}
+
+/// A streaming chat outcome from [`Gateway::chat_stream`].
+pub enum ChatStream {
+    /// Native upstream SSE passthrough — already the OpenAI
+    /// `chat.completion.chunk` wire format; pipe the bytes to the client
+    /// verbatim. Usage is metered by the internal tee when the stream ends.
+    Upstream(Pin<Box<dyn Stream<Item = Result<bytes::Bytes, ProviderError>> + Send>>),
+    /// No native stream for this provider (mock; anthropic for now) — the
+    /// caller synthesizes chunks from the buffered response.
+    Buffered(ChatResponse),
+}
+
+/// Cap on the SSE line-reassembly buffer — a well-formed upstream line is a
+/// few KB; anything past this is a misbehaving upstream and we stop scanning
+/// (passthrough continues untouched, usage falls back to the approximation).
+const TEE_LINE_BUF_CAP: usize = 1 << 20;
+
+/// Forwards upstream bytes untouched while scanning SSE lines for the final
+/// `usage` chunk (and accumulating an approximate completion-token count as a
+/// fallback). Fires `on_end` exactly once — at stream end, or on drop if the
+/// client disconnected mid-stream (best effort, approximated).
+struct UsageTee {
+    inner: Pin<Box<dyn Stream<Item = Result<bytes::Bytes, ProviderError>> + Send>>,
+    line_buf: String,
+    usage: Option<Usage>,
+    approx_completion: u32,
+    prompt_approx: u32,
+    on_end: Option<Box<dyn FnOnce(Usage) + Send>>,
+}
+
+impl UsageTee {
+    fn scan(&mut self, chunk: &[u8]) {
+        if self.line_buf.len() > TEE_LINE_BUF_CAP {
+            return; // misbehaving upstream; stop scanning, keep forwarding
+        }
+        self.line_buf.push_str(&String::from_utf8_lossy(chunk));
+        while let Some(nl) = self.line_buf.find('\n') {
+            let line: String = self.line_buf.drain(..=nl).collect();
+            let Some(data) = line.trim().strip_prefix("data: ") else {
+                continue;
+            };
+            if data == "[DONE]" {
+                continue;
+            }
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(data) else {
+                continue;
+            };
+            if let Some(u) = v.get("usage").filter(|u| !u.is_null()) {
+                self.usage = Some(Usage {
+                    prompt_tokens: u["prompt_tokens"].as_u64().unwrap_or(0) as u32,
+                    completion_tokens: u["completion_tokens"].as_u64().unwrap_or(0) as u32,
+                    total_tokens: u["total_tokens"].as_u64().unwrap_or(0) as u32,
+                });
+            } else if let Some(content) = v["choices"][0]["delta"]["content"].as_str() {
+                self.approx_completion += types::approx_tokens(content);
+            }
+        }
+    }
+
+    fn finish(&mut self) {
+        if let Some(done) = self.on_end.take() {
+            let usage = self.usage.take().unwrap_or(Usage {
+                prompt_tokens: self.prompt_approx,
+                completion_tokens: self.approx_completion,
+                total_tokens: self.prompt_approx + self.approx_completion,
+            });
+            done(usage);
+        }
+    }
+}
+
+impl Stream for UsageTee {
+    type Item = Result<bytes::Bytes, ProviderError>;
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        match self.inner.as_mut().poll_next(cx) {
+            Poll::Ready(Some(Ok(bytes))) => {
+                self.scan(&bytes);
+                Poll::Ready(Some(Ok(bytes)))
+            }
+            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
+            Poll::Ready(None) => {
+                self.finish();
+                Poll::Ready(None)
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl Drop for UsageTee {
+    fn drop(&mut self) {
+        // Client hung up mid-stream: still meter what flowed (best effort).
+        self.finish();
     }
 }
 

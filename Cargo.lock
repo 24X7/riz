@@ -3866,6 +3866,7 @@ dependencies = [
  "aws_lambda_events",
  "axum",
  "base64",
+ "bytes",
  "chrono",
  "clap",
  "crossterm",

@@ -113,6 +113,12 @@ status = "proven"
 proof = "streaming_returns_openai_sse_chunks"
 
 [[claim]]
+id = "llm-gateway-streaming-passthrough"
+page_text = "streaming_passes_upstream_chunks_through_verbatim"
+status = "proven"
+proof = "streaming_passes_upstream_chunks_through_verbatim"
+
+[[claim]]
 id = "llm-gateway-tool-calling"
 page_text = "chat_completions_with_tools_returns_tool_calls"
 status = "proven"
