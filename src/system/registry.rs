@@ -29,6 +29,45 @@ impl RegistryHandler {
     }
 }
 
+/// The live registry as a JSON value — shared by the `/_riz/registry` HTTP
+/// endpoint and the `riz://registry` MCP resource so the two never drift.
+pub(crate) async fn registry_json(riz_state: &RizState) -> serde_json::Value {
+    let functions = riz_state.functions.read().await;
+    let mut out: Vec<RegistryFunction> = Vec::with_capacity(functions.len());
+    for (_, f) in functions.iter() {
+        let (runtime, handler, timeout_ms, concurrency, cache_ttl_secs) = match &f.config {
+            Some(c) => (
+                Some(c.runtime.as_str().to_string()),
+                Some(c.handler.to_string_lossy().to_string()),
+                Some(c.timeout_ms),
+                Some(c.concurrency),
+                c.cache_ttl_secs,
+            ),
+            None => (None, None, None, None, None),
+        };
+        let kind = match f.kind {
+            FunctionKind::User => "user",
+            FunctionKind::Guard => "guard",
+            FunctionKind::System => "system",
+        };
+        out.push(RegistryFunction {
+            name: f.name.clone(),
+            routes: f.routes.clone(),
+            runtime,
+            kind,
+            handler,
+            timeout_ms,
+            concurrency,
+            cache_ttl_secs,
+        });
+    }
+    serde_json::to_value(RegistryBody {
+        version: riz_state.version,
+        functions: out,
+    })
+    .unwrap_or_else(|_| serde_json::json!({ "functions": [] }))
+}
+
 #[derive(Serialize)]
 struct RegistryBody {
     version: &'static str,
@@ -82,39 +121,7 @@ impl LambdaHandler for RegistryHandler {
                 ));
             }
         }
-        let functions = self.riz_state.functions.read().await;
-        let mut out: Vec<RegistryFunction> = Vec::with_capacity(functions.len());
-        for (_, f) in functions.iter() {
-            let (runtime, handler, timeout_ms, concurrency, cache_ttl_secs) = match &f.config {
-                Some(c) => (
-                    Some(c.runtime.as_str().to_string()),
-                    Some(c.handler.to_string_lossy().to_string()),
-                    Some(c.timeout_ms),
-                    Some(c.concurrency),
-                    c.cache_ttl_secs,
-                ),
-                None => (None, None, None, None, None),
-            };
-            let kind = match f.kind {
-                FunctionKind::User => "user",
-                FunctionKind::Guard => "guard",
-                FunctionKind::System => "system",
-            };
-            out.push(RegistryFunction {
-                name: f.name.clone(),
-                routes: f.routes.clone(),
-                runtime,
-                kind,
-                handler,
-                timeout_ms,
-                concurrency,
-                cache_ttl_secs,
-            });
-        }
-        let body = RegistryBody {
-            version: self.riz_state.version,
-            functions: out,
-        };
+        let body = registry_json(&self.riz_state).await;
         Ok(json_response(200, &body))
     }
 }

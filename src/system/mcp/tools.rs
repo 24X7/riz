@@ -34,7 +34,8 @@ impl McpHandler {
         Ok(serde_json::json!({
             "protocolVersion": chosen,
             "capabilities": {
-                "tools": { "listChanged": false }
+                "tools": { "listChanged": false },
+                "resources": { "subscribe": false, "listChanged": false }
             },
             "serverInfo": {
                 "name": "riz",
@@ -299,7 +300,7 @@ impl McpHandler {
 /// True when the function speaks the WebSocket lifecycle ($connect/$default/
 /// $disconnect) — those mount as upgrade routes, not request/response HTTP
 /// routes, so the MCP tool surface cannot dispatch to them.
-fn is_websocket(f: &crate::state::FunctionState) -> bool {
+pub(super) fn is_websocket(f: &crate::state::FunctionState) -> bool {
     f.config
         .as_ref()
         .is_some_and(|c| matches!(c.protocol, crate::config::Protocol::WebSocket))
