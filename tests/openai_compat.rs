@@ -355,6 +355,193 @@ base_url = "{upstream}"
     assert_eq!(usage["providers"]["up"]["tokens_out"].as_u64(), Some(3));
 }
 
+// ───────────────── Anthropic streaming → OpenAI chunk translation ──────────
+// Anthropic's SSE events (message_start / content_block_delta / message_delta)
+// must be translated on the fly into OpenAI chat.completion.chunk frames, so
+// any OpenAI streaming client gets token-level latency from Claude too.
+
+fn anthropic_sse_event(event: &str, data: serde_json::Value) -> String {
+    format!("event: {event}\ndata: {data}\n\n")
+}
+
+async fn spawn_fake_anthropic_sse(tool_use: bool) -> String {
+    use axum::response::IntoResponse;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = axum::Router::new().route(
+        "/v1/messages",
+        axum::routing::post(move || async move {
+            let mut body = String::new();
+            body += &anthropic_sse_event(
+                "message_start",
+                serde_json::json!({"type":"message_start","message":{
+                    "id":"msg_1","type":"message","role":"assistant",
+                    "model":"claude-sonnet-5","content":[],"stop_reason":null,
+                    "usage":{"input_tokens":5,"output_tokens":1}}}),
+            );
+            if tool_use {
+                body += &anthropic_sse_event(
+                    "content_block_start",
+                    serde_json::json!({"type":"content_block_start","index":0,
+                        "content_block":{"type":"tool_use","id":"toolu_9","name":"lookup_order","input":{}}}),
+                );
+                body += &anthropic_sse_event(
+                    "content_block_delta",
+                    serde_json::json!({"type":"content_block_delta","index":0,
+                        "delta":{"type":"input_json_delta","partial_json":"{\"order"}}),
+                );
+                body += &anthropic_sse_event(
+                    "content_block_delta",
+                    serde_json::json!({"type":"content_block_delta","index":0,
+                        "delta":{"type":"input_json_delta","partial_json":"_id\":\"42\"}"}}),
+                );
+                body += &anthropic_sse_event(
+                    "message_delta",
+                    serde_json::json!({"type":"message_delta",
+                        "delta":{"stop_reason":"tool_use","stop_sequence":null},
+                        "usage":{"output_tokens":3}}),
+                );
+            } else {
+                body += &anthropic_sse_event(
+                    "content_block_start",
+                    serde_json::json!({"type":"content_block_start","index":0,
+                        "content_block":{"type":"text","text":""}}),
+                );
+                body += &anthropic_sse_event(
+                    "content_block_delta",
+                    serde_json::json!({"type":"content_block_delta","index":0,
+                        "delta":{"type":"text_delta","text":"Hel"}}),
+                );
+                body += &anthropic_sse_event(
+                    "content_block_delta",
+                    serde_json::json!({"type":"content_block_delta","index":0,
+                        "delta":{"type":"text_delta","text":"lo!"}}),
+                );
+                body += &anthropic_sse_event(
+                    "message_delta",
+                    serde_json::json!({"type":"message_delta",
+                        "delta":{"stop_reason":"end_turn","stop_sequence":null},
+                        "usage":{"output_tokens":3}}),
+                );
+            }
+            body += &anthropic_sse_event("message_stop", serde_json::json!({"type":"message_stop"}));
+            ([(http::header::CONTENT_TYPE, "text/event-stream")], body).into_response()
+        }),
+    );
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    format!("http://{addr}")
+}
+
+fn anthropic_cfg(upstream: &str) -> String {
+    format!(
+        r#"
+[server]
+port = 0
+host = "127.0.0.1"
+
+[gateway]
+default_provider = "claude"
+
+[gateway.providers.claude]
+kind = "anthropic"
+base_url = "{upstream}"
+"#
+    )
+}
+
+#[tokio::test]
+async fn anthropic_stream_translates_to_openai_chunks() {
+    let upstream = spawn_fake_anthropic_sse(false).await;
+    let addr = boot(&anthropic_cfg(&upstream)).await;
+    let base = format!("http://{addr}");
+    wait_ready(&base).await;
+
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/_riz/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": "claude-sonnet-5",
+            "messages": [{"role": "user", "content": "say hello"}],
+            "stream": true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+
+    assert!(
+        body.contains("chat.completion.chunk"),
+        "must emit OpenAI chunk objects: {body}"
+    );
+    assert!(body.contains("\"role\":\"assistant\""), "got: {body}");
+    // Anthropic's exact text_delta pieces survive translation.
+    assert!(
+        body.contains("\"content\":\"Hel\"") && body.contains("\"content\":\"lo!\""),
+        "token pieces must pass through the translator: {body}"
+    );
+    assert!(body.contains("\"finish_reason\":\"stop\""), "got: {body}");
+    assert!(body.contains("[DONE]"), "got: {body}");
+
+    // Exact usage from message_start (input) + message_delta (output).
+    let usage: serde_json::Value = reqwest::get(format!("{base}/_riz/v1/usage"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        usage["providers"]["claude"]["tokens_in"].as_u64(),
+        Some(5),
+        "{usage}"
+    );
+    assert_eq!(
+        usage["providers"]["claude"]["tokens_out"].as_u64(),
+        Some(3),
+        "{usage}"
+    );
+}
+
+#[tokio::test]
+async fn anthropic_stream_translates_tool_use_to_tool_call_chunks() {
+    let upstream = spawn_fake_anthropic_sse(true).await;
+    let addr = boot(&anthropic_cfg(&upstream)).await;
+    let base = format!("http://{addr}");
+    wait_ready(&base).await;
+
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/_riz/v1/chat/completions"))
+        .json(&serde_json::json!({
+            "model": "claude-sonnet-5",
+            "messages": [{"role": "user", "content": "where is order 42?"}],
+            "tools": [order_tool()],
+            "stream": true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+
+    assert!(
+        body.contains("\"tool_calls\""),
+        "tool_use blocks must become tool_calls deltas: {body}"
+    );
+    assert!(
+        body.contains("\"id\":\"toolu_9\"") && body.contains("\"name\":\"lookup_order\""),
+        "the call id/name must open the tool_calls delta: {body}"
+    );
+    // input_json_delta fragments stream as arguments fragments.
+    assert!(
+        body.contains("{\\\"order") && body.contains("_id\\\":\\\"42\\\"}"),
+        "argument fragments must pass through incrementally: {body}"
+    );
+    assert!(
+        body.contains("\"finish_reason\":\"tool_calls\""),
+        "stop_reason tool_use → finish_reason tool_calls: {body}"
+    );
+    assert!(body.contains("[DONE]"), "got: {body}");
+}
+
 // ───────────────────────── Tool calling (OpenAI `tools`) ───────────────────
 // The agentic contract: a client sends `tools`, the model (mock here) answers
 // with `tool_calls`; the client executes and replies with a `role:"tool"`

@@ -48,12 +48,9 @@ impl AnthropicProvider {
         }
     }
 
-    pub async fn chat(&self, req: &ChatRequest) -> Result<ChatResponse, ProviderError> {
-        if req.messages.is_empty() {
-            return Err(ProviderError::BadRequest(
-                "chat request has no messages".into(),
-            ));
-        }
+    /// The Messages-API request body. Identical for buffered and streamed
+    /// calls except the `stream` flag.
+    fn chat_body(&self, req: &ChatRequest, stream: bool) -> serde_json::Value {
         let model = strip_prefix(&req.model, &self.name);
         let (system, messages) = map_messages(&req.messages);
         let mut body = serde_json::json!({
@@ -61,6 +58,9 @@ impl AnthropicProvider {
             "max_tokens": req.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
             "messages": messages,
         });
+        if stream {
+            body["stream"] = serde_json::json!(true);
+        }
         if !system.is_empty() {
             body["system"] = serde_json::json!(system);
         }
@@ -71,13 +71,20 @@ impl AnthropicProvider {
                 body["tool_choice"] = tc;
             }
         }
+        body
+    }
 
+    /// POST the body and normalize connect/HTTP failures into `ProviderError`.
+    async fn send_chat(
+        &self,
+        body: &serde_json::Value,
+    ) -> Result<reqwest::Response, ProviderError> {
         let url = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
         let mut rb = self
             .client
             .post(&url)
             .header("anthropic-version", ANTHROPIC_VERSION)
-            .json(&body);
+            .json(body);
         if let Some(key) = &self.api_key {
             rb = rb.header("x-api-key", key);
         }
@@ -99,6 +106,16 @@ impl AnthropicProvider {
                 format!("HTTP {status}: {txt}"),
             ));
         }
+        Ok(resp)
+    }
+
+    pub async fn chat(&self, req: &ChatRequest) -> Result<ChatResponse, ProviderError> {
+        if req.messages.is_empty() {
+            return Err(ProviderError::BadRequest(
+                "chat request has no messages".into(),
+            ));
+        }
+        let resp = self.send_chat(&self.chat_body(req, false)).await?;
         let parsed: AnthropicResponse = resp.json().await.map_err(|e| {
             ProviderError::Upstream(self.name.clone(), format!("malformed response: {e}"))
         })?;
@@ -168,6 +185,38 @@ impl AnthropicProvider {
         })
     }
 
+    /// Native streaming, translated on the fly: Anthropic's SSE events
+    /// (`message_start` / `content_block_*` / `message_delta`) become OpenAI
+    /// `chat.completion.chunk` frames — text deltas, tool_use → indexed
+    /// `tool_calls` deltas with incremental `arguments` fragments, and a final
+    /// usage chunk carrying the exact token counts — so any OpenAI streaming
+    /// client gets token-level latency from Claude with zero code changes.
+    pub async fn chat_stream(
+        &self,
+        req: &ChatRequest,
+    ) -> Result<
+        impl futures_util::Stream<Item = Result<bytes::Bytes, ProviderError>> + Send + 'static,
+        ProviderError,
+    > {
+        if req.messages.is_empty() {
+            return Err(ProviderError::BadRequest(
+                "chat request has no messages".into(),
+            ));
+        }
+        let resp = self.send_chat(&self.chat_body(req, true)).await?;
+        let name = self.name.clone();
+        Ok(TranslatedStream {
+            inner: Box::pin(futures_util::StreamExt::map(resp.bytes_stream(), {
+                let name = name.clone();
+                move |r| r.map_err(|e| ProviderError::Unavailable(name.clone(), e.to_string()))
+            })),
+            translator: SseTranslator::new(req.model.clone()),
+            line_buf: String::new(),
+            out: std::collections::VecDeque::new(),
+            done: false,
+        })
+    }
+
     pub async fn embed(
         &self,
         _model: &str,
@@ -177,6 +226,210 @@ impl AnthropicProvider {
             self.name.clone(),
             "Anthropic has no embeddings endpoint; use a dedicated embeddings provider".into(),
         ))
+    }
+}
+
+// ─────────────── Anthropic SSE → OpenAI chunk translation ───────────────────
+
+/// Cap on the SSE line-reassembly buffer (same rationale as the gateway tee).
+const LINE_BUF_CAP: usize = 1 << 20;
+
+/// Stateful translator: feed it the JSON payload of each upstream `data:`
+/// line, get back zero or more complete OpenAI SSE frames.
+struct SseTranslator {
+    model: String,
+    id: String,
+    created: i64,
+    input_tokens: u32,
+    output_tokens: u32,
+    finish: &'static str,
+    /// Anthropic content-block index → OpenAI tool_calls index (text blocks
+    /// don't consume a tool index).
+    tool_index: std::collections::HashMap<u64, usize>,
+    next_tool_index: usize,
+    emitted_done: bool,
+}
+
+impl SseTranslator {
+    fn new(model: String) -> Self {
+        SseTranslator {
+            model,
+            id: format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()),
+            created: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0),
+            input_tokens: 0,
+            output_tokens: 0,
+            finish: "stop",
+            tool_index: std::collections::HashMap::new(),
+            next_tool_index: 0,
+            emitted_done: false,
+        }
+    }
+
+    fn frame(&self, delta: serde_json::Value, finish: Option<&str>) -> String {
+        let chunk = serde_json::json!({
+            "id": self.id,
+            "object": "chat.completion.chunk",
+            "created": self.created,
+            "model": self.model,
+            "choices": [{ "index": 0, "delta": delta, "finish_reason": finish }],
+        });
+        format!("data: {chunk}\n\n")
+    }
+
+    fn feed(&mut self, data: &str) -> Vec<String> {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(data) else {
+            return vec![];
+        };
+        match v["type"].as_str().unwrap_or("") {
+            "message_start" => {
+                self.input_tokens =
+                    v["message"]["usage"]["input_tokens"].as_u64().unwrap_or(0) as u32;
+                vec![self.frame(serde_json::json!({ "role": "assistant" }), None)]
+            }
+            "content_block_start" => {
+                let block = &v["content_block"];
+                if block["type"] == "tool_use" {
+                    let idx = self.next_tool_index;
+                    self.next_tool_index += 1;
+                    self.tool_index
+                        .insert(v["index"].as_u64().unwrap_or(0), idx);
+                    vec![self.frame(
+                        serde_json::json!({ "tool_calls": [{
+                            "index": idx,
+                            "id": block["id"],
+                            "type": "function",
+                            "function": { "name": block["name"], "arguments": "" },
+                        }]}),
+                        None,
+                    )]
+                } else {
+                    vec![]
+                }
+            }
+            "content_block_delta" => {
+                let delta = &v["delta"];
+                match delta["type"].as_str().unwrap_or("") {
+                    "text_delta" => {
+                        vec![self.frame(serde_json::json!({ "content": delta["text"] }), None)]
+                    }
+                    "input_json_delta" => {
+                        let Some(&idx) = self.tool_index.get(&v["index"].as_u64().unwrap_or(0))
+                        else {
+                            return vec![];
+                        };
+                        vec![self.frame(
+                            serde_json::json!({ "tool_calls": [{
+                                "index": idx,
+                                "function": { "arguments": delta["partial_json"] },
+                            }]}),
+                            None,
+                        )]
+                    }
+                    _ => vec![], // thinking/signature deltas etc. — not chat content
+                }
+            }
+            "message_delta" => {
+                if let Some(out) = v["usage"]["output_tokens"].as_u64() {
+                    self.output_tokens = out as u32;
+                }
+                self.finish = match v["delta"]["stop_reason"].as_str() {
+                    Some("max_tokens") => "length",
+                    Some("tool_use") => "tool_calls",
+                    _ => "stop",
+                };
+                vec![]
+            }
+            "message_stop" => self.finalize(),
+            _ => vec![], // ping, content_block_stop, error frames handled upstream
+        }
+    }
+
+    /// The terminal frames: finish_reason chunk, exact-usage chunk (the same
+    /// shape OpenAI emits with stream_options.include_usage — the gateway's
+    /// metering tee reads it), and the [DONE] sentinel.
+    fn finalize(&mut self) -> Vec<String> {
+        if self.emitted_done {
+            return vec![];
+        }
+        self.emitted_done = true;
+        let usage_chunk = serde_json::json!({
+            "id": self.id,
+            "object": "chat.completion.chunk",
+            "created": self.created,
+            "model": self.model,
+            "choices": [],
+            "usage": {
+                "prompt_tokens": self.input_tokens,
+                "completion_tokens": self.output_tokens,
+                "total_tokens": self.input_tokens + self.output_tokens,
+            },
+        });
+        vec![
+            self.frame(serde_json::json!({}), Some(self.finish)),
+            format!("data: {usage_chunk}\n\n"),
+            "data: [DONE]\n\n".to_string(),
+        ]
+    }
+}
+
+/// Wraps the upstream byte stream: reassembles SSE lines, feeds each `data:`
+/// payload to the translator, and yields the translated OpenAI frames.
+struct TranslatedStream {
+    inner: std::pin::Pin<
+        Box<dyn futures_util::Stream<Item = Result<bytes::Bytes, ProviderError>> + Send>,
+    >,
+    translator: SseTranslator,
+    line_buf: String,
+    out: std::collections::VecDeque<bytes::Bytes>,
+    done: bool,
+}
+
+impl futures_util::Stream for TranslatedStream {
+    type Item = Result<bytes::Bytes, ProviderError>;
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        use std::task::Poll;
+        loop {
+            if let Some(frame) = self.out.pop_front() {
+                return Poll::Ready(Some(Ok(frame)));
+            }
+            if self.done {
+                return Poll::Ready(None);
+            }
+            match self.inner.as_mut().poll_next(cx) {
+                Poll::Ready(Some(Ok(bytes))) => {
+                    if self.line_buf.len() > LINE_BUF_CAP {
+                        // Misbehaving upstream: stop translating, end cleanly.
+                        let frames = self.translator.finalize();
+                        self.out.extend(frames.into_iter().map(bytes::Bytes::from));
+                        self.done = true;
+                        continue;
+                    }
+                    self.line_buf.push_str(&String::from_utf8_lossy(&bytes));
+                    while let Some(nl) = self.line_buf.find('\n') {
+                        let line: String = self.line_buf.drain(..=nl).collect();
+                        if let Some(data) = line.trim().strip_prefix("data: ") {
+                            let frames = self.translator.feed(data);
+                            self.out.extend(frames.into_iter().map(bytes::Bytes::from));
+                        }
+                    }
+                }
+                Poll::Ready(Some(Err(e))) => return Poll::Ready(Some(Err(e))),
+                Poll::Ready(None) => {
+                    // Upstream ended without message_stop — still close the
+                    // OpenAI stream correctly.
+                    let frames = self.translator.finalize();
+                    self.out.extend(frames.into_iter().map(bytes::Bytes::from));
+                    self.done = true;
+                }
+                Poll::Pending => return Poll::Pending,
+            }
+        }
     }
 }
 

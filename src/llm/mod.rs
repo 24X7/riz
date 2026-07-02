@@ -291,13 +291,12 @@ impl Gateway {
         Err(last_err.unwrap())
     }
 
-    /// Route a `stream: true` chat request. Providers with native SSE
-    /// (`openai`/`ollama` kinds) are proxied token-by-token — the upstream's
-    /// own `chat.completion.chunk` bytes flow through untouched, so
+    /// Route a `stream: true` chat request. Providers with native SSE are
+    /// proxied token-by-token — `openai`/`ollama` kinds byte-for-byte, and
+    /// `anthropic` translated on the fly to OpenAI chunks — so
     /// time-to-first-token is the provider's, not "after the whole
-    /// completion". Providers without native streaming here (mock, anthropic)
-    /// return a buffered response the HTTP layer re-emits as synthesized
-    /// chunks — same SSE contract, no token-level latency win.
+    /// completion". The mock provider returns a buffered response the HTTP
+    /// layer re-emits as synthesized chunks (same SSE contract).
     ///
     /// Fallback semantics: failures BEFORE any byte flows walk the chain
     /// exactly like [`chat`](Self::chat) (an upstream that rejects the
@@ -326,69 +325,74 @@ impl Gateway {
         let mut on_complete: Option<Box<dyn FnOnce(Usage) + Send>> = Some(Box::new(on_complete));
         let mut last_err = None;
         for name in order {
-            match &self.providers[&name] {
-                Provider::OpenAi(p) => match p.chat_stream(req).await {
-                    Ok(stream) => {
-                        let gw = Arc::clone(self);
-                        let model = req.model.clone();
-                        let prompt_approx = req
-                            .messages
-                            .iter()
-                            .map(|m| types::approx_tokens(m.text_content()))
-                            .sum::<u32>();
-                        let done = on_complete.take().expect("consumed once");
-                        let tee = UsageTee {
-                            inner: Box::pin(stream),
-                            line_buf: String::new(),
-                            usage: None,
-                            approx_completion: 0,
-                            prompt_approx,
-                            on_end: Some(Box::new(move |usage: Usage| {
-                                gw.record_usage(
-                                    &name,
-                                    &model,
-                                    usage.prompt_tokens,
-                                    usage.completion_tokens,
-                                );
-                                done(usage);
-                            })),
-                        };
-                        return Ok(ChatStream::Upstream(Box::pin(tee)));
-                    }
-                    Err(e @ ProviderError::BadRequest(_)) => return Err(e),
-                    // The upstream answered but refused the STREAMING request
-                    // (e.g. an OpenAI-compatible server without
-                    // stream_options) — it may still serve buffered. Retry
-                    // this provider once before walking the chain.
-                    Err(e @ ProviderError::Upstream(_, _)) => {
-                        tracing::warn!(
-                            "gateway: provider '{name}' rejected the stream request ({e}); retrying buffered"
-                        );
-                        match p.chat(req).await {
-                            Ok(resp) => {
-                                self.record_usage(
-                                    &name,
-                                    &req.model,
-                                    resp.usage.prompt_tokens,
-                                    resp.usage.completion_tokens,
-                                );
-                                (on_complete.take().expect("consumed once"))(resp.usage.clone());
-                                return Ok(ChatStream::Buffered(resp));
-                            }
-                            Err(e2) => {
-                                tracing::warn!(
-                                    "gateway: provider '{name}' failed: {e2}; trying next"
-                                );
-                                last_err = Some(e2);
-                            }
+            // Native-stream attempt for providers that support it (all frames
+            // reach the client in OpenAI chunk format either way); None = no
+            // native streaming → plain buffered call below.
+            let native: Option<Result<BoxedByteStream, ProviderError>> =
+                match &self.providers[&name] {
+                    Provider::OpenAi(p) => Some(p.chat_stream(req).await.map(boxed_stream)),
+                    Provider::Anthropic(p) => Some(p.chat_stream(req).await.map(boxed_stream)),
+                    Provider::Mock(_) => None,
+                };
+            match native {
+                Some(Ok(stream)) => {
+                    let gw = Arc::clone(self);
+                    let model = req.model.clone();
+                    let prompt_approx = req
+                        .messages
+                        .iter()
+                        .map(|m| types::approx_tokens(m.text_content()))
+                        .sum::<u32>();
+                    let done = on_complete.take().expect("consumed once");
+                    let tee = UsageTee {
+                        inner: stream,
+                        line_buf: String::new(),
+                        usage: None,
+                        approx_completion: 0,
+                        prompt_approx,
+                        on_end: Some(Box::new(move |usage: Usage| {
+                            gw.record_usage(
+                                &name,
+                                &model,
+                                usage.prompt_tokens,
+                                usage.completion_tokens,
+                            );
+                            done(usage);
+                        })),
+                    };
+                    return Ok(ChatStream::Upstream(Box::pin(tee)));
+                }
+                Some(Err(e @ ProviderError::BadRequest(_))) => return Err(e),
+                // The upstream answered but refused the STREAMING request
+                // (e.g. an OpenAI-compatible server without stream_options) —
+                // it may still serve buffered. Retry this provider once
+                // before walking the chain.
+                Some(Err(e @ ProviderError::Upstream(_, _))) => {
+                    tracing::warn!(
+                        "gateway: provider '{name}' rejected the stream request ({e}); retrying buffered"
+                    );
+                    match self.providers[&name].chat(req).await {
+                        Ok(resp) => {
+                            self.record_usage(
+                                &name,
+                                &req.model,
+                                resp.usage.prompt_tokens,
+                                resp.usage.completion_tokens,
+                            );
+                            (on_complete.take().expect("consumed once"))(resp.usage.clone());
+                            return Ok(ChatStream::Buffered(resp));
+                        }
+                        Err(e2) => {
+                            tracing::warn!("gateway: provider '{name}' failed: {e2}; trying next");
+                            last_err = Some(e2);
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!("gateway: provider '{name}' failed: {e}; trying next");
-                        last_err = Some(e);
-                    }
-                },
-                provider => match provider.chat(req).await {
+                }
+                Some(Err(e)) => {
+                    tracing::warn!("gateway: provider '{name}' failed: {e}; trying next");
+                    last_err = Some(e);
+                }
+                None => match self.providers[&name].chat(req).await {
                     Ok(resp) => {
                         self.record_usage(
                             &name,
@@ -446,6 +450,16 @@ impl Gateway {
         }
         Err(last_err.unwrap())
     }
+}
+
+/// The boxed byte-stream shape every native-streaming provider reduces to.
+type BoxedByteStream = Pin<Box<dyn Stream<Item = Result<bytes::Bytes, ProviderError>> + Send>>;
+
+fn boxed_stream<S>(s: S) -> BoxedByteStream
+where
+    S: Stream<Item = Result<bytes::Bytes, ProviderError>> + Send + 'static,
+{
+    Box::pin(s)
 }
 
 /// A streaming chat outcome from [`Gateway::chat_stream`].
