@@ -129,6 +129,7 @@ method = <span class="s">"GET"</span></pre>
       <tr><td><code>timeout_ms</code></td><td>30000</td><td>handler deadline — exceeded = child killed + respawned</td></tr>
       <tr><td><code>integration_timeout_ms</code></td><td>30000</td><td>gateway wait — exceeded = 504 to the client</td></tr>
       <tr><td><code>concurrency</code></td><td>1</td><td>worker processes in the pool (≥ 1 enforced)</td></tr>
+      <tr><td><code>env</code></td><td>off</td><td>per-function environment variables injected at spawn (<code>[function.X.env]</code>) — the standard way to hand a handler its <code>DATABASE_URL</code> / API keys; riz's own <code>AWS_*</code> vars win on conflict; process runtimes only (WASM keeps its deny-by-default WASI env)</td></tr>
       <tr><td><code>memory_mb</code> / <code>cpu_time_secs</code></td><td>off</td><td>opt-in RLIMIT_AS / RLIMIT_CPU caps</td></tr>
       <tr><td><code>allowed_paths</code></td><td>off</td><td>Linux Landlock filesystem allowlist (WASI preopens for wasm)</td></tr>
       <tr><td><code>authorizer</code></td><td>off</td><td><code>"fnName"</code> (REQUEST), <code>"none"</code>, or an inline JWT block</td></tr>

@@ -113,6 +113,24 @@ status = "proven"
 proof = "streaming_returns_openai_sse_chunks"
 
 [[claim]]
+id = "llm-gateway-tool-calling"
+page_text = "chat_completions_with_tools_returns_tool_calls"
+status = "proven"
+proof = "chat_completions_with_tools_returns_tool_calls"
+
+[[claim]]
+id = "llm-gateway-tool-loop-completion"
+page_text = "chat_completions_tool_result_turn_returns_text"
+status = "proven"
+proof = "chat_completions_tool_result_turn_returns_text"
+
+[[claim]]
+id = "ai-chat-flagship-example"
+page_text = "ai_chat_agent_loop_works_end_to_end"
+status = "proven"
+proof = "ai_chat_agent_loop_works_end_to_end"
+
+[[claim]]
 id = "llm-gateway-budget-caps"
 page_text = "budget_zero_rejects_with_412"
 status = "proven"

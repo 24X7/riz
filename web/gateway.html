@@ -81,13 +81,17 @@
         </p>
         <ul class="facts" style="margin-top:1rem">
           <li>Providers: OpenAI · Anthropic · local Ollama (no key) · deterministic <code>mock</code> for CI</li>
+          <li>OpenAI <b>function-calling</b>: <code>tools</code>/<code>tool_choice</code> → <code>tool_calls</code>, on every provider — Anthropic <code>tool_use</code>/<code>tool_result</code> mapped for you</li>
           <li>Chat completions, SSE streaming, embeddings, model list</li>
           <li>Change a client's <code>base_url</code> — that's the whole migration</li>
+          <li>Server-side agent loops: <code>riz init ai-chat</code> scaffolds one end-to-end — <a href="examples.html">see it on Examples</a></li>
         </ul>
         <div class="ledger" style="margin-top:1.4rem">
           <span class="tag">proof</span>
           <span><code>chat_completions_returns_openai_shape</code> ·
           <code>models_lists_configured_providers</code> ·
+          <code>chat_completions_with_tools_returns_tool_calls</code> ·
+          <code>chat_completions_tool_result_turn_returns_text</code> ·
           <code>streaming_returns_openai_sse_chunks</code></span>
         </div>
       </div>

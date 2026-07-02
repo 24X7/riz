@@ -53,7 +53,7 @@
       "Six runtimes: Bun, Node.js, Python, Rust, Go, and capability-sandboxed WASI/WASM — cross-runtime parity tested",
       "Resource broker: sandboxed WASM queries Postgres (Neon/Supabase/any PG) via capability grants — no sockets, no DSNs in guest memory",
       "WASM guards (guard_in/guard_out): one .wasm policy validates, scrubs, or redacts across all six runtimes, fail-closed",
-      "OpenAI-compatible LLM gateway with provider routing, SSE streaming, embeddings, and bearer-gated budget caps that fail closed",
+      "OpenAI-compatible LLM gateway with provider routing, OpenAI function-calling (tools → tool_calls on every provider), SSE streaming, embeddings, and bearer-gated budget caps that fail closed",
       "Always-on per-child safety profile: RLIMIT_CORE=0, NOFILE=4096, FSIZE=100MiB, NPROC=4096, PR_SET_PDEATHSIG=SIGKILL, NO_NEW_PRIVS",
       "Supervised crash-respawn with a liveness watcher and a graceful 30s in-flight drain",
       "S3 hot-swap deploys with health-check and automatic rollback; riz.toml + handler-source hot-reload",
@@ -121,6 +121,9 @@
       // reading this as an agent? <a href="llms.txt" data-turbo="false">llms.txt</a> ·
       <a href=".well-known/riz.json" data-turbo="false">.well-known/riz.json</a> ·
       add a running instance: <a href="agents.html">claude mcp add riz --transport http &lt;host&gt;/_riz/mcp</a>
+    </p>
+    <p style="margin-top:.9rem;font-family:var(--mono);font-size:.72rem;color:var(--t-low)">
+      built by <a href="https://linkedin.com/in/ship247" target="_blank" style="color:var(--t-mid);text-decoration:underline dotted">Chris Rizzuto</a> — 20 years engineering leadership at Meta · Google · Microsoft · Oracle
     </p>
   </div>
 </header>
