@@ -1,0 +1,4 @@
+node_modules/
+*.tsbuildinfo
+.vite/
+# NOTE: dist/ is intentionally committed so `riz run` works out of the box.

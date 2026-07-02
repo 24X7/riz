@@ -36,7 +36,7 @@
     "endpoint_pattern": "/_riz/v1/*",
     "compat": "OpenAI-compatible — point any OpenAI client by changing base_url",
     "providers": ["openai", "anthropic", "ollama", "mock"],
-    "features": ["model-prefix routing", "fallback chain", "SSE streaming", "embeddings", "budget_usd caps (HTTP 412 on breach)", "per-provider cost telemetry"]
+    "features": ["model-prefix routing", "fallback chain", "OpenAI function-calling: tools/tool_choice → tool_calls across all providers (Anthropic tool_use/tool_result mapped automatically; offline tool loop via mock)", "SSE streaming", "embeddings", "budget_usd caps (HTTP 412 on breach)", "per-provider cost telemetry"]
   },
   "key_capabilities": [
     "Run AWS HTTP API v2 + WebSocket Lambda handlers unmodified on your own box",

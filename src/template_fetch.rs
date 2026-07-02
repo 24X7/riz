@@ -59,6 +59,12 @@ pub const BUILTINS: &[(&str, &str, &str, &str)] = &[
         "Full-stack",
         "TS/Bun API + React/Vite client",
     ),
+    (
+        "ai-chat",
+        "examples/ai-chat",
+        "Full-stack AI",
+        "React chat UI + Bun agent loop via the LLM gateway",
+    ),
 ];
 
 /// A resolved template source.

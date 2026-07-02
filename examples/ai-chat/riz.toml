@@ -1,0 +1,63 @@
+# ai-chat — UI + API + AI + agents on ONE riz binary.
+#
+# A React chat client, a Bun API that runs a real server-side agent loop
+# (model → tool_calls → execute → tool results → final answer) through riz's
+# OpenAI-compatible gateway, and the whole thing exposed to outside agents as
+# a typed MCP tool at /_riz/mcp. Run from this directory:
+#
+#   riz --dev            # works OFFLINE first try — the mock provider is
+#                        # deterministic and exercises the full tool loop
+#
+# Then open http://localhost:3000 and ask: "where is order 42?"
+#
+# Point it at a REAL model by switching default_provider below (and exporting
+# the matching API key) — the handler code does not change.
+
+[server]
+port = 3000
+host = "127.0.0.1"
+
+# ── The LLM gateway: one OpenAI-compatible endpoint, any provider ────────────
+[gateway]
+default_provider = "mock"       # offline + deterministic; great for first boot
+fallback_chain = ["mock"]
+
+[gateway.providers.mock]
+kind = "mock"
+
+# Uncomment ONE of these and set default_provider to use a real model:
+#
+# [gateway.providers.anthropic]
+# kind = "anthropic"
+# api_key_env = "ANTHROPIC_API_KEY"     # read from the environment, never stored
+#
+# [gateway.providers.openai]
+# kind = "openai"
+# api_key_env = "OPENAI_API_KEY"
+#
+# [gateway.providers.ollama]
+# kind = "ollama"                        # local models, no key: ollama pull llama3.2
+
+# ── The API: one Bun function running the agent loop ─────────────────────────
+[function.chat]
+runtime = "bun"
+handler = "api/chat.handler"
+timeout_ms = 30000
+concurrency = 2
+
+# Per-function env ([function.X.env]) — how the handler finds its own gateway
+# and which model to ask for. Change model to e.g. "anthropic/claude-sonnet-5"
+# when you enable a real provider above.
+[function.chat.env]
+GATEWAY_URL = "http://127.0.0.1:3000/_riz/v1"
+CHAT_MODEL = "mock"
+
+[[function.chat.routes]]
+path = "/api/chat"
+method = "POST"
+
+# ── The UI: the built React client, same binary, same origin ─────────────────
+[static]
+dir = "client/dist"
+mount = "/"
+spa_fallback = true
