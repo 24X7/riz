@@ -40,6 +40,9 @@ fn tool_entries(config: &Config) -> Vec<ToolEntry> {
     config
         .functions
         .iter()
+        // WebSocket functions aren't advertised by the live tools/list (no
+        // request/response HTTP route to dispatch) — mirror that here.
+        .filter(|(_, func)| !matches!(func.protocol, crate::config::Protocol::WebSocket))
         .map(|(name, func)| {
             let routes = func.effective_routes(name);
             ToolEntry {
