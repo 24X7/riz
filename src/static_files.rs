@@ -198,11 +198,20 @@ async fn file_response(
 
     // Precompressed sibling (path.br / path.gz) when allowed.
     let (read_path, encoding) = pick_encoding(path, req_headers, cfg).await;
-    let bytes = match tokio::fs::read(&read_path).await {
-        Ok(b) => b,
-        Err(_) => return not_found(cfg, is_head).await,
+    // Length of the file actually served (the precompressed sibling differs
+    // from the identity file the ETag/mtime came from). Bodies STREAM to the
+    // socket in 64 KiB chunks — a request never buffers the whole asset, and
+    // HEAD never opens the file at all. (Same TOCTOU window as before: a file
+    // replaced between metadata and read serves a torn response once; the
+    // validators are already stale in that case.)
+    let total = if read_path == path {
+        len
+    } else {
+        match tokio::fs::metadata(&read_path).await {
+            Ok(m) => m.len(),
+            Err(_) => return not_found(cfg, is_head).await,
+        }
     };
-    let total = bytes.len() as u64;
 
     // Single-range request (Range: bytes=a-b). Only on the identity encoding —
     // ranging a precompressed body would be wrong.
@@ -213,7 +222,6 @@ async fn file_response(
         {
             match parse_single_range(range, total) {
                 Some((start, end)) => {
-                    let slice = bytes[start as usize..=end as usize].to_vec();
                     let b = build(StatusCode::PARTIAL_CONTENT, &ctype, &cache, &etag, mtime)
                         .header(http::header::ACCEPT_RANGES, "bytes")
                         .header(
@@ -224,7 +232,10 @@ async fn file_response(
                     if is_head {
                         return b.body(Body::empty()).unwrap();
                     }
-                    return b.body(Body::from(slice)).unwrap();
+                    return match open_range(&read_path, start, end).await {
+                        Some(stream) => b.body(Body::from_stream(stream)).unwrap(),
+                        None => not_found(cfg, is_head).await,
+                    };
                 }
                 None => {
                     return build(
@@ -253,7 +264,33 @@ async fn file_response(
     if is_head {
         return b.body(Body::empty()).unwrap();
     }
-    b.body(Body::from(bytes)).unwrap()
+    match tokio::fs::File::open(&read_path).await {
+        Ok(file) => b
+            .body(Body::from_stream(
+                tokio_util::io::ReaderStream::with_capacity(file, STREAM_CHUNK),
+            ))
+            .unwrap(),
+        Err(_) => not_found(cfg, is_head).await,
+    }
+}
+
+/// Streaming chunk size: large enough to amortize syscalls on big assets,
+/// small enough to keep per-connection memory flat.
+const STREAM_CHUNK: usize = 64 * 1024;
+
+/// Open `path`, seek to `start`, and stream exactly `end - start + 1` bytes.
+async fn open_range(
+    path: &Path,
+    start: u64,
+    end: u64,
+) -> Option<tokio_util::io::ReaderStream<tokio::io::Take<tokio::fs::File>>> {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+    let mut file = tokio::fs::File::open(path).await.ok()?;
+    file.seek(std::io::SeekFrom::Start(start)).await.ok()?;
+    Some(tokio_util::io::ReaderStream::with_capacity(
+        file.take(end - start + 1),
+        STREAM_CHUNK,
+    ))
 }
 
 fn build(

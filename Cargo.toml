@@ -57,6 +57,9 @@ futures-util = "0.3"
 # Already in the tree via axum/hyper/reqwest — named directly for the gateway's
 # streaming passthrough (Bytes chunks flow upstream→client untouched).
 bytes = "1"
+# Same story as bytes: already in the tree via axum/hyper — named for ReaderStream
+# so static files stream to the socket instead of buffering fully per request.
+tokio-util = { version = "0.7", features = ["io"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 subtle = "2"
 jsonwebtoken = "9"

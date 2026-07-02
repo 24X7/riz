@@ -297,6 +297,70 @@ async fn range_request_returns_206() {
     assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
 }
 
+// ───────────────────────────── large files (streamed) ───────────────────────
+// Large assets are streamed to the socket, not buffered whole per request —
+// these pin byte-exact correctness across the streaming path's internal
+// buffer boundaries.
+
+fn large_payload() -> Vec<u8> {
+    // 8 MiB of a non-repeating-aligned pattern (251 is prime) — any
+    // off-by-one across chunk boundaries changes the bytes.
+    (0..8 * 1024 * 1024u32).map(|i| (i % 251) as u8).collect()
+}
+
+#[tokio::test]
+async fn large_file_serves_full_content_and_length() {
+    let dir = tempfile::tempdir().unwrap();
+    let payload = large_payload();
+    fs::write(dir.path().join("bundle.js"), &payload).unwrap();
+    let cfg = static_cfg(dir.path(), "");
+
+    let (m, p, h) = get("/bundle.js");
+    let resp = serve(m, p, h, &cfg).await.expect("served");
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()
+            .get(header::CONTENT_LENGTH)
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        payload.len().to_string()
+    );
+    let body = body_bytes(resp).await;
+    assert_eq!(body.len(), payload.len());
+    assert_eq!(body, payload, "streamed bytes must match the file exactly");
+}
+
+#[tokio::test]
+async fn large_file_range_crossing_chunk_boundaries_is_exact() {
+    let dir = tempfile::tempdir().unwrap();
+    let payload = large_payload();
+    fs::write(dir.path().join("v.bin"), &payload).unwrap();
+    let cfg = static_cfg(dir.path(), "");
+
+    // A range that starts mid-chunk and spans several 64 KiB boundaries.
+    let (start, end) = (65_530u64, 262_211u64);
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::RANGE,
+        HeaderValue::from_str(&format!("bytes={start}-{end}")).unwrap(),
+    );
+    let resp = serve(Method::GET, "/v.bin", headers, &cfg)
+        .await
+        .expect("served");
+    assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(
+        resp.headers()
+            .get(header::CONTENT_RANGE)
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        format!("bytes {start}-{end}/{}", payload.len())
+    );
+    let body = body_bytes(resp).await;
+    assert_eq!(body, payload[start as usize..=end as usize].to_vec());
+}
+
 // ───────────────────────────── HEAD ─────────────────────────────────────────
 
 #[tokio::test]
