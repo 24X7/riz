@@ -69,6 +69,7 @@ pub fn guard_pool_config(guard_module: &Path, base: &FunctionConfig) -> Function
         timeout_ms: GUARD_TIMEOUT_MS,
         integration_timeout_ms: GUARD_TIMEOUT_MS,
         stage_variables: Default::default(),
+        env: Default::default(),
         cache_ttl_secs: None,
         concurrency: base.concurrency,
         routes: Vec::new(),

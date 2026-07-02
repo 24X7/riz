@@ -30,6 +30,7 @@ fn slow_fn_cfg() -> FunctionConfig {
         timeout_ms: 60_000,
         integration_timeout_ms: 30_000,
         stage_variables: Default::default(),
+        env: Default::default(),
         cache_ttl_secs: None,
         concurrency: 1,
         routes: vec![riz::config::RouteSpec {

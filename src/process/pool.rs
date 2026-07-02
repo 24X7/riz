@@ -85,6 +85,12 @@ pub(super) async fn spawn_process(
     tracing::debug!(runtime = runtime.name(), handler = ?cfg.handler, ?transport_kind, "spawning lambda process");
     let mut cmd = runtime.spawn_command(cfg);
 
+    // Per-function `[function.X.env]` lands FIRST so riz's own variables
+    // (AWS_LAMBDA_*, _HANDLER, runtime internals set below) win on conflict.
+    for (key, value) in &cfg.env {
+        cmd.env(key, value);
+    }
+
     // RuntimeApi (rust/go): provision a per-worker AWS Lambda Runtime API
     // endpoint and expose it to the unmodified official runtime client via the
     // standard AWS env vars. The event is delivered over HTTP, not stdin.
