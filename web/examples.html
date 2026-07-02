@@ -65,6 +65,21 @@
   <div class="wrap">
     <div class="caps">
 
+      <a class="cap" href="https://github.com/24X7/riz/tree/main/examples/ai-chat" target="_blank">
+        <div class="cap-glyph">[ai]</div>
+        <h3>The full-stack AI app</h3>
+        <p class="claim">A React chat UI, a Bun API running a real <b>server-side agent loop</b> (model → <code style="font-family:var(--mono);font-size:.85em">tool_calls</code> → execute → final answer) through the gateway, and the whole app exposed as an MCP tool — one binary, one origin.</p>
+        <ul class="facts">
+          <li><code>riz init ai-chat && cd ai-chat && riz --dev</code></li>
+          <li>Boots <b>offline</b> first try — the mock provider drives the full tool loop</li>
+          <li>Anthropic / OpenAI / Ollama = a riz.toml edit; the handler never changes</li>
+        </ul>
+        <div class="cap-foot">
+          <div class="proof"><b>✓</b> CI: ai_chat_agent_loop_works_end_to_end</div>
+          <span class="cap-go">examples/ai-chat →</span>
+        </div>
+      </a>
+
       <a class="cap" href="https://github.com/24X7/riz/tree/main/examples/lambdas/agent-tools" target="_blank">
         <div class="cap-glyph">[mcp]</div>
         <h3>Agent tools, zero glue</h3>
