@@ -107,32 +107,35 @@ handler = "main.lambda_handler"
 
 ### Rust
 
-The Rust runtime adapter spawns your **pre-built binary** and speaks line-delimited JSON over stdin/stdout. Use the `riz-rust-runtime` crate to wire it up:
+Rust handlers use the **official AWS Lambda Rust runtime** (`lambda_runtime`) — no riz
+library. riz spawns your **pre-built binary** and speaks the real AWS Lambda Runtime API
+to it, so the exact same executable runs unmodified on AWS Lambda and on riz:
 
 ```rust
-// src/main.rs
-use riz_rust_runtime::{run, ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
-
-#[tokio::main]
-async fn main() {
-    run(handler).await
-}
+// src/main.rs — identical on AWS and on riz
+use aws_lambda_events::apigw::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
+use lambda_runtime::{run, service_fn, Error, LambdaEvent};
 
 async fn handler(
-    event: ApiGatewayV2httpRequest,
-    ctx: riz_rust_runtime::Context,
-) -> ApiGatewayV2httpResponse {
-    let name = event
+    event: LambdaEvent<ApiGatewayV2httpRequest>,
+) -> Result<ApiGatewayV2httpResponse, Error> {
+    let (req, ctx) = (event.payload, event.context);
+    let name = req
         .query_string_parameters
         .first("name")
-        .unwrap_or("world".to_string());
-    riz_rust_runtime::json(200, &serde_json::json!({
-        "message": format!("hello, {name}"),
-        "awsRequestId": ctx.aws_request_id,
-        "remainingMs": ctx.get_remaining_time_in_millis(),
-    }))
+        .unwrap_or("world")
+        .to_string();
+    // ...build an ApiGatewayV2httpResponse exactly as you would on AWS.
+    todo!()
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Error> {
+    run(service_fn(handler)).await
 }
 ```
+
+`riz init rust-http my-api` scaffolds a complete, buildable version of this handler.
 
 ```toml
 [function.api]
@@ -155,7 +158,7 @@ riz run
 ## What Riz adds that AWS doesn't
 
 - **Hot-reload.** Edit `index.ts`, save, the next request hits the new code. No `aws lambda update-function-code`.
-- **Live terminal dashboard.** `riz run` opens a ratatui dashboard with P50–P99 latency, request logs, and cold-start counts in real time.
+- **Live terminal dashboard.** `riz --dev` opens a ratatui dashboard with P50–P99 latency, request logs, and cold-start counts in real time (`riz run` stays headless with JSON logs).
 - **MCP server.** Every function in `riz.toml` is automatically an MCP tool at `/_riz/mcp`. Point Claude Code or Cursor at it; no wrapper code.
 - **On-box safety.** Each handler runs in a process with `RLIMIT_CORE=0`, `RLIMIT_NOFILE=4096`, `RLIMIT_FSIZE=100MiB`, `PR_SET_NO_NEW_PRIVS`, and optionally a Landlock filesystem allowlist. The handler can't fill your disk or escalate privileges.
 
@@ -179,7 +182,7 @@ scp riz.toml index.ts target-host:/srv/myapp/
 ssh target-host 'cd /srv/myapp && riz run'
 ```
 
-Or wrap in a systemd unit. The `docs/production.md` doc has an example.
+Or wrap in a systemd unit.
 
 ### Hot-swap from S3
 
@@ -188,7 +191,7 @@ For zero-downtime updates without restarting Riz:
 ```bash
 zip -r myhandler.zip index.ts node_modules/
 aws s3 cp myhandler.zip s3://my-bucket/myhandler.zip
-curl -X POST http://target-host:3000/_riz/deploy \
+curl -X POST http://target-host:3000/deploy \
   -H 'authorization: Bearer $TOKEN' \
   -d '{"lambda":"api","s3_bucket":"my-bucket","s3_key":"myhandler.zip"}'
 ```

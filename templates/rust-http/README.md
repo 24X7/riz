@@ -3,34 +3,45 @@
 A minimal AWS API Gateway v2 HTTP Lambda handler in Rust, ready to run
 on riz (https://riz.dev).
 
+It uses the **official AWS Lambda Rust runtime** (`lambda_runtime`) — no riz
+library. riz speaks the real AWS Lambda Runtime API to your binary, so this
+exact executable runs unmodified on AWS Lambda and on riz.
+
 ## Build + run
 
 ```bash
 cargo build --release
-riz run
-# → curl localhost:3000/hello?name=alice
+riz --dev          # or headless: riz run
+# → curl "localhost:3000/hello?name=alice"
 #   {"message":"hello, alice","method":"GET", ...}
 ```
 
 ## Layout
 
-- `Cargo.toml` — depends on `riz-rust-runtime` (the helper crate that
-  handles the line-JSON wire protocol with the riz host)
-- `src/main.rs` — the handler function plus `fn main() { run(handler); }`
+- `Cargo.toml` — depends on `lambda_runtime` + `aws_lambda_events` (the
+  same crates you'd use on real AWS Lambda)
+- `src/main.rs` — the handler plus `run(service_fn(handler))`
 - `riz.toml` — points at `./target/release/hello` (the built binary)
 
 ## Customizing
 
-The handler signature is:
+The handler signature is the official AWS one:
 
 ```rust
 async fn handler(
-    event: ApiGatewayV2httpRequest,
-    ctx: Context,
-) -> Result<ApiGatewayV2httpResponse, Box<dyn std::error::Error + Send + Sync>>
+    event: LambdaEvent<ApiGatewayV2httpRequest>,
+) -> Result<ApiGatewayV2httpResponse, Error>
 ```
 
-This is the exact AWS API Gateway v2 event/response shape, so handlers
-written for real AWS Lambda compile here unchanged. Edit `src/main.rs`,
-rebuild, and `riz run` picks up the new binary via handler-source
-hot reload (no restart needed).
+`event.payload` is the API Gateway v2 event, `event.context` the Lambda
+context (request id, deadline, function name). Handlers written for real
+AWS Lambda compile here unchanged. Edit `src/main.rs`, rebuild, and riz
+picks up the new binary via handler-source hot reload (no restart needed).
+
+## Next steps
+
+- Add routes: more `[[function.hello.routes]]` blocks in `riz.toml`
+  (`{id}` and `{proxy+}` path params work exactly like AWS).
+- Your function is already a typed MCP tool at `/_riz/mcp`:
+  `claude mcp add riz --transport http http://localhost:3000/_riz/mcp`
+- Pre-flight check: `riz doctor`

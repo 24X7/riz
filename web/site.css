@@ -28,7 +28,7 @@
   --t-max:    #FAFAF6;   /* headlines */
   --t-hi:     #DCDCD4;   /* body on ink */
   --t-mid:    #9A9AA2;   /* secondary */
-  --t-low:    #62626B;   /* labels, fine print */
+  --t-low:    #8A8A92;   /* labels, fine print — keep ≥4.5:1 on --ink (WCAG AA) */
   --t-ink:    #131310;   /* text on paper/acid */
 
   /* ── the accent ── */
@@ -367,6 +367,12 @@ h2.sec em{font-style:normal;color:var(--acid)}
   font-family:var(--mono);font-size:.7rem;color:var(--t-low);
 }
 .well-hd b{color:var(--t-mid);font-weight:700}
+.well-hd button{
+  font-family:var(--mono);font-size:.68rem;font-weight:700;cursor:pointer;
+  color:var(--t-low);background:none;border:1px solid var(--line-2);
+  border-radius:3px;padding:.28rem .6rem;transition:all .12s;
+}
+.well-hd button:hover{color:var(--t-ink);background:var(--acid);border-color:var(--acid)}
 .well pre{
   padding:1.1rem 1.2rem;font-size:.84rem;line-height:1.65;overflow-x:auto;
   color:var(--t-hi);
