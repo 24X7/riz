@@ -72,21 +72,22 @@ impl McpHandler {
     }
 
     /// Render the live llms.txt: mirrors `riz scaffold static`'s generator but
-    /// over the LIVE function set — hot-swapped functions appear, removed ones
-    /// don't, and WebSocket functions are excluded exactly like `tools/list`.
+    /// over the LIVE function set — hot-swapped functions appear and removed
+    /// ones don't. WebSocket functions appear with their ephemeral-session
+    /// description, exactly like `tools/list`.
     async fn render_llms_txt(&self) -> String {
         let functions = self.riz_state.functions.read().await;
         let tools: Vec<_> = functions
             .iter()
             .map(|(_, f)| f)
-            .filter(|f| matches!(f.kind, FunctionKind::User) && !super::tools::is_websocket(f))
+            .filter(|f| matches!(f.kind, FunctionKind::User))
             .collect();
 
         let mut out = String::new();
         out.push_str("# riz instance\n\n");
         out.push_str(&format!(
             "> A self-hosted riz runtime exposing {} function{} as typed MCP tools \
-             at `/_riz/mcp`. Every HTTP handler below is callable by an agent — zero glue.\n\n",
+             at `/_riz/mcp`. Every handler below is callable by an agent — zero glue.\n\n",
             tools.len(),
             if tools.len() == 1 { "" } else { "s" }
         ));
@@ -97,14 +98,20 @@ impl McpHandler {
                 .as_ref()
                 .and_then(|c| c.mcp.as_ref())
                 .and_then(|m| m.description.clone())
-                .unwrap_or_else(|| match &f.config {
-                    Some(c) => format!(
-                        "Invoke function `{}` ({} runtime). Routes: [{}]",
-                        f.name,
-                        c.runtime.as_str(),
-                        f.routes.join(", "),
-                    ),
-                    None => format!("Invoke {}", f.name),
+                .unwrap_or_else(|| {
+                    if super::tools::is_websocket(f) {
+                        super::ws_session::session_description(&f.name)
+                    } else {
+                        match &f.config {
+                            Some(c) => format!(
+                                "Invoke function `{}` ({} runtime). Routes: [{}]",
+                                f.name,
+                                c.runtime.as_str(),
+                                f.routes.join(", "),
+                            ),
+                            None => format!("Invoke {}", f.name),
+                        }
+                    }
                 });
             out.push_str(&format!("### {}\n\n", f.name));
             if let Some(c) = &f.config {

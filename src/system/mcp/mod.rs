@@ -28,6 +28,9 @@ mod resources;
 mod schema;
 mod tools;
 pub mod transport;
+mod ws_session;
+
+pub use ws_session::WsSessionDeps;
 
 use crate::auth::bearer::validate_bearer;
 use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
@@ -45,6 +48,9 @@ pub struct McpHandler {
     routes: Vec<RouteEntry>,
     pub(super) riz_state: Arc<RizState>,
     pub(super) router: tokio::sync::RwLock<Option<Arc<Router>>>,
+    /// Wired post-construction (like the Router): what ephemeral WebSocket
+    /// tool sessions need from the app. `None` in unit setups → clear error.
+    pub(super) ws_session_deps: tokio::sync::RwLock<Option<WsSessionDeps>>,
     bearer_token: Option<String>,
 }
 
@@ -73,6 +79,7 @@ impl McpHandler {
             ],
             riz_state,
             router: tokio::sync::RwLock::new(None),
+            ws_session_deps: tokio::sync::RwLock::new(None),
             bearer_token,
         }
     }
@@ -81,6 +88,12 @@ impl McpHandler {
     /// the things the Router holds, and it dispatches reentrantly through it).
     pub async fn set_router(&self, router: Arc<Router>) {
         *self.router.write().await = Some(router);
+    }
+
+    /// Wire the runtime pieces ephemeral WebSocket tool sessions dispatch
+    /// through. Called alongside [`set_router`](Self::set_router).
+    pub async fn set_ws_session_deps(&self, deps: WsSessionDeps) {
+        *self.ws_session_deps.write().await = Some(deps);
     }
 }
 
@@ -381,13 +394,12 @@ mod tests {
         assert!(tools[0]["description"].as_str().unwrap().contains("api"));
     }
 
-    /// WebSocket functions have no request/response HTTP route in the Router —
-    /// a `tools/call` on one can never succeed. Advertising them in
-    /// `tools/list` hands agents a tool that 404s on first use, so they must
-    /// be excluded, and calling one by name must be "unknown tool", not a
-    /// dispatched 404 envelope.
+    /// WebSocket functions are callable tools via ephemeral sessions
+    /// (ws_session.rs): advertised with the session schema, and a call in a
+    /// unit setup (no runtime wired) fails with a CLEAR error — never the old
+    /// dispatched-404 envelope.
     #[tokio::test]
-    async fn websocket_functions_are_not_advertised_or_callable_as_tools() {
+    async fn websocket_functions_are_session_tools() {
         let s = Arc::new(RizState::new());
         let mut ws_cfg = user_state().config.clone().expect("user_state has config");
         ws_cfg.protocol = crate::config::Protocol::WebSocket;
@@ -396,19 +408,26 @@ mod tests {
         s.register(user_state()).await;
         let h = McpHandler::new(s, None);
 
-        // tools/list: only the HTTP function appears.
+        // tools/list: both appear; the WS one carries the session schema.
         let req = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
         let resp = h.invoke(evt(req)).await.unwrap();
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         let tools = body["result"]["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2, "WS functions are advertised again: {body}");
+        let ws_tool = tools.iter().find(|t| t["name"] == "chat-ws").unwrap();
         assert_eq!(
-            tools.len(),
-            1,
-            "WS functions must not be advertised as tools: {body}"
+            ws_tool["inputSchema"]["properties"]["message"]["type"], "string",
+            "session schema: {body}"
         );
-        assert_eq!(tools[0]["name"], "api");
+        assert!(
+            ws_tool["description"]
+                .as_str()
+                .unwrap()
+                .contains("WebSocket session"),
+            "session semantics named: {body}"
+        );
 
-        // tools/call on the WS function: unknown tool, not a 404 envelope.
+        // Missing `message` → parameter error, before any dispatch.
         let call = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"chat-ws","arguments":{}}}"#;
         let resp = h.invoke(evt(call)).await.unwrap();
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
@@ -416,8 +435,21 @@ mod tests {
             body["error"]["message"]
                 .as_str()
                 .unwrap_or_default()
-                .contains("unknown function"),
-            "calling a WS function must be the same JSON-RPC error as a nonexistent tool: {body}"
+                .contains("message"),
+            "missing message must be named: {body}"
+        );
+
+        // With a message but no runtime wired (unit setup): a clear
+        // unavailable error, not a dispatched 404 envelope.
+        let call = r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"chat-ws","arguments":{"message":"hi"}}}"#;
+        let resp = h.invoke(evt(call)).await.unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("not wired"),
+            "unwired runtime must fail clearly: {body}"
         );
     }
 
@@ -675,10 +707,10 @@ mod tests {
         assert_eq!(body["error"]["code"], -32002, "got: {body}");
     }
 
-    /// WS functions aren't callable tools, so the llms.txt resource must not
-    /// advertise them either (mirrors tools/list).
+    /// WS functions are callable session tools, so the llms.txt resource
+    /// advertises them with the session description (mirrors tools/list).
     #[tokio::test]
-    async fn resources_llms_txt_excludes_websocket_functions() {
+    async fn resources_llms_txt_includes_websocket_session_tools() {
         let s = Arc::new(RizState::new());
         let mut ws_cfg = user_state().config.clone().expect("user_state has config");
         ws_cfg.protocol = crate::config::Protocol::WebSocket;
@@ -690,9 +722,10 @@ mod tests {
         let resp = h.invoke(evt(req)).await.unwrap();
         let body: serde_json::Value = serde_json::from_str(&body_text(&resp)).unwrap();
         let text = body["result"]["contents"][0]["text"].as_str().unwrap();
+        assert!(text.contains("### chat-ws"), "WS tool listed: {text}");
         assert!(
-            !text.contains("chat-ws"),
-            "WS functions must not appear: {text}"
+            text.contains("ephemeral WebSocket session"),
+            "session semantics named: {text}"
         );
     }
 

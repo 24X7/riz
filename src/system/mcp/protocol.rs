@@ -110,6 +110,12 @@ pub(super) struct ToolArguments {
     pub(super) path_params: HashMap<String, String>,
     #[serde(default, rename = "isBase64Encoded")]
     pub(super) is_base64_encoded: bool,
+    /// Ephemeral WebSocket sessions (ws_session.rs): the message delivered as
+    /// the `$default` event body, and how long to wait for reply frames.
+    #[serde(default)]
+    pub(super) message: Option<String>,
+    #[serde(default)]
+    pub(super) timeout_ms: Option<u64>,
 }
 
 /// Accept scalar JSON values (string / number / bool) for param maps and

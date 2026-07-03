@@ -50,6 +50,8 @@ All six are **cross-runtime parity-tested** — every HTTP capability (verbs, pa
 | **Spec** | MCP 2025-11-25 (also negotiates 2024-11-05 / 2025-03-26 / 2025-06-18) |
 | **Transport** | JSON-RPC 2.0 over Streamable HTTP |
 | **Tool registration** | Every function in `riz.toml` auto-registers with typed input + output schemas |
+| **WebSocket tools** | WS functions are session tools: `tools/call({message, timeout_ms?})` runs an ephemeral `$connect` → `$default` → collect `@connections` pushes → `$disconnect` session and returns the frames |
+| **Resources** | `riz://registry` + `riz://llms.txt` — the live instance describes itself over `resources/read` |
 | **SDK lines required** | Zero |
 | **Inspect** | `riz mcp inspect` — initialize + tools/list one-screen report |
 
@@ -126,7 +128,7 @@ This measures the riz dispatch path (routing + process pool bridge). Real throug
 
 | Metric | Value |
 |---|---|
-| **Test count** | 959 tests (`cargo nextest run`) |
+| **Test count** | 995 tests (`cargo nextest run`) |
 | **Parity matrix** | Every HTTP capability tested identically across all 6 runtimes |
 | **Bug tracker** | 20 / 20 production-readiness entries closed — each with a regression-gate test |
 

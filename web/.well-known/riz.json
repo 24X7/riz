@@ -26,7 +26,7 @@
     "transport": "JSON-RPC 2.0 over Streamable HTTP",
     "spec_default": "2025-11-25",
     "spec_negotiated": ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"],
-    "tool_registration": "Every function in riz.toml auto-registers as a typed MCP tool — zero SDK, zero glue.",
+    "tool_registration": "Every function in riz.toml auto-registers as a typed MCP tool — zero SDK, zero glue. WebSocket functions register as session tools: tools/call({message, timeout_ms?}) runs an ephemeral $connect → $default → collect @connections pushes → $disconnect session and returns the frames.",
     "typed_schemas": "Per-route typed inputSchemas: {id} path params typed+required from the route template; [function.x.mcp] declares typed query params + JSON-Schema body; tools/call validates and answers -32602 naming the offending parameter.",
     "streaming": "Streamable HTTP: POST with Accept: text/event-stream answers as SSE event frames; GET opens the server channel; Mcp-Session-Id minted on initialize and echoed; notifications/progress frames stream during long tool calls when a progressToken is supplied.",
     "wire_up": "claude mcp add riz-local --transport http http://localhost:3000/_riz/mcp",

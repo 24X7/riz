@@ -40,15 +40,29 @@ fn tool_entries(config: &Config) -> Vec<ToolEntry> {
     config
         .functions
         .iter()
-        // WebSocket functions aren't advertised by the live tools/list (no
-        // request/response HTTP route to dispatch) — mirror that here.
-        .filter(|(_, func)| !matches!(func.protocol, crate::config::Protocol::WebSocket))
         .map(|(name, func)| {
             let routes = func.effective_routes(name);
+            // WebSocket functions are callable tools via ephemeral sessions —
+            // mirror the live tools/list description.
+            let description = if matches!(func.protocol, crate::config::Protocol::WebSocket) {
+                func.mcp
+                    .as_ref()
+                    .and_then(|m| m.description.clone())
+                    .unwrap_or_else(|| {
+                        format!(
+                            "Open an ephemeral WebSocket session with function `{name}`: \
+                             delivers `message` as a $default event ($connect/$disconnect \
+                             fire normally) and returns the frames the handler pushes via \
+                             @connections."
+                        )
+                    })
+            } else {
+                tool_description(name, func, &routes)
+            };
             ToolEntry {
                 name: name.clone(),
                 runtime: func.runtime.as_str().to_string(),
-                description: tool_description(name, func, &routes),
+                description,
                 routes,
             }
         })
