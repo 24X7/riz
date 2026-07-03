@@ -4,8 +4,8 @@
 //!
 //! `[agent]` in riz.toml turns this instance into an agent2agent server:
 //! an Agent Card at `/.well-known/agent-card.json` and a JSON-RPC binding at
-//! `POST /_riz/a2a` (`SendMessage` / `GetTask` / `CancelTask`, with the 0.x
-//! aliases `message/send` / `tasks/get` / `tasks/cancel` accepted). A
+//! `POST /_riz/a2a` (`SendMessage` / `SendStreamingMessage` — SSE with live
+//! status + artifact events / `GetTask` / `CancelTask`; 0.x aliases accepted). A
 //! delegated task runs the agent loop: gateway chat with this instance's OWN
 //! functions as tools — the tool definitions and execution both go through
 //! the in-process MCP surface (`tools/list` / `tools/call` dispatched through
@@ -51,8 +51,30 @@ struct TaskEntry {
     snapshot: Mutex<serde_json::Value>,
     /// Fires on every state change; SendMessage waits on it with a timeout.
     changed: Arc<Notify>,
+    /// Live event feed for SendStreamingMessage subscribers: status-update /
+    /// artifact-update frames (spec §7). Lagged subscribers drop old frames
+    /// but always still see the terminal event.
+    events: tokio::sync::broadcast::Sender<serde_json::Value>,
     /// The running loop — CancelTask aborts it.
     handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+
+impl TaskEntry {
+    fn ids(&self) -> (String, String) {
+        self.snapshot
+            .lock()
+            .map(|s| {
+                (
+                    s["id"].as_str().unwrap_or("").to_string(),
+                    s["contextId"].as_str().unwrap_or("").to_string(),
+                )
+            })
+            .unwrap_or_default()
+    }
+
+    fn emit(&self, event: serde_json::Value) {
+        let _ = self.events.send(event);
+    }
 }
 
 impl A2aRuntime {
@@ -109,7 +131,7 @@ impl A2aRuntime {
             "url": format!("{}/_riz/a2a", self.public_base),
             "preferredTransport": "JSONRPC",
             "version": env!("CARGO_PKG_VERSION"),
-            "capabilities": { "streaming": false, "pushNotifications": false },
+            "capabilities": { "streaming": true, "pushNotifications": false },
             "defaultInputModes": ["text/plain"],
             "defaultOutputModes": ["text/plain"],
             "skills": skills,
@@ -146,10 +168,19 @@ impl A2aRuntime {
         }
     }
 
-    async fn send_message(
+    /// Validate the params, create the task, and spawn its agent loop.
+    /// Shared by SendMessage and SendStreamingMessage; the returned receiver
+    /// was subscribed BEFORE the loop spawned, so no event can be missed.
+    fn start_task(
         self: &Arc<Self>,
         params: serde_json::Value,
-    ) -> Result<serde_json::Value, (i32, String)> {
+    ) -> Result<
+        (
+            Arc<TaskEntry>,
+            tokio::sync::broadcast::Receiver<serde_json::Value>,
+        ),
+        (i32, String),
+    > {
         let message = params
             .get("message")
             .cloned()
@@ -173,6 +204,7 @@ impl A2aRuntime {
 
         let task_id = uuid::Uuid::new_v4().to_string();
         let context_id = uuid::Uuid::new_v4().to_string();
+        let (events, receiver) = tokio::sync::broadcast::channel(64);
         let entry = Arc::new(TaskEntry {
             snapshot: Mutex::new(task_value(
                 &task_id,
@@ -182,6 +214,7 @@ impl A2aRuntime {
                 vec![message.clone()],
             )),
             changed: Arc::new(Notify::new()),
+            events,
             handle: Mutex::new(None),
         });
         self.tasks.insert(task_id.clone(), entry.clone());
@@ -198,6 +231,14 @@ impl A2aRuntime {
         if let Ok(mut h) = entry.handle.lock() {
             *h = Some(handle);
         }
+        Ok((entry, receiver))
+    }
+
+    async fn send_message(
+        self: &Arc<Self>,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, (i32, String)> {
+        let (entry, _events) = self.start_task(params)?;
 
         // Wait for a terminal state up to task_timeout_ms, then return the
         // snapshot either way (WORKING = keep polling).
@@ -214,6 +255,27 @@ impl A2aRuntime {
             }
         }
         Ok(entry.snapshot.lock().map(|s| s.clone()).unwrap_or_default())
+    }
+
+    /// SendStreamingMessage: the SSE frame sequence (spec §7) — the initial
+    /// Task snapshot, then live status-update / artifact-update events, ending
+    /// with the terminal status-update (`final: true`).
+    pub async fn send_streaming(
+        self: &Arc<Self>,
+        params: serde_json::Value,
+        rpc_id: serde_json::Value,
+    ) -> Result<
+        impl futures_util::Stream<
+                Item = Result<axum::response::sse::Event, std::convert::Infallible>,
+            > + Send
+            + 'static,
+        (i32, String),
+    > {
+        let (entry, events) = self.start_task(params)?;
+        let initial = entry.snapshot.lock().map(|s| s.clone()).unwrap_or_default();
+        let timeout = std::time::Duration::from_millis(self.cfg.task_timeout_ms);
+
+        Ok(stream_frames(initial, events, rpc_id, timeout))
     }
 
     fn get_task(&self, params: &serde_json::Value) -> Result<serde_json::Value, (i32, String)> {
@@ -432,6 +494,65 @@ fn task_value(
     })
 }
 
+/// One SSE frame: a complete JSON-RPC response wrapping an A2A event.
+fn sse_frame(rpc_id: &serde_json::Value, result: serde_json::Value) -> axum::response::sse::Event {
+    axum::response::sse::Event::default()
+        .data(json!({ "jsonrpc": "2.0", "id": rpc_id, "result": result }).to_string())
+}
+
+/// The SendStreamingMessage frame sequence: the initial Task snapshot, then
+/// every task event until the terminal one (`final: true`), the subscription
+/// timeout, or channel close. On timeout the stream simply ends — the client
+/// holds the task id from the initial frame and can poll GetTask.
+fn stream_frames(
+    initial: serde_json::Value,
+    events: tokio::sync::broadcast::Receiver<serde_json::Value>,
+    rpc_id: serde_json::Value,
+    timeout: std::time::Duration,
+) -> impl futures_util::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>
+       + Send
+       + 'static {
+    struct St {
+        events: tokio::sync::broadcast::Receiver<serde_json::Value>,
+        rpc_id: serde_json::Value,
+        deadline: tokio::time::Instant,
+        initial: Option<serde_json::Value>,
+        done: bool,
+    }
+    futures_util::stream::unfold(
+        St {
+            events,
+            rpc_id,
+            deadline: tokio::time::Instant::now() + timeout,
+            initial: Some(initial),
+            done: false,
+        },
+        |mut s| async move {
+            if s.done {
+                return None;
+            }
+            if let Some(initial) = s.initial.take() {
+                return Some((Ok(sse_frame(&s.rpc_id, initial)), s));
+            }
+            loop {
+                match tokio::time::timeout_at(s.deadline, s.events.recv()).await {
+                    Ok(Ok(event)) => {
+                        if event["final"] == json!(true) {
+                            s.done = true;
+                        }
+                        return Some((Ok(sse_frame(&s.rpc_id, event)), s));
+                    }
+                    // Lagged: skip to the newest events — the terminal frame
+                    // is what matters and is never overwritten.
+                    Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
+                    Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => return None,
+                    Err(_elapsed) => return None,
+                }
+            }
+        },
+    )
+}
+
 fn is_terminal(entry: &TaskEntry) -> bool {
     entry
         .snapshot
@@ -446,39 +567,75 @@ fn is_terminal(entry: &TaskEntry) -> bool {
 }
 
 fn set_state(entry: &TaskEntry, state: &str) {
+    let status = json!({ "state": state, "timestamp": now_iso() });
     if let Ok(mut s) = entry.snapshot.lock() {
-        s["status"] = json!({ "state": state, "timestamp": now_iso() });
+        s["status"] = status.clone();
     }
+    let (task_id, context_id) = entry.ids();
+    let is_final = matches!(state, "completed" | "failed" | "canceled" | "rejected");
+    entry.emit(json!({
+        "kind": "status-update",
+        "taskId": task_id,
+        "contextId": context_id,
+        "status": status,
+        "final": is_final,
+    }));
     entry.changed.notify_waiters();
 }
 
 fn fail(entry: &TaskEntry, message: &str) {
+    let status = json!({
+        "state": "failed",
+        "timestamp": now_iso(),
+        "message": { "role": "agent", "parts": [{ "kind": "text", "text": message }] },
+    });
     if let Ok(mut s) = entry.snapshot.lock() {
-        s["status"] = json!({
-            "state": "failed",
-            "timestamp": now_iso(),
-            "message": { "role": "agent", "parts": [{ "kind": "text", "text": message }] },
-        });
+        s["status"] = status.clone();
     }
+    let (task_id, context_id) = entry.ids();
+    entry.emit(json!({
+        "kind": "status-update",
+        "taskId": task_id,
+        "contextId": context_id,
+        "status": status,
+        "final": true,
+    }));
     entry.changed.notify_waiters();
 }
 
 fn complete(entry: &TaskEntry, task_id: &str, user_message: &serde_json::Value, answer: String) {
+    let artifact = json!({
+        "artifactId": format!("{task_id}-answer"),
+        "name": "answer",
+        "parts": [{ "kind": "text", "text": answer }],
+    });
+    let status = json!({ "state": "completed", "timestamp": now_iso() });
     if let Ok(mut s) = entry.snapshot.lock() {
-        s["artifacts"] = json!([{
-            "artifactId": format!("{task_id}-answer"),
-            "name": "answer",
-            "parts": [{ "kind": "text", "text": answer }],
-        }]);
+        s["artifacts"] = json!([artifact]);
         s["history"] = json!([
             user_message,
             {
                 "kind": "message", "role": "agent",
                 "messageId": uuid::Uuid::new_v4().to_string(),
-                "parts": s["artifacts"][0]["parts"].clone(),
+                "parts": artifact["parts"].clone(),
             }
         ]);
-        s["status"] = json!({ "state": "completed", "timestamp": now_iso() });
+        s["status"] = status.clone();
     }
+    let (tid, context_id) = entry.ids();
+    entry.emit(json!({
+        "kind": "artifact-update",
+        "taskId": tid,
+        "contextId": context_id,
+        "artifact": artifact,
+        "lastChunk": true,
+    }));
+    entry.emit(json!({
+        "kind": "status-update",
+        "taskId": tid,
+        "contextId": context_id,
+        "status": status,
+        "final": true,
+    }));
     entry.changed.notify_waiters();
 }

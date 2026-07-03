@@ -67,7 +67,7 @@ claude mcp add riz-local --transport http http://localhost:3000/_riz/mcp
 |---|---|
 | **Opt-in** | `[agent]` block (requires `[gateway]`) |
 | **Agent Card** | `/.well-known/agent-card.json` — identity, endpoint, capabilities, one skill per allowlisted function (derived live) |
-| **Endpoint** | `POST /_riz/a2a` — JSON-RPC: `SendMessage` · `GetTask` · `CancelTask` (0.x aliases accepted); bearer-gated |
+| **Endpoint** | `POST /_riz/a2a` — JSON-RPC: `SendMessage` · `SendStreamingMessage` (SSE: live status + artifact events) · `GetTask` · `CancelTask` (0.x aliases accepted); bearer-gated |
 | **The brain** | Delegated tasks run a server-side agent loop: the configured gateway `model` reasons with this instance's own functions as tools — the same typed MCP tools (WebSocket sessions included), metered + `budget_usd`-capped |
 | **Offline proof** | The deterministic mock provider drives delegate → reason → act → answer in CI with zero keys |
 

@@ -212,6 +212,38 @@ pub fn build_app(state: Arc<AppState>) -> AxumRouter {
                                         {
                                             return resp;
                                         }
+                                        // SendStreamingMessage answers as SSE
+                                        // (spec §7); everything else is a
+                                        // single JSON-RPC response.
+                                        let method =
+                                            body.0["method"].as_str().unwrap_or("").to_string();
+                                        if matches!(
+                                            method.as_str(),
+                                            "SendStreamingMessage" | "message/stream"
+                                        ) {
+                                            let rpc_id = body
+                                                .0
+                                                .get("id")
+                                                .cloned()
+                                                .unwrap_or(serde_json::Value::Null);
+                                            let params = body
+                                                .0
+                                                .get("params")
+                                                .cloned()
+                                                .unwrap_or(serde_json::json!({}));
+                                            return match rt
+                                                .send_streaming(params, rpc_id.clone())
+                                                .await
+                                            {
+                                                Ok(stream) => axum::response::sse::Sse::new(stream)
+                                                    .into_response(),
+                                                Err((code, message)) => Json(serde_json::json!({
+                                                    "jsonrpc": "2.0", "id": rpc_id,
+                                                    "error": { "code": code, "message": message }
+                                                }))
+                                                .into_response(),
+                                            };
+                                        }
                                         Json(rt.handle(body.0).await).into_response()
                                     }
                                 },

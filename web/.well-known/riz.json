@@ -35,7 +35,7 @@
   "a2a": {
     "agent_card": "/.well-known/agent-card.json",
     "endpoint_pattern": "/_riz/a2a",
-    "methods": ["SendMessage", "GetTask", "CancelTask"],
+    "methods": ["SendMessage", "SendStreamingMessage", "GetTask", "CancelTask"],
     "summary": "Opt-in [agent] block: this instance becomes a delegable agent2agent-protocol server — tasks run a server-side agent loop through the gateway with the instance's own functions as tools (the same typed MCP tools); metered + budget-capped; offline-provable via the mock provider."
   },
   "llm_gateway": {
