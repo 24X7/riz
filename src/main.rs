@@ -1255,6 +1255,15 @@ async fn async_main() -> anyhow::Result<()> {
     // in AppState's RwLock so hot-reload can swap handler lists later.
     let router_arc = Arc::new(router::Router::new(handlers.clone()));
     mcp.set_router(router_arc.clone()).await;
+    // Ephemeral WebSocket tool sessions dispatch straight to the process
+    // pools (WS functions have no LambdaHandler) and register their
+    // collector connections in the same store the management API serves.
+    mcp.set_ws_session_deps(system::mcp::WsSessionDeps {
+        process_manager: process_manager.clone(),
+        connections: ws_connections.clone(),
+        stage: config.server.stage.clone(),
+    })
+    .await;
     let router = router::Router::new(handlers);
 
     let app_state = Arc::new(state::AppState {

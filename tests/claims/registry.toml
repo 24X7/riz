@@ -125,6 +125,12 @@ status = "proven"
 proof = "anthropic_stream_translates_to_openai_chunks"
 
 [[claim]]
+id = "mcp-ws-session-tools"
+page_text = "ws_functions_are_tools_with_session_semantics"
+status = "proven"
+proof = "ws_functions_are_tools_with_session_semantics"
+
+[[claim]]
 id = "llm-gateway-tool-calling"
 page_text = "chat_completions_with_tools_returns_tool_calls"
 status = "proven"

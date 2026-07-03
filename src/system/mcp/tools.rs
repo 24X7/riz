@@ -51,10 +51,22 @@ impl McpHandler {
             if !matches!(f.kind, FunctionKind::User) {
                 continue;
             }
-            // WebSocket functions have no request/response HTTP route in the
-            // Router — a tools/call on one can never succeed, so advertising
-            // them would hand agents a tool that 404s on first use.
+            // WebSocket functions are callable through ephemeral sessions
+            // (ws_session.rs) — advertised with the session schema, not an
+            // HTTP route schema.
             if is_websocket(f) {
+                let description = f
+                    .config
+                    .as_ref()
+                    .and_then(|c| c.mcp.as_ref())
+                    .and_then(|m| m.description.clone())
+                    .unwrap_or_else(|| super::ws_session::session_description(&f.name));
+                tools.push(Tool {
+                    name: f.name.clone(),
+                    description,
+                    input_schema: super::ws_session::session_input_schema(),
+                    output_schema: Some(super::ws_session::session_output_schema()),
+                });
                 continue;
             }
             // MCP tool name = function name directly (no transformation needed
@@ -97,6 +109,23 @@ impl McpHandler {
             message: format!("invalid params: {e}"),
         })?;
 
+        // WebSocket functions dispatch through an ephemeral session
+        // (ws_session.rs) instead of an HTTP route.
+        {
+            let functions = self.riz_state.functions.read().await;
+            if let Some(f) = functions
+                .get(&parsed.name)
+                .filter(|f| matches!(f.kind, FunctionKind::User) && is_websocket(f))
+            {
+                let fn_name = f.name.clone();
+                let timeout_ms = f.config.as_ref().map(|c| c.timeout_ms).unwrap_or(30_000);
+                drop(functions);
+                return self
+                    .tools_call_ws_session(&fn_name, timeout_ms, &parsed.arguments)
+                    .await;
+            }
+        }
+
         // Tool name == function name. Look up the function and pick a route
         // to dispatch to: use the caller-supplied `route` arg if present,
         // otherwise default to the function's first declared route.
@@ -104,9 +133,7 @@ impl McpHandler {
             let functions = self.riz_state.functions.read().await;
             let f = functions
                 .get(&parsed.name)
-                // WS functions aren't advertised (no HTTP route to dispatch) —
-                // calling one by name is the same error as a nonexistent tool.
-                .filter(|f| matches!(f.kind, FunctionKind::User) && !is_websocket(f))
+                .filter(|f| matches!(f.kind, FunctionKind::User))
                 .ok_or_else(|| JsonRpcError {
                     code: -32602,
                     message: format!("unknown function: {}", parsed.name),

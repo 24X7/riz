@@ -45,11 +45,11 @@ fn sample_config() -> riz::config::Config {
 
 // ───────────────────────────── pure generators ──────────────────────────────
 
-/// WebSocket functions can't be dispatched by tools/call (no HTTP route), so
-/// the generated agent-discovery files must not advertise them as tools —
-/// mirroring the live /_riz/mcp tools/list behavior.
+/// WebSocket functions are callable tools via ephemeral sessions, so the
+/// generated agent-discovery files advertise them with the session
+/// description — mirroring the live /_riz/mcp tools/list behavior.
 #[test]
-fn websocket_functions_are_not_advertised_in_generated_files() {
+fn websocket_functions_are_advertised_as_session_tools() {
     let cfg: riz::config::Config = toml::from_str(
         r#"
 [function.orders]
@@ -70,8 +70,12 @@ method = "GET"
     let txt = riz::scaffold::generate_llms_txt(&cfg);
     assert!(txt.contains("### orders"), "http tool missing:\n{txt}");
     assert!(
-        !txt.contains("### chat"),
-        "WS function must not appear as a tool in llms.txt:\n{txt}"
+        txt.contains("### chat"),
+        "WS session tool must appear in llms.txt:\n{txt}"
+    );
+    assert!(
+        txt.contains("ephemeral WebSocket session"),
+        "session semantics must be named:\n{txt}"
     );
 
     let json = riz::scaffold::generate_well_known(&cfg);
@@ -82,7 +86,10 @@ method = "GET"
         .iter()
         .map(|t| t["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, vec!["orders"], "WS function must not be a tool: {v}");
+    assert!(
+        names.contains(&"orders") && names.contains(&"chat"),
+        "both tools advertised: {v}"
+    );
 }
 
 #[test]

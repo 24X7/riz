@@ -84,10 +84,19 @@
           <code style="font-size:.82em;color:var(--t-hi)">/_riz/mcp</code>.
           Older clients negotiate down to the 2024-11-05 baseline automatically.
         </p>
+        <p class="lead" style="margin-top:1rem">
+          <b>WebSocket functions are tools too</b> — a call opens an ephemeral real session:
+          <code style="font-size:.82em;color:var(--t-hi)">$connect</code>, your message as
+          <code style="font-size:.82em;color:var(--t-hi)">$default</code>, every
+          <code style="font-size:.82em;color:var(--t-hi)">@connections</code> push collected as
+          the reply frames, then <code style="font-size:.82em;color:var(--t-hi)">$disconnect</code>.
+          The whole WS contract fires normally; the agent just sees a slightly slower tool.
+        </p>
         <div class="ledger" style="margin-top:1.6rem">
           <span class="tag">proof</span>
           <span><code>mcp_inspect_against_running_riz_lists_tools_and_spec_version</code> ·
-          <code>agent_tools_are_mcp_tools_and_callable_over_riz_mcp</code></span>
+          <code>agent_tools_are_mcp_tools_and_callable_over_riz_mcp</code> ·
+          <code>ws_functions_are_tools_with_session_semantics</code></span>
         </div>
       </div>
       <div>
