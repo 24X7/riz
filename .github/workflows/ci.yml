@@ -12,6 +12,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The hosted runner ships ~14 GB free; a full riz debug build + test
+      # binaries + the cargo cache overflow it intermittently ("No space left
+      # on device" killed two runs on 2026-07-02/03). Drop the preinstalled
+      # toolchains we never use (~30 GB reclaimed, runs in seconds).
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" \
+            /usr/local/share/powershell /usr/lib/jvm || true
+          df -h /
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
