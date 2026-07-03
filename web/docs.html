@@ -258,7 +258,7 @@ endpoint = "http://localhost:4318"   <span class="c"># any OTLP/HTTP collector o
     <p>An <code>[agent]</code> block (requires <code>[gateway]</code>) turns the instance into an
     <a href="https://a2a-protocol.org" target="_blank" style="color:var(--acid);text-decoration:underline dotted">agent2agent-protocol</a> server:
     an Agent Card at <code>/.well-known/agent-card.json</code> and JSON-RPC at <code>POST /_riz/a2a</code>
-    (<code>SendMessage</code> · <code>GetTask</code> · <code>CancelTask</code>; bearer-gated like the rest of <code>/_riz/*</code>).
+    (<code>SendMessage</code> · <code>SendStreamingMessage</code>, SSE — live status + artifact events · <code>GetTask</code> · <code>CancelTask</code>; bearer-gated like the rest of <code>/_riz/*</code>).
     A delegated task runs a server-side agent loop — the configured <code>model</code> reasons through the gateway with this
     instance's own functions as tools (the same typed MCP tools, WebSocket sessions included), every call metered and budget-capped.</p>
     <table>

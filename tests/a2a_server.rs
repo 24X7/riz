@@ -168,7 +168,10 @@ fn agent_card_is_served_with_allowlisted_skills() {
         card["url"].as_str().unwrap().ends_with("/_riz/a2a"),
         "{card}"
     );
-    assert_eq!(card["capabilities"]["streaming"], false, "{card}");
+    assert_eq!(
+        card["capabilities"]["streaming"], true,
+        "SendStreamingMessage is supported: {card}"
+    );
     let skills: Vec<&str> = card["skills"]
         .as_array()
         .unwrap()
@@ -225,6 +228,67 @@ fn send_message_runs_the_agent_loop_to_completion() {
     );
     assert_eq!(body["result"]["id"], task_id, "{body}");
     assert_eq!(body["result"]["status"]["state"], "completed", "{body}");
+}
+
+/// SendStreamingMessage answers as SSE: an initial Task snapshot, live
+/// status-update events as the loop progresses, an artifact-update carrying
+/// the answer, and a FINAL status-update (final: true) closing the stream.
+#[test]
+fn send_streaming_message_emits_status_and_artifact_events() {
+    if !has_bun() {
+        eprintln!("skipping: bun not on PATH");
+        return;
+    }
+    let srv = boot();
+
+    let resp = reqwest::blocking::Client::new()
+        .post(format!("{}/_riz/a2a", srv.base))
+        .json(
+            &serde_json::json!({"jsonrpc":"2.0","id":7,"method":"SendStreamingMessage","params":{
+            "message":{"role":"user","messageId":"m1",
+                        "parts":[{"kind":"text","text":"where is order 42?"}]}}}),
+        )
+        .send()
+        .expect("stream request");
+    assert_eq!(resp.status(), 200);
+    let ctype = resp.headers()["content-type"].to_str().unwrap().to_string();
+    assert!(
+        ctype.contains("text/event-stream"),
+        "streaming must be SSE; got {ctype}"
+    );
+    let body = resp.text().expect("stream body");
+
+    // Every SSE frame is a full JSON-RPC response echoing the request id.
+    assert!(body.contains("\"id\":7"), "got: {body}");
+    // The initial Task snapshot, then live lifecycle events.
+    assert!(body.contains("\"kind\":\"task\""), "got: {body}");
+    assert!(
+        body.contains("\"kind\":\"status-update\"") && body.contains("\"state\":\"working\""),
+        "got: {body}"
+    );
+    // The artifact carries the tool-driven answer (mock loop over the REAL
+    // bun function), streamed as an artifact-update event.
+    assert!(
+        body.contains("\"kind\":\"artifact-update\"") && body.contains("shipped"),
+        "got: {body}"
+    );
+    // Terminal status closes the stream.
+    assert!(
+        body.contains("\"state\":\"completed\"") && body.contains("\"final\":true"),
+        "got: {body}"
+    );
+
+    // The task is queryable afterward like any SendMessage task.
+    let task_id_pos = body.find("\"id\":\"").expect("task id in stream");
+    let task_id: String = body[task_id_pos + 6..]
+        .chars()
+        .take_while(|c| *c != '"')
+        .collect();
+    let got = a2a(
+        &srv.base,
+        serde_json::json!({"jsonrpc":"2.0","id":8,"method":"GetTask","params":{"id":task_id}}),
+    );
+    assert_eq!(got["result"]["status"]["state"], "completed", "{got}");
 }
 
 #[test]

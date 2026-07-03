@@ -134,18 +134,21 @@ handler = <span class="s">"./index.lookupOrder"</span>
           <code style="font-size:.82em;color:var(--t-hi)">/.well-known/agent-card.json</code>, accepts tasks at
           <code style="font-size:.82em;color:var(--t-hi)">/_riz/a2a</code> (JSON-RPC:
           <code style="font-size:.82em;color:var(--t-hi)">SendMessage</code> ·
+          <code style="font-size:.82em;color:var(--t-hi)">SendStreamingMessage</code> ·
           <code style="font-size:.82em;color:var(--t-hi)">GetTask</code> ·
           <code style="font-size:.82em;color:var(--t-hi)">CancelTask</code>), and completes them by
           reasoning through its own gateway — <b>with its own functions as the hands</b>.
         </p>
         <ul class="facts" style="margin-top:1rem">
           <li>The agent wields the exact typed MCP tools external clients see — HTTP and WebSocket session tools alike</li>
+          <li><b>Live streaming</b>: <code>SendStreamingMessage</code> answers as SSE — the Task snapshot, status updates as the loop progresses, artifact events, and a <code>final: true</code> close</li>
           <li>Every model call is metered: FinOps ledger, <code>budget_usd</code>, OTel GenAI spans</li>
           <li>Deterministic offline: the mock provider drives delegate → reason → act → answer in CI, zero keys</li>
         </ul>
         <div class="ledger" style="margin-top:1.4rem">
           <span class="tag">proof</span>
           <span><code>send_message_runs_the_agent_loop_to_completion</code> ·
+          <code>send_streaming_message_emits_status_and_artifact_events</code> ·
           <code>agent_card_is_served_with_allowlisted_skills</code></span>
         </div>
       </div>

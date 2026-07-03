@@ -131,6 +131,12 @@ status = "proven"
 proof = "send_message_runs_the_agent_loop_to_completion"
 
 [[claim]]
+id = "a2a-streaming"
+page_text = "send_streaming_message_emits_status_and_artifact_events"
+status = "proven"
+proof = "send_streaming_message_emits_status_and_artifact_events"
+
+[[claim]]
 id = "a2a-agent-card"
 page_text = "agent_card_is_served_with_allowlisted_skills"
 status = "proven"
