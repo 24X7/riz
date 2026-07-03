@@ -147,6 +147,7 @@ pub(super) async fn spawn_process(
         // The landlock crate allocates internally; widespread real-world
         // use in pre_exec (systemd, container runtimes) attests this is
         // safe in practice on modern glibc/musl.
+        #[allow(unsafe_code)]
         unsafe {
             cmd.pre_exec(move || {
                 crate::process::safety::apply_always_on_limits()?;

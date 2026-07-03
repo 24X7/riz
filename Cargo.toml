@@ -8,6 +8,38 @@ members = [
 # host workspace so `cargo build` / `cargo nextest` don't try to compile it.
 exclude = ["examples/lambdas/echo-wasm", "tests/fixtures/broker-wasm", "tests/fixtures/guard-wasm"]
 
+# ── Power of 10 safety lints (docs/SAFETY.md) ─────────────────────────────
+# Binding for code compiled into the riz binary: the riz package opts in via
+# [lints] workspace = true below. The example lambdas deliberately do NOT
+# inherit — the safety rules bind the runtime, not the user-facing samples.
+# Levels here are the enforced tier (clean today, CI-gated via -D warnings);
+# the ratchet tier lives in scripts/safety-check.sh until it burns to zero.
+[workspace.lints.rust]
+# Rule 9: every unsafe block is an explicit, justified exception — a local
+# #[allow(unsafe_code)] plus a // SAFETY: proof (see process/pool.rs).
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+# Rule 10: no placeholder or debug constructs reach the binary.
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+# Rule 2: loops must provably terminate or be explicit supervised event loops.
+infinite_loop = "deny"
+maybe_infinite_iter = "deny"
+# Rule 7: a dropped future is silently unexecuted work, not an ignored result.
+let_underscore_future = "deny"
+# Rule 3: resources are released by Drop, never leaked by forget.
+mem_forget = "deny"
+# Rule 9: unsafe hygiene — one operation per block, each with a SAFETY proof.
+undocumented_unsafe_blocks = "deny"
+multiple_unsafe_ops_per_block = "deny"
+# Rule 3 ratchet: unbounded channels (configured in clippy.toml) stay `allow`
+# until the existing call sites migrate to bounded — tracked by
+# scripts/safety-check.sh, promoted to deny when the count reaches zero.
+disallowed_methods = "allow"
+
 [package]
 name = "riz"
 version = "0.1.0"
@@ -23,6 +55,10 @@ categories = ["web-programming::http-server", "command-line-utilities", "develop
 [[bin]]
 name = "riz"
 path = "src/main.rs"
+
+# Opt in to the Power-of-10 workspace lints (docs/SAFETY.md).
+[lints]
+workspace = true
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -84,6 +120,11 @@ landlock = "0.4"
 [profile.release]
 opt-level = 3
 lto = "thin"
+# Power of 10 rules 5/7 (docs/SAFETY.md): integer overflow panics loudly in
+# release instead of wrapping silently — a crash is diagnosable, silent
+# corruption is not. Workers are separate processes; the blast radius of a
+# panic is one request path, not the fleet.
+overflow-checks = true
 
 # The profile that 'cargo dist' will build with
 [profile.dist]

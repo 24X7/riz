@@ -1,0 +1,23 @@
+# Clippy configuration backing the Power-of-10 safety lints (docs/SAFETY.md).
+# The lint LEVELS live in Cargo.toml [workspace.lints]; this file only tunes
+# thresholds and scopes the production-code rules out of test code.
+
+# Test code (unit #[cfg(test)], integration tests, benches) is exempt from the
+# fail-loud restrictions — a panicking assertion IS the failure signal there.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-unwrap-in-consts = true
+
+# Rule 4 (short functions): NASA's target is ~60 lines; 100 is the current
+# enforcement ceiling while the ratchet burns down (see scripts/safety-check.sh).
+too-many-lines-threshold = 100
+cognitive-complexity-threshold = 25
+
+# Rule 3 (bounded resources): unbounded queues grow without limit under
+# backpressure. Enforced via clippy::disallowed_methods once existing sites
+# migrate (ratchet — the lint level is `allow` in Cargo.toml until then).
+disallowed-methods = [
+    { path = "tokio::sync::mpsc::unbounded_channel", reason = "Power of 10 rule 3: use a bounded channel and handle backpressure explicitly (docs/SAFETY.md)" },
+]
