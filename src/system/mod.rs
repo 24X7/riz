@@ -1,6 +1,7 @@
 //! Riz system functions mounted under /_riz/*.
 //! Each handler implements LambdaHandler and reads from RizState.
 
+pub mod a2a;
 pub mod health;
 pub mod mcp;
 pub mod metrics;

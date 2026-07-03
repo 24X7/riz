@@ -109,6 +109,50 @@ impl GatewayConfig {
     }
 }
 
+/// A2A built-in agent configuration (`[agent]`).
+///
+/// ```toml
+/// [agent]
+/// name = "shop-support"
+/// description = "Answers order questions using the shop's own functions"
+/// model = "mock"                    # any gateway model ("anthropic/claude-…")
+/// system_prompt = "You are a concise support agent."
+/// tools = ["orders", "inventory"]   # allowlist; omit for all HTTP functions
+/// max_hops = 5
+/// task_timeout_ms = 60000
+/// ```
+///
+/// Spec: docs/superpowers/specs/2026-07-02-a2a-builtin-agent-design.md
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentConfig {
+    /// Agent Card identity. Required.
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    /// Gateway model the agent reasons with (same routing as `/_riz/v1`).
+    pub model: String,
+    #[serde(default)]
+    pub system_prompt: Option<String>,
+    /// Function allowlist the agent may wield as tools. Empty/omitted → every
+    /// user function (HTTP tools + WebSocket session tools alike).
+    #[serde(default)]
+    pub tools: Vec<String>,
+    /// Agent-loop cap: model → tool_calls → results counts one hop.
+    #[serde(default = "default_agent_max_hops")]
+    pub max_hops: u32,
+    /// How long SendMessage waits for the task before returning a WORKING
+    /// snapshot (the task keeps running; poll GetTask).
+    #[serde(default = "default_agent_task_timeout")]
+    pub task_timeout_ms: u64,
+}
+
+fn default_agent_max_hops() -> u32 {
+    5
+}
+fn default_agent_task_timeout() -> u64 {
+    60_000
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProviderConfig {
     /// Backend kind: "mock" | "openai" | "anthropic" | "ollama".
@@ -152,6 +196,14 @@ pub struct Config {
     /// endpoint. Absent/empty `[gateway]` → gateway disabled.
     #[serde(default)]
     pub gateway: GatewayConfig,
+    /// A2A built-in agent (`[agent]`): this instance becomes an
+    /// agent2agent-protocol server — an Agent Card at
+    /// `/.well-known/agent-card.json` and a JSON-RPC endpoint at `/_riz/a2a`
+    /// where peers delegate tasks. The agent reasons through the gateway
+    /// (requires `[gateway]`) with this instance's own functions as tools.
+    /// Absent → no A2A surface.
+    #[serde(default)]
+    pub agent: Option<AgentConfig>,
     /// Function-centric: one entry per function. Each function is a single
     /// process pool serving one or more routes (mirrors AWS Lambda + API GW v2
     /// — one Lambda, N route → function mappings, one execution environment).
@@ -822,6 +874,27 @@ impl Config {
                 return Err(
                     "[auth] bearer_token must not be empty — remove the field or supply a non-empty value".into(),
                 );
+            }
+        }
+        // [agent] rides the gateway — an agent with no model plane is a
+        // misconfiguration, not a silent no-op.
+        if let Some(agent) = &self.agent {
+            if !self.gateway.enabled() {
+                return Err(
+                    "[agent] requires [gateway]: the built-in agent reasons through the LLM \
+                     gateway — add at least one [gateway.providers.*] block"
+                        .into(),
+                );
+            }
+            if agent.max_hops == 0 {
+                return Err("[agent] max_hops must be >= 1".into());
+            }
+            for t in &agent.tools {
+                if !self.functions.contains_key(t) {
+                    return Err(format!(
+                        "[agent] tools allowlist names unknown function '{t}'"
+                    ));
+                }
             }
         }
         // CORS spec violation (MDN): allow_credentials=true with an empty

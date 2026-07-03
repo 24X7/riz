@@ -119,6 +119,60 @@ handler = <span class="s">"./index.lookupOrder"</span>
   </div>
 </section>
 
+<!-- a2a: riz IS an agent -->
+<section style="padding-top:1.5rem">
+  <div class="wrap">
+    <div class="sec-kicker">agent2agent (a2a)</div>
+    <h2 class="sec">Not just the tools.<br/><em>The agent.</em></h2>
+    <div class="duo">
+      <div>
+        <p class="lead" style="margin-top:1rem">
+          MCP is southbound — agents consume your functions as tools. A2A
+          (<a href="https://a2a-protocol.org" target="_blank" style="text-decoration:underline dotted">a2a-protocol.org</a>, Linux Foundation)
+          is northbound: with an <code style="font-size:.82em;color:var(--t-hi)">[agent]</code> block,
+          <b>riz itself is a delegable agent</b>. It publishes an Agent Card at
+          <code style="font-size:.82em;color:var(--t-hi)">/.well-known/agent-card.json</code>, accepts tasks at
+          <code style="font-size:.82em;color:var(--t-hi)">/_riz/a2a</code> (JSON-RPC:
+          <code style="font-size:.82em;color:var(--t-hi)">SendMessage</code> ·
+          <code style="font-size:.82em;color:var(--t-hi)">GetTask</code> ·
+          <code style="font-size:.82em;color:var(--t-hi)">CancelTask</code>), and completes them by
+          reasoning through its own gateway — <b>with its own functions as the hands</b>.
+        </p>
+        <ul class="facts" style="margin-top:1rem">
+          <li>The agent wields the exact typed MCP tools external clients see — HTTP and WebSocket session tools alike</li>
+          <li>Every model call is metered: FinOps ledger, <code>budget_usd</code>, OTel GenAI spans</li>
+          <li>Deterministic offline: the mock provider drives delegate → reason → act → answer in CI, zero keys</li>
+        </ul>
+        <div class="ledger" style="margin-top:1.4rem">
+          <span class="tag">proof</span>
+          <span><code>send_message_runs_the_agent_loop_to_completion</code> ·
+          <code>agent_card_is_served_with_allowlisted_skills</code></span>
+        </div>
+      </div>
+      <div>
+        <div class="well">
+          <div class="well-hd"><b>riz.toml</b><span>validated by the real config code in CI</span></div>
+          <pre data-riz-toml><span class="k">[gateway]</span>
+default_provider = <span class="s">"anthropic"</span>
+<span class="k">[gateway.providers.anthropic]</span>
+kind = <span class="s">"anthropic"</span>
+api_key_env = <span class="s">"ANTHROPIC_API_KEY"</span>
+
+<span class="k">[agent]</span>
+name = <span class="s">"shop-support"</span>
+model = <span class="s">"anthropic/claude-sonnet-5"</span>
+system_prompt = <span class="s">"You are a concise support agent."</span>
+tools = [<span class="s">"orders"</span>]              <span class="c"># omit = all functions</span>
+
+<span class="k">[function.orders]</span>
+runtime = <span class="s">"bun"</span>
+handler = <span class="s">"api/orders.handler"</span></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- typed schemas -->
 <section style="padding-top:1.5rem">
   <div class="wrap">

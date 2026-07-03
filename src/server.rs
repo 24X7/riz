@@ -175,6 +175,53 @@ pub fn build_app(state: Arc<AppState>) -> AxumRouter {
                         }),
                     );
                     info!("LLM gateway enabled — OpenAI-compatible endpoint at /_riz/v1");
+
+                    // A2A built-in agent — this instance becomes a delegable
+                    // agent (validated: [agent] requires [gateway]). The card
+                    // is public (it DECLARES the auth, like llms.txt); the
+                    // JSON-RPC endpoint is bearer-gated with the rest of /_riz/*.
+                    if let Some(agent_cfg) = cfg.agent.clone() {
+                        let public_base = format!("http://{}:{}", cfg.server.host, cfg.server.port);
+                        let rt = Arc::new(crate::system::a2a::A2aRuntime::new(
+                            agent_cfg,
+                            gw.clone(),
+                            state.clone(),
+                            bearer.clone(),
+                            public_base,
+                        ));
+                        let rt_card = rt.clone();
+                        app = app.route(
+                            "/.well-known/agent-card.json",
+                            get(move || {
+                                let rt = rt_card.clone();
+                                async move { Json(rt.agent_card().await).into_response() }
+                            }),
+                        );
+                        let rt_rpc = rt.clone();
+                        let tok = bearer.clone();
+                        app = app.route(
+                            "/_riz/a2a",
+                            post(
+                                move |headers: axum::http::HeaderMap,
+                                      body: Json<serde_json::Value>| {
+                                    let rt = rt_rpc.clone();
+                                    let tok = tok.clone();
+                                    async move {
+                                        if let Some(resp) =
+                                            bearer_reject(&headers, tok.as_deref())
+                                        {
+                                            return resp;
+                                        }
+                                        Json(rt.handle(body.0).await).into_response()
+                                    }
+                                },
+                            ),
+                        );
+                        info!(
+                            "A2A agent '{}' enabled — card at /.well-known/agent-card.json, endpoint at /_riz/a2a",
+                            rt.cfg.name
+                        );
+                    }
                 }
                 Err(e) => error!("gateway disabled: failed to build from config: {e}"),
             }
