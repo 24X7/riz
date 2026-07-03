@@ -121,11 +121,23 @@ fn boot() -> Server {
         wait_for_ready(port, Duration::from_secs(15)),
         "riz not ready"
     );
-    Server {
+    let srv = Server {
         child,
         base: format!("http://127.0.0.1:{port}"),
         _dir: dir,
+    };
+    // Warm every worker pool with one throwaway session before any assertion:
+    // on slow CI runners the FIRST invoke can land on a still-booting bun
+    // worker ("Broken pipe", the known boot-race flake) — that failure mode is
+    // about boot timing, not the session semantics these tests pin.
+    for name in ["chat", "quiet", "deny"] {
+        let _ = mcp(
+            &srv.base,
+            serde_json::json!({"jsonrpc":"2.0","id":0,"method":"tools/call",
+                "params":{"name":name,"arguments":{"message":"warmup","timeout_ms":200}}}),
+        );
     }
+    srv
 }
 
 impl Drop for Server {
