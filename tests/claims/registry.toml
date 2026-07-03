@@ -125,6 +125,18 @@ status = "proven"
 proof = "anthropic_stream_translates_to_openai_chunks"
 
 [[claim]]
+id = "a2a-builtin-agent"
+page_text = "send_message_runs_the_agent_loop_to_completion"
+status = "proven"
+proof = "send_message_runs_the_agent_loop_to_completion"
+
+[[claim]]
+id = "a2a-agent-card"
+page_text = "agent_card_is_served_with_allowlisted_skills"
+status = "proven"
+proof = "agent_card_is_served_with_allowlisted_skills"
+
+[[claim]]
 id = "mcp-ws-session-tools"
 page_text = "ws_functions_are_tools_with_session_semantics"
 status = "proven"

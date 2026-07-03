@@ -60,6 +60,7 @@
     <a href="#guards">Guards</a>
     <a href="#broker">Capability broker</a>
     <a href="#gateway">LLM gateway</a>
+    <a href="#a2a">A2A agent</a>
     <a href="#static">Static files</a>
     <span class="grp">Operate</span>
     <a href="#endpoints">Endpoints</a>
@@ -251,6 +252,23 @@ endpoint = "http://localhost:4318"   <span class="c"># any OTLP/HTTP collector o
       <tr><td><code>riz deploy &lt;fn&gt; &lt;bucket&gt; &lt;key&gt;</code></td><td>S3 hot-swap from the CLI</td></tr>
       <tr><td><code>riz mcp inspect [--url] [--bearer]</code></td><td>initialize + tools/list + typed params + SSE probe, one screen</td></tr>
       <tr><td><code>riz doctor</code></td><td>pre-flight: config, runtimes on PATH, handler files, port, MCP ping</td></tr>
+    </table>
+
+    <h2 id="a2a">A2A agent</h2>
+    <p>An <code>[agent]</code> block (requires <code>[gateway]</code>) turns the instance into an
+    <a href="https://a2a-protocol.org" target="_blank" style="color:var(--acid);text-decoration:underline dotted">agent2agent-protocol</a> server:
+    an Agent Card at <code>/.well-known/agent-card.json</code> and JSON-RPC at <code>POST /_riz/a2a</code>
+    (<code>SendMessage</code> · <code>GetTask</code> · <code>CancelTask</code>; bearer-gated like the rest of <code>/_riz/*</code>).
+    A delegated task runs a server-side agent loop — the configured <code>model</code> reasons through the gateway with this
+    instance's own functions as tools (the same typed MCP tools, WebSocket sessions included), every call metered and budget-capped.</p>
+    <table>
+      <tr><th>key</th><th>default</th><th>what it does</th></tr>
+      <tr><td><code>name</code> / <code>description</code></td><td>—</td><td>Agent Card identity</td></tr>
+      <tr><td><code>model</code></td><td>—</td><td>gateway model the agent reasons with (<code>anthropic/claude-…</code>, <code>mock</code>, …)</td></tr>
+      <tr><td><code>system_prompt</code></td><td>off</td><td>prepended to every task</td></tr>
+      <tr><td><code>tools</code></td><td>all functions</td><td>allowlist of functions the agent may wield (also gates the card's skills)</td></tr>
+      <tr><td><code>max_hops</code></td><td>5</td><td>agent-loop cap: one model → tools round trip = one hop</td></tr>
+      <tr><td><code>task_timeout_ms</code></td><td>60000</td><td>how long <code>SendMessage</code> blocks before returning a <code>working</code> snapshot (poll <code>GetTask</code>)</td></tr>
     </table>
 
     <h2 id="lifecycle">Lifecycle</h2>
