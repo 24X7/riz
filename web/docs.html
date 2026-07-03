@@ -141,6 +141,9 @@ method = <span class="s">"GET"</span></pre>
     <h2 id="mcp">MCP tools</h2>
     <p>Every function is a tool at <code>/_riz/mcp</code> (JSON-RPC 2.0 over Streamable HTTP, spec <b>2025-11-25</b>,
     negotiates down to 2024-11-05). Path params are typed + required from the route template automatically.
+    <b>WebSocket functions are tools too</b>: a <code>tools/call</code> with <code>{message, timeout_ms?}</code>
+    opens an ephemeral real session — <code>$connect</code>, the message as <code>$default</code>, every
+    <code>@connections</code> push collected as reply frames, then <code>$disconnect</code>.
     The optional block sharpens the rest:</p>
     <div class="well">
       <div class="well-hd"><b>riz.toml</b><span>validated in CI</span></div>
