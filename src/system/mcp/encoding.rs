@@ -94,7 +94,9 @@ pub(super) fn substitute_path_params(pattern: &str, params: &HashMap<String, Str
         }
     }
     if pattern.starts_with('/') {
-        let mut prefixed = String::with_capacity(out.len() + 1);
+        // Capacity hint only — saturating is exact here in all but the
+        // impossible out.len() == usize::MAX case.
+        let mut prefixed = String::with_capacity(out.len().saturating_add(1));
         prefixed.push('/');
         prefixed.push_str(&out);
         prefixed

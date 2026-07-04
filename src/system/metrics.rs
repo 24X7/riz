@@ -37,6 +37,81 @@ fn esc(s: &str) -> String {
         .replace('\n', "\\n")
 }
 
+type FunctionsMap = indexmap::IndexMap<String, Arc<crate::state::FunctionState>>;
+
+/// One `# HELP`/`# TYPE counter` header plus one sample per user function.
+fn write_counter_section(
+    out: &mut String,
+    functions: &FunctionsMap,
+    name: &str,
+    help: &str,
+    value: impl Fn(&crate::state::FunctionState) -> u64,
+) {
+    let _ = writeln!(out, "# HELP {name} {help}");
+    let _ = writeln!(out, "# TYPE {name} counter");
+    for (_, f) in functions.iter() {
+        if matches!(f.kind, FunctionKind::System) {
+            continue;
+        }
+        let _ = writeln!(out, "{name}{{function=\"{}\"}} {}", esc(&f.name), value(f));
+    }
+}
+
+fn write_latency_section(out: &mut String, functions: &FunctionsMap, now: std::time::Instant) {
+    let _ = writeln!(
+        out,
+        "# HELP riz_latency_ms Function latency percentiles over 5-min window"
+    );
+    let _ = writeln!(out, "# TYPE riz_latency_ms summary");
+    for (_, f) in functions.iter() {
+        if matches!(f.kind, FunctionKind::System) {
+            continue;
+        }
+        let (p50, p75, p90, p95, p99) = f
+            .latency
+            .lock()
+            .map(|mut w| w.percentiles(now))
+            .unwrap_or((0.0, 0.0, 0.0, 0.0, 0.0));
+        let route = esc(&f.name);
+        for (quantile, value) in [
+            ("0.5", p50),
+            ("0.75", p75),
+            ("0.9", p90),
+            ("0.95", p95),
+            ("0.99", p99),
+        ] {
+            let _ = writeln!(
+                out,
+                "riz_latency_ms{{function=\"{route}\",quantile=\"{quantile}\"}} {value}"
+            );
+        }
+    }
+}
+
+fn write_health_section(out: &mut String, functions: &FunctionsMap) {
+    let _ = writeln!(
+        out,
+        "# HELP riz_function_healthy 1 if pool healthy, 0 otherwise"
+    );
+    let _ = writeln!(out, "# TYPE riz_function_healthy gauge");
+    for (_, f) in functions.iter() {
+        if matches!(f.kind, FunctionKind::System) {
+            continue;
+        }
+        let v = if f.healthy.load(Ordering::Relaxed) {
+            1
+        } else {
+            0
+        };
+        let _ = writeln!(
+            out,
+            "riz_function_healthy{{function=\"{}\"}} {}",
+            esc(&f.name),
+            v
+        );
+    }
+}
+
 #[async_trait]
 impl LambdaHandler for MetricsHandler {
     fn name(&self) -> &str {
@@ -74,117 +149,29 @@ impl LambdaHandler for MetricsHandler {
         let functions = self.riz_state.functions.read().await;
         let mut out = String::with_capacity(4096);
 
-        let _ = writeln!(
-            out,
-            "# HELP riz_invocations_total Total function invocations"
+        write_counter_section(
+            &mut out,
+            &functions,
+            "riz_invocations_total",
+            "Total function invocations",
+            |f| f.invocations.load(Ordering::Relaxed),
         );
-        let _ = writeln!(out, "# TYPE riz_invocations_total counter");
-        for (_, f) in functions.iter() {
-            if matches!(f.kind, FunctionKind::System) {
-                continue;
-            }
-            let n = f.invocations.load(Ordering::Relaxed);
-            let _ = writeln!(
-                out,
-                "riz_invocations_total{{function=\"{}\"}} {}",
-                esc(&f.name),
-                n
-            );
-        }
-
-        let _ = writeln!(out, "# HELP riz_errors_total Total function errors");
-        let _ = writeln!(out, "# TYPE riz_errors_total counter");
-        for (_, f) in functions.iter() {
-            if matches!(f.kind, FunctionKind::System) {
-                continue;
-            }
-            let n = f.errors.load(Ordering::Relaxed);
-            let _ = writeln!(
-                out,
-                "riz_errors_total{{function=\"{}\"}} {}",
-                esc(&f.name),
-                n
-            );
-        }
-
-        let _ = writeln!(
-            out,
-            "# HELP riz_latency_ms Function latency percentiles over 5-min window"
+        write_counter_section(
+            &mut out,
+            &functions,
+            "riz_errors_total",
+            "Total function errors",
+            |f| f.errors.load(Ordering::Relaxed),
         );
-        let _ = writeln!(out, "# TYPE riz_latency_ms summary");
-        for (_, f) in functions.iter() {
-            if matches!(f.kind, FunctionKind::System) {
-                continue;
-            }
-            let (p50, p75, p90, p95, p99) = f
-                .latency
-                .lock()
-                .map(|mut w| w.percentiles(now))
-                .unwrap_or((0.0, 0.0, 0.0, 0.0, 0.0));
-            let route = esc(&f.name);
-            let _ = writeln!(
-                out,
-                "riz_latency_ms{{function=\"{}\",quantile=\"0.5\"}} {}",
-                route, p50
-            );
-            let _ = writeln!(
-                out,
-                "riz_latency_ms{{function=\"{}\",quantile=\"0.75\"}} {}",
-                route, p75
-            );
-            let _ = writeln!(
-                out,
-                "riz_latency_ms{{function=\"{}\",quantile=\"0.9\"}} {}",
-                route, p90
-            );
-            let _ = writeln!(
-                out,
-                "riz_latency_ms{{function=\"{}\",quantile=\"0.95\"}} {}",
-                route, p95
-            );
-            let _ = writeln!(
-                out,
-                "riz_latency_ms{{function=\"{}\",quantile=\"0.99\"}} {}",
-                route, p99
-            );
-        }
-
-        let _ = writeln!(out, "# HELP riz_cold_starts_total Process spawns");
-        let _ = writeln!(out, "# TYPE riz_cold_starts_total counter");
-        for (_, f) in functions.iter() {
-            if matches!(f.kind, FunctionKind::System) {
-                continue;
-            }
-            let n = f.cold_starts.load(Ordering::Relaxed);
-            let _ = writeln!(
-                out,
-                "riz_cold_starts_total{{function=\"{}\"}} {}",
-                esc(&f.name),
-                n
-            );
-        }
-
-        let _ = writeln!(
-            out,
-            "# HELP riz_function_healthy 1 if pool healthy, 0 otherwise"
+        write_latency_section(&mut out, &functions, now);
+        write_counter_section(
+            &mut out,
+            &functions,
+            "riz_cold_starts_total",
+            "Process spawns",
+            |f| f.cold_starts.load(Ordering::Relaxed),
         );
-        let _ = writeln!(out, "# TYPE riz_function_healthy gauge");
-        for (_, f) in functions.iter() {
-            if matches!(f.kind, FunctionKind::System) {
-                continue;
-            }
-            let v = if f.healthy.load(Ordering::Relaxed) {
-                1
-            } else {
-                0
-            };
-            let _ = writeln!(
-                out,
-                "riz_function_healthy{{function=\"{}\"}} {}",
-                esc(&f.name),
-                v
-            );
-        }
+        write_health_section(&mut out, &functions);
 
         let _ = writeln!(out, "# HELP riz_uptime_seconds Runtime uptime");
         let _ = writeln!(out, "# TYPE riz_uptime_seconds gauge");

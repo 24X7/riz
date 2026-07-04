@@ -218,7 +218,10 @@ async fn sse_post_with_progress(
             tokio::select! {
                 resp = &mut dispatch => break resp,
                 _ = ticker.tick() => {
-                    progress += 1;
+                    // Monotonic progress counter (spec: non-decreasing).
+                    // Saturation at u64::MAX is unreachable at tick cadence
+                    // and merely repeats the final value — never panics.
+                    progress = progress.saturating_add(1);
                     let notif = serde_json::json!({
                         "jsonrpc": "2.0",
                         "method": "notifications/progress",
