@@ -4,13 +4,13 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>riz — Write a function. Get an agent-ready API.</title>
-  <meta name="description" content="Self-hosted AWS Lambda runtime in one Rust binary. Every function becomes a typed MCP tool the moment it boots. Six runtimes, no per-request cold start, WASM sandbox with a capability broker, LLM gateway. 900+ tests. Apache-2.0."/>
+  <meta name="description" content="Self-hosted AWS Lambda runtime in one Rust binary. Every function becomes a typed MCP tool the moment it boots — and the binary itself is a delegable A2A agent that meshes with other riz instances. Six runtimes, no cold starts, WASM sandbox, LLM gateway. 900+ tests. Apache-2.0."/>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%230A0A0B'/><rect x='28' y='20' width='44' height='60' fill='%23CFFF04'/></svg>"/>
   <link rel="apple-touch-icon" href="apple-touch-icon.png"/>
   <meta property="og:type" content="website"/>
   <meta property="og:site_name" content="riz"/>
   <meta property="og:title" content="riz — Write a function. Get an agent-ready API."/>
-  <meta property="og:description" content="Self-hosted AWS Lambda runtime in one Rust binary. Every function becomes a typed MCP tool the moment it boots. Six runtimes, no per-request cold start, WASM sandbox with a capability broker, LLM gateway. 900+ tests. Apache-2.0."/>
+  <meta property="og:description" content="Self-hosted AWS Lambda runtime in one Rust binary. Every function becomes a typed MCP tool the moment it boots — and the binary itself is a delegable A2A agent that meshes with other riz instances. Six runtimes, no cold starts, WASM sandbox, LLM gateway. 900+ tests. Apache-2.0."/>
   <meta name="twitter:card" content="summary_large_image"/>
   <meta property="og:image" content="https://riz.dev/og.png"/>
   <meta property="og:image:width" content="1200"/>
@@ -32,7 +32,7 @@
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": "riz",
-    "description": "Self-hosted AWS Lambda runtime in one Rust binary. Write a plain AWS-Lambda-shaped handler — no web framework to pick — and the runtime makes it production-grade: always-on safety profile, supervised crash-respawn, graceful in-flight drain, real percentile observability, and warm pre-spawned pools (no per-request cold start). Every function becomes a typed MCP tool an agent can call the moment it boots. Six runtimes: Bun, Node.js, Python, Rust, Go, and capability-sandboxed WASM, with a resource broker and fail-closed WASM guards. OpenAI-compatible LLM gateway built in.",
+    "description": "Self-hosted AWS Lambda runtime in one Rust binary. Write a plain AWS-Lambda-shaped handler — no web framework to pick — and the runtime makes it production-grade: always-on safety profile, supervised crash-respawn, graceful in-flight drain, real percentile observability, and warm pre-spawned pools (no per-request cold start). Every function becomes a typed MCP tool an agent can call the moment it boots, and an [agent] block makes the binary itself a delegable A2A (agent2agent-protocol) agent that meshes with other riz instances. Six runtimes: Bun, Node.js, Python, Rust, Go, and capability-sandboxed WASM, with a resource broker and fail-closed WASM guards. OpenAI-compatible LLM gateway built in.",
     "url": "https://riz.dev",
     "image": "https://riz.dev/og.png",
     "sameAs": ["https://github.com/24X7/riz"],
@@ -46,6 +46,7 @@
     "keywords": ["AWS Lambda","serverless","MCP","Model Context Protocol","agent tools","LLM gateway","WASM","WASI","Rust","self-hosted","runtime"],
     "featureList": [
       "Every function auto-exposed as a typed MCP tool at /_riz/mcp (spec 2025-11-25) — zero SDK, zero glue",
+      "A2A built-in agent: an [agent] block publishes an Agent Card and accepts delegated tasks at /_riz/a2a — the agent reasons through the gateway with the instance's own functions as tools; [agent.peers] meshes riz with riz (hop-capped)",
       "Per-route typed MCP tool schemas — path params typed from route templates, validated on call (-32602 names the bad param)",
       "MCP Streamable HTTP with SSE response frames, sessions, and notifications/progress during long tool calls",
       "Exact AWS API Gateway v2 HTTP + WebSocket payloads — handlers move between AWS and riz unchanged",
@@ -100,12 +101,14 @@
 <!-- ════════ HERO ════════ -->
 <header class="hero">
   <div class="wrap">
-    <div class="kicker">self-hosted lambda runtime · <b>every function is an mcp tool</b> · one rust binary · apache-2.0</div>
+    <div class="kicker">self-hosted lambda runtime · <b>every function an mcp tool · the binary an a2a agent</b> · one rust binary · apache-2.0</div>
     <h1 class="mega">Write a function.<br/>Get an <em>agent-ready</em> API.</h1>
     <p class="hero-sub">
       riz runs your <b>AWS-Lambda-shaped handlers unmodified</b> on your own box — no web framework
-      to pick, no per-request cold start — and the instant it boots, every function is a
-      <b>typed MCP tool</b> any agent can call. The production substrate
+      to pick, no per-request cold start. The instant it boots, every function is a
+      <b>typed MCP tool</b> any agent can call — and with one <code style="font-family:var(--mono);font-size:.85em;color:var(--t-hi)">[agent]</code> block,
+      <b>the binary itself is a delegable A2A agent</b> that reasons with your functions
+      and meshes with other riz instances. The production substrate
       (isolation, supervised respawn, drain, observability) comes from the runtime, not your code.
     </p>
     <div class="cta-row">
@@ -150,10 +153,10 @@
       <a class="cap" href="agents.html">
         <div class="cap-glyph">[mcp]</div>
         <h3>Agent-native, zero glue</h3>
-        <p class="claim">Every function in <code style="font-family:var(--mono);font-size:.85em">riz.toml</code> is a typed MCP tool at <code style="font-family:var(--mono);font-size:.85em">/_riz/mcp</code> the moment riz boots. No SDK. No wrappers.</p>
+        <p class="claim">Every function in <code style="font-family:var(--mono);font-size:.85em">riz.toml</code> is a typed MCP tool at <code style="font-family:var(--mono);font-size:.85em">/_riz/mcp</code> the moment riz boots — and one <code style="font-family:var(--mono);font-size:.85em">[agent]</code> block makes the binary itself a <b>delegable A2A agent</b>. No SDK. No wrappers.</p>
         <ul class="facts">
-          <li>Typed per-route schemas from your route templates</li>
-          <li>Streamable HTTP + SSE, sessions, progress frames</li>
+          <li>Typed per-route schemas from your route templates; WebSocket functions are session tools</li>
+          <li>A2A: Agent Card + <code>SendMessage</code>/SSE streaming — <b>riz meshes with riz</b> via <code>[agent.peers]</code></li>
           <li>Bad calls answer <code>-32602</code> naming the param — agents self-correct</li>
         </ul>
         <div class="cap-foot">
