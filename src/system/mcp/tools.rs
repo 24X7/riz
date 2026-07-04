@@ -126,165 +126,15 @@ impl McpHandler {
             }
         }
 
-        // Tool name == function name. Look up the function and pick a route
-        // to dispatch to: use the caller-supplied `route` arg if present,
-        // otherwise default to the function's first declared route.
-        let (_function_name, method, path, mcp_query_specs) = {
-            let functions = self.riz_state.functions.read().await;
-            let f = functions
-                .get(&parsed.name)
-                .filter(|f| matches!(f.kind, FunctionKind::User))
-                .ok_or_else(|| JsonRpcError {
-                    code: -32602,
-                    message: format!("unknown function: {}", parsed.name),
-                })?
-                .clone();
-            // Routes are stored as "METHOD /path" strings on FunctionState.
-            // Pick the requested one (if the caller passed `route`), else the first.
-            let requested = parsed.arguments.route.as_deref();
-            let chosen = match requested {
-                Some(want) => f
-                    .routes
-                    .iter()
-                    .find(|r| r.as_str() == want)
-                    .ok_or_else(|| JsonRpcError {
-                        code: -32602,
-                        message: format!("route '{want}' not declared by function '{}'", f.name),
-                    })?
-                    .clone(),
-                None => f
-                    .routes
-                    .first()
-                    .ok_or_else(|| JsonRpcError {
-                        code: -32603,
-                        message: format!("function '{}' has no routes", f.name),
-                    })?
-                    .clone(),
-            };
-            let (m, p) = chosen.split_once(' ').ok_or_else(|| JsonRpcError {
-                code: -32603,
-                message: format!("malformed route entry: {chosen}"),
-            })?;
-            let specs = f
-                .config
-                .as_ref()
-                .and_then(|c| c.mcp.as_ref())
-                .map(|mcp| mcp.query.clone())
-                .unwrap_or_default();
-            (f.name.clone(), m.to_string(), p.to_string(), specs)
-        };
-        let route_key = format!("{} {}", method, path);
-
-        // ── Typed-schema validation (v1 roadmap #13) ─────────────────────
-        // Once a route is chosen, every {param} in its template is required —
-        // an unsubstituted segment can only dispatch to a 404. Reject up
-        // front with the param named so the agent can self-correct.
-        let missing: Vec<String> = path_param_names(&path)
-            .into_iter()
-            .filter(|p| !parsed.arguments.path_params.contains_key(p))
-            .collect();
-        if !missing.is_empty() {
-            return Err(JsonRpcError {
-                code: -32602,
-                message: format!(
-                    "missing required path parameter(s) for route '{route_key}': {}",
-                    missing.join(", ")
-                ),
-            });
-        }
-        // Declared query params: required ones must be present; provided
-        // values must parse as their declared scalar type. (Values arrive as
-        // wire strings — scalar JSON args were already coerced at
-        // deserialization.)
-        for (pname, spec) in &mcp_query_specs {
-            match parsed.arguments.query_params.get(pname) {
-                None if spec.required => {
-                    return Err(JsonRpcError {
-                        code: -32602,
-                        message: format!("missing required query parameter '{pname}'"),
-                    });
-                }
-                None => {}
-                Some(value) => {
-                    let ok = match spec.kind.as_str() {
-                        "integer" => value.parse::<i64>().is_ok(),
-                        "number" => value.parse::<f64>().is_ok(),
-                        "boolean" => matches!(value.as_str(), "true" | "false"),
-                        _ => true, // string — anything goes
-                    };
-                    if !ok {
-                        return Err(JsonRpcError {
-                            code: -32602,
-                            message: format!(
-                                "query parameter '{pname}' must be a {} (got '{value}')",
-                                spec.kind
-                            ),
-                        });
-                    }
-                }
-            }
-        }
-
-        // Build an AWS v2 event. If the matched route is a pattern like
-        // `/accounts/{id}`, substitute `{id}` with the caller-supplied
-        // pathParams.id; the Router re-extracts params during dispatch.
-        let args = parsed.arguments;
-        let concrete_path = substitute_path_params(&path, &args.path_params);
-        let raw_qs = args
-            .query_params
-            .iter()
-            .map(|(k, v)| format!("{}={}", urlencode(k), urlencode(v)))
-            .collect::<Vec<_>>()
-            .join("&");
-        let method_typed = Method::from_bytes(method.as_bytes()).unwrap_or(Method::GET);
-        let mut hmap = HeaderMap::new();
-        for (k, v) in args.headers.iter() {
-            if let (Ok(name), Ok(value)) = (
-                http::HeaderName::from_bytes(k.as_bytes()),
-                HeaderValue::from_str(v),
-            ) {
-                hmap.insert(name, value);
-            }
-        }
-        let qmap: aws_lambda_events::query_map::QueryMap = args.query_params.clone().into();
-        let ctx = ApiGatewayV2httpRequestContext {
-            route_key: Some(route_key.clone()),
-            account_id: Some("riz".into()),
-            stage: Some("$default".into()),
-            request_id: Some(uuid::Uuid::new_v4().to_string()),
-            time_epoch: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as i64,
-            http: ApiGatewayV2httpRequestContextHttpDescription {
-                method: method_typed.clone(),
-                path: Some(concrete_path.clone()),
-                protocol: Some("HTTP/1.1".into()),
-                source_ip: Some("127.0.0.1".into()),
-                user_agent: Some("riz-mcp".into()),
-            },
-            ..Default::default()
-        };
-        let event = ApiGatewayV2httpRequest {
-            version: Some("2.0".into()),
-            route_key: Some(route_key.clone()),
-            raw_path: Some(concrete_path.clone()),
-            raw_query_string: Some(raw_qs),
-            cookies: None,
-            headers: hmap,
-            query_string_parameters: qmap,
-            path_parameters: Default::default(),
-            request_context: ctx,
-            stage_variables: Default::default(),
-            body: args.body,
-            is_base64_encoded: args.is_base64_encoded,
-            kind: None,
-            method_arn: None,
-            http_method: method_typed,
-            identity_source: None,
-            authorization_token: None,
-            resource: None,
-        };
+        let route = self.resolve_tool_route(&parsed).await?;
+        let route_key = format!("{} {}", route.method, route.path);
+        validate_tool_arguments(
+            &route_key,
+            &route.path,
+            &route.query_specs,
+            &parsed.arguments,
+        )?;
+        let event = build_tool_event(&route.method, &route.path, &route_key, parsed.arguments);
 
         // Reentrant dispatch through the same Router.
         let router = self.router.read().await;
@@ -321,6 +171,192 @@ impl McpHandler {
             message: e.to_string(),
         })?;
         Ok(value)
+    }
+
+    /// Tool name == function name. Look up the function and pick a route to
+    /// dispatch to: the caller-supplied `route` arg if present, otherwise the
+    /// function's first declared route.
+    async fn resolve_tool_route(
+        &self,
+        parsed: &super::protocol::ToolsCallParams,
+    ) -> Result<ResolvedRoute, JsonRpcError> {
+        let functions = self.riz_state.functions.read().await;
+        let f = functions
+            .get(&parsed.name)
+            .filter(|f| matches!(f.kind, FunctionKind::User))
+            .ok_or_else(|| JsonRpcError {
+                code: -32602,
+                message: format!("unknown function: {}", parsed.name),
+            })?
+            .clone();
+        // Routes are stored as "METHOD /path" strings on FunctionState.
+        let requested = parsed.arguments.route.as_deref();
+        let chosen = match requested {
+            Some(want) => f
+                .routes
+                .iter()
+                .find(|r| r.as_str() == want)
+                .ok_or_else(|| JsonRpcError {
+                    code: -32602,
+                    message: format!("route '{want}' not declared by function '{}'", f.name),
+                })?
+                .clone(),
+            None => f
+                .routes
+                .first()
+                .ok_or_else(|| JsonRpcError {
+                    code: -32603,
+                    message: format!("function '{}' has no routes", f.name),
+                })?
+                .clone(),
+        };
+        let (m, p) = chosen.split_once(' ').ok_or_else(|| JsonRpcError {
+            code: -32603,
+            message: format!("malformed route entry: {chosen}"),
+        })?;
+        let query_specs = f
+            .config
+            .as_ref()
+            .and_then(|c| c.mcp.as_ref())
+            .map(|mcp| mcp.query.clone())
+            .unwrap_or_default();
+        Ok(ResolvedRoute {
+            method: m.to_string(),
+            path: p.to_string(),
+            query_specs,
+        })
+    }
+}
+
+/// The "METHOD /path" pair a tools/call dispatches to, plus the declared
+/// query-param specs used for validation.
+struct ResolvedRoute {
+    method: String,
+    path: String,
+    query_specs: indexmap::IndexMap<String, crate::config::McpParamSpec>,
+}
+
+/// Typed-schema validation (v1 roadmap #13). Once a route is chosen, every
+/// `{param}` in its template is required — an unsubstituted segment can only
+/// dispatch to a 404 — and declared query params must be present (when
+/// required) and parse as their declared scalar type. Reject up front with
+/// the param named so the agent can self-correct.
+fn validate_tool_arguments(
+    route_key: &str,
+    path: &str,
+    query_specs: &indexmap::IndexMap<String, crate::config::McpParamSpec>,
+    arguments: &super::protocol::ToolArguments,
+) -> Result<(), JsonRpcError> {
+    let missing: Vec<String> = path_param_names(path)
+        .into_iter()
+        .filter(|p| !arguments.path_params.contains_key(p))
+        .collect();
+    if !missing.is_empty() {
+        return Err(JsonRpcError {
+            code: -32602,
+            message: format!(
+                "missing required path parameter(s) for route '{route_key}': {}",
+                missing.join(", ")
+            ),
+        });
+    }
+    // Values arrive as wire strings — scalar JSON args were already coerced
+    // at deserialization.
+    for (pname, spec) in query_specs {
+        match arguments.query_params.get(pname) {
+            None if spec.required => {
+                return Err(JsonRpcError {
+                    code: -32602,
+                    message: format!("missing required query parameter '{pname}'"),
+                });
+            }
+            None => {}
+            Some(value) => {
+                let ok = match spec.kind.as_str() {
+                    "integer" => value.parse::<i64>().is_ok(),
+                    "number" => value.parse::<f64>().is_ok(),
+                    "boolean" => matches!(value.as_str(), "true" | "false"),
+                    _ => true, // string — anything goes
+                };
+                if !ok {
+                    return Err(JsonRpcError {
+                        code: -32602,
+                        message: format!(
+                            "query parameter '{pname}' must be a {} (got '{value}')",
+                            spec.kind
+                        ),
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Build the AWS v2 event for a tools/call dispatch. If the matched route is
+/// a pattern like `/accounts/{id}`, substitute `{id}` with the caller-supplied
+/// pathParams.id; the Router re-extracts params during dispatch.
+fn build_tool_event(
+    method: &str,
+    path: &str,
+    route_key: &str,
+    args: super::protocol::ToolArguments,
+) -> ApiGatewayV2httpRequest {
+    let concrete_path = substitute_path_params(path, &args.path_params);
+    let raw_qs = args
+        .query_params
+        .iter()
+        .map(|(k, v)| format!("{}={}", urlencode(k), urlencode(v)))
+        .collect::<Vec<_>>()
+        .join("&");
+    let method_typed = Method::from_bytes(method.as_bytes()).unwrap_or(Method::GET);
+    let mut hmap = HeaderMap::new();
+    for (k, v) in args.headers.iter() {
+        if let (Ok(name), Ok(value)) = (
+            http::HeaderName::from_bytes(k.as_bytes()),
+            HeaderValue::from_str(v),
+        ) {
+            hmap.insert(name, value);
+        }
+    }
+    let qmap: aws_lambda_events::query_map::QueryMap = args.query_params.clone().into();
+    let ctx = ApiGatewayV2httpRequestContext {
+        route_key: Some(route_key.to_string()),
+        account_id: Some("riz".into()),
+        stage: Some("$default".into()),
+        request_id: Some(uuid::Uuid::new_v4().to_string()),
+        time_epoch: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64,
+        http: ApiGatewayV2httpRequestContextHttpDescription {
+            method: method_typed.clone(),
+            path: Some(concrete_path.clone()),
+            protocol: Some("HTTP/1.1".into()),
+            source_ip: Some("127.0.0.1".into()),
+            user_agent: Some("riz-mcp".into()),
+        },
+        ..Default::default()
+    };
+    ApiGatewayV2httpRequest {
+        version: Some("2.0".into()),
+        route_key: Some(route_key.to_string()),
+        raw_path: Some(concrete_path),
+        raw_query_string: Some(raw_qs),
+        cookies: None,
+        headers: hmap,
+        query_string_parameters: qmap,
+        path_parameters: Default::default(),
+        request_context: ctx,
+        stage_variables: Default::default(),
+        body: args.body,
+        is_base64_encoded: args.is_base64_encoded,
+        kind: None,
+        method_arn: None,
+        http_method: method_typed,
+        identity_source: None,
+        authorization_token: None,
+        resource: None,
     }
 }
 

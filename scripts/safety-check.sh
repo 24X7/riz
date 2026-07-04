@@ -25,6 +25,7 @@ cd "$(dirname "$0")/.."
 # Clean in src/ today; test helper code panics by design (assertion style).
 GATE_LINTS=(
   clippy::panic
+  clippy::disallowed_methods  # rule 3 — unbounded channels; reached zero 2026-07-03
 )
 
 # Violations exist today — burned down by the safety review loop. Keep this
@@ -38,7 +39,6 @@ RATCHET_LINTS=(
   clippy::arithmetic_side_effects # rule 5 — checked/saturating arithmetic
   clippy::too_many_lines         # rule 4 — threshold in clippy.toml
   clippy::cognitive_complexity   # rule 4 — threshold in clippy.toml
-  clippy::disallowed_methods     # rule 3 — unbounded channels (clippy.toml)
 )
 
 if [[ "${1:-}" == "--gate" ]]; then

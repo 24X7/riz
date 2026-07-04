@@ -310,7 +310,10 @@ pub async fn run(state: Arc<AppState>, addr: SocketAddr) -> anyhow::Result<()> {
         if conn_count > 0 {
             tracing::info!("closing {conn_count} active WebSocket connection(s) before drain");
             for conn in shutdown_state.ws_connections.all() {
-                let _ = conn.outbound.send(crate::ws::OutboundMessage::Close);
+                // try_send: on a full queue the drain below still force-stops
+                // after SHUTDOWN_DRAIN_TIMEOUT — never block shutdown on a
+                // slow client.
+                let _ = conn.outbound.try_send(crate::ws::OutboundMessage::Close);
             }
         }
 
@@ -387,7 +390,8 @@ async fn kill_all_processes(state: &AppState) {
     //    catches any connections that opened after the signal (between the
     //    signal firing and axum stopping the listener — narrow but real).
     for conn in state.ws_connections.all() {
-        let _ = conn.outbound.send(crate::ws::OutboundMessage::Close);
+        // try_send: best-effort during teardown; a full queue must not stall it.
+        let _ = conn.outbound.try_send(crate::ws::OutboundMessage::Close);
     }
 
     // 2. Existing pool-shutdown logic.

@@ -33,6 +33,14 @@ use crate::state::AppState;
 const TASK_NOT_FOUND: i32 = -32001;
 const TASK_NOT_CANCELABLE: i32 = -32002;
 
+/// Upper bound on retained task snapshots (Power of 10 rule 3, docs/SAFETY.md):
+/// every SendMessage creates an entry that must survive for later GetTask
+/// polling, so without a cap a remote client could grow the store without
+/// limit. At the cap the oldest *terminal* task is evicted first; if every
+/// retained task is still live, new work is rejected — running state is never
+/// dropped.
+const MAX_RETAINED_TASKS: usize = 1024;
+
 /// Everything the A2A surface needs, assembled at mount time (server.rs).
 pub struct A2aRuntime {
     pub cfg: AgentConfig,
@@ -43,11 +51,68 @@ pub struct A2aRuntime {
     bearer: Option<String>,
     /// Base for the Agent Card's service endpoint URL.
     public_base: String,
-    tasks: DashMap<String, Arc<TaskEntry>>,
+    tasks: TaskStore,
     /// A2A client side: outgoing delegations to `[agent.peers]`.
     http: reqwest::Client,
-    /// Peer Agent-Card descriptions, fetched lazily and cached.
+    /// Peer Agent-Card descriptions, fetched lazily and cached (bounded by
+    /// the config's `[agent.peers]` key set).
     peer_descriptions: tokio::sync::Mutex<std::collections::HashMap<String, String>>,
+}
+
+/// Bounded task store: a map for lookup plus an insertion-order queue that
+/// drives eviction once [`MAX_RETAINED_TASKS`] is reached.
+struct TaskStore {
+    entries: DashMap<String, Arc<TaskEntry>>,
+    order: Mutex<std::collections::VecDeque<String>>,
+}
+
+impl TaskStore {
+    fn new() -> Self {
+        Self {
+            entries: DashMap::new(),
+            order: Mutex::new(std::collections::VecDeque::new()),
+        }
+    }
+
+    fn get(&self, id: &str) -> Option<Arc<TaskEntry>> {
+        self.entries.get(id).map(|e| e.value().clone())
+    }
+
+    /// Insert under the retention cap. At capacity the oldest terminal task
+    /// is evicted; if every retained task is still live the insert is
+    /// rejected instead — eviction must never drop running state.
+    fn try_insert(&self, id: String, entry: Arc<TaskEntry>) -> Result<(), (i32, String)> {
+        let Ok(mut order) = self.order.lock() else {
+            return Err((-32603, "task store lock poisoned".to_string()));
+        };
+        if order.len() >= MAX_RETAINED_TASKS {
+            let victim = order.iter().position(|tid| {
+                // Entries missing from the map (shouldn't happen) count as
+                // evictable so the queue can't wedge.
+                self.entries
+                    .get(tid)
+                    .map(|e| is_terminal(e.value()))
+                    .unwrap_or(true)
+            });
+            match victim {
+                Some(idx) => {
+                    if let Some(tid) = order.remove(idx) {
+                        self.entries.remove(&tid);
+                    }
+                }
+                None => {
+                    return Err((
+                        -32603,
+                        format!("task store full: {MAX_RETAINED_TASKS} tasks still running"),
+                    ));
+                }
+            }
+        }
+        order.push_back(id.clone());
+        drop(order);
+        self.entries.insert(id, entry);
+        Ok(())
+    }
 }
 
 struct TaskEntry {
@@ -69,8 +134,8 @@ impl TaskEntry {
             .lock()
             .map(|s| {
                 (
-                    s["id"].as_str().unwrap_or("").to_string(),
-                    s["contextId"].as_str().unwrap_or("").to_string(),
+                    str_field(&s, "id").to_string(),
+                    str_field(&s, "contextId").to_string(),
                 )
             })
             .unwrap_or_default()
@@ -95,7 +160,7 @@ impl A2aRuntime {
             app,
             bearer,
             public_base,
-            tasks: DashMap::new(),
+            tasks: TaskStore::new(),
             http: reqwest::Client::new(),
             peer_descriptions: tokio::sync::Mutex::new(std::collections::HashMap::new()),
         }
@@ -107,23 +172,14 @@ impl A2aRuntime {
     /// skill per tool the agent may wield — derived LIVE from the same
     /// `tools/list` any MCP client sees, filtered by the allowlist.
     pub async fn agent_card(self: &Arc<Self>) -> serde_json::Value {
-        let skills: Vec<serde_json::Value> = match self
-            .mcp_rpc(json!({
-                "jsonrpc": "2.0", "id": 1, "method": "tools/list"
-            }))
-            .await
-        {
-            Ok(result) => result["tools"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default()
+        let skills: Vec<serde_json::Value> = match self.allowed_mcp_tools().await {
+            Ok(tools) => tools
                 .into_iter()
-                .filter(|t| self.tool_allowed(t["name"].as_str().unwrap_or("")))
                 .map(|t| {
                     json!({
-                        "id": t["name"],
-                        "name": t["name"],
-                        "description": t["description"],
+                        "id": t.get("name").cloned().unwrap_or_default(),
+                        "name": t.get("name").cloned().unwrap_or_default(),
+                        "description": t.get("description").cloned().unwrap_or_default(),
                         "tags": ["riz-function"],
                     })
                 })
@@ -143,8 +199,15 @@ impl A2aRuntime {
             "skills": skills,
         });
         if self.bearer.is_some() {
-            card["securitySchemes"] = json!({ "bearer": { "type": "http", "scheme": "bearer" } });
-            card["security"] = json!([{ "bearer": [] }]);
+            // `card` is built as an object just above; the if-let is the
+            // non-panicking spelling of that invariant.
+            if let Some(obj) = card.as_object_mut() {
+                obj.insert(
+                    "securitySchemes".into(),
+                    json!({ "bearer": { "type": "http", "scheme": "bearer" } }),
+                );
+                obj.insert("security".into(), json!([{ "bearer": [] }]));
+            }
         }
         card
     }
@@ -153,11 +216,27 @@ impl A2aRuntime {
         self.cfg.tools.is_empty() || self.cfg.tools.iter().any(|t| t == name)
     }
 
+    /// The live MCP tool surface (`tools/list` through the Router), filtered
+    /// by the `[agent]` allowlist — the raw MCP tool objects.
+    async fn allowed_mcp_tools(&self) -> Result<Vec<serde_json::Value>, String> {
+        let listed = self
+            .mcp_rpc(json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}))
+            .await?;
+        Ok(listed
+            .get("tools")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|t| self.tool_allowed(str_field(t, "name")))
+            .collect())
+    }
+
     // ───────────────────────── JSON-RPC surface ─────────────────────────────
 
     pub async fn handle(self: &Arc<Self>, raw: serde_json::Value, hop: u32) -> serde_json::Value {
         let id = raw.get("id").cloned().unwrap_or(serde_json::Value::Null);
-        let method = raw["method"].as_str().unwrap_or("");
+        let method = str_field(&raw, "method");
         let params = raw.get("params").cloned().unwrap_or(json!({}));
         // Mesh loop protection: a delegation chain at or past max_hops is
         // rejected outright instead of spawning another agent loop.
@@ -203,12 +282,13 @@ impl A2aRuntime {
             .get("message")
             .cloned()
             .ok_or((-32602, "missing required parameter: message".to_string()))?;
-        let user_text: String = message["parts"]
-            .as_array()
+        let user_text: String = message
+            .get("parts")
+            .and_then(serde_json::Value::as_array)
             .map(|parts| {
                 parts
                     .iter()
-                    .filter_map(|p| p["text"].as_str())
+                    .filter_map(|p| p.get("text").and_then(serde_json::Value::as_str))
                     .collect::<Vec<_>>()
                     .join("\n")
             })
@@ -235,7 +315,7 @@ impl A2aRuntime {
             events,
             handle: Mutex::new(None),
         });
-        self.tasks.insert(task_id.clone(), entry.clone());
+        self.tasks.try_insert(task_id.clone(), entry.clone())?;
 
         // Run the loop in its own task so CancelTask can abort it and slow
         // tasks outlive the SendMessage timeout (poll with GetTask).
@@ -261,8 +341,7 @@ impl A2aRuntime {
 
         // Wait for a terminal state up to task_timeout_ms, then return the
         // snapshot either way (WORKING = keep polling).
-        let deadline = tokio::time::Instant::now()
-            + std::time::Duration::from_millis(self.cfg.task_timeout_ms);
+        let deadline = deadline_after(std::time::Duration::from_millis(self.cfg.task_timeout_ms));
         loop {
             if is_terminal(&entry) {
                 break;
@@ -308,7 +387,7 @@ impl A2aRuntime {
     }
 
     fn get_task(&self, params: &serde_json::Value) -> Result<serde_json::Value, (i32, String)> {
-        let id = params["id"].as_str().unwrap_or("");
+        let id = str_field(params, "id");
         let entry = self
             .tasks
             .get(id)
@@ -317,7 +396,7 @@ impl A2aRuntime {
     }
 
     fn cancel_task(&self, params: &serde_json::Value) -> Result<serde_json::Value, (i32, String)> {
-        let id = params["id"].as_str().unwrap_or("");
+        let id = str_field(params, "id");
         let entry = self
             .tasks
             .get(id)
@@ -352,52 +431,13 @@ impl A2aRuntime {
     ) {
         set_state(entry, "working");
 
-        // Tool definitions = the live MCP tool surface, allowlist-filtered,
-        // mapped to the OpenAI shape the gateway speaks.
-        let mut tools: Vec<serde_json::Value> = match self
-            .mcp_rpc(json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}))
-            .await
-        {
-            Ok(result) => result["tools"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|t| self.tool_allowed(t["name"].as_str().unwrap_or("")))
-                .map(|t| {
-                    json!({
-                        "type": "function",
-                        "function": {
-                            "name": t["name"],
-                            "description": t["description"],
-                            "parameters": t["inputSchema"],
-                        }
-                    })
-                })
-                .collect(),
+        let tools = match self.agent_tool_definitions().await {
+            Ok(t) => t,
             Err(e) => {
                 fail(entry, &format!("tools/list failed: {e}"));
                 return;
             }
         };
-        // The mesh: every [agent.peers] entry is a delegate_to_<name> tool.
-        for peer in self.cfg.peers.keys() {
-            let description = self.peer_description(peer).await;
-            tools.push(json!({
-                "type": "function",
-                "function": {
-                    "name": format!("delegate_to_{peer}"),
-                    "description": description,
-                    "parameters": {
-                        "type": "object",
-                        "properties": { "message": {
-                            "type": "string",
-                            "description": "What to ask the peer agent. Omit to forward the user's request."
-                        }},
-                    }
-                }
-            }));
-        }
 
         let mut messages: Vec<serde_json::Value> = Vec::new();
         if let Some(system) = &self.cfg.system_prompt {
@@ -424,7 +464,12 @@ impl A2aRuntime {
                     return;
                 }
             };
-            let choice = &resp.choices[0];
+            // Boundary check (rule 5): the provider answered over the network;
+            // an empty choices array fails the task instead of panicking.
+            let Some(choice) = resp.choices.first() else {
+                fail(entry, "gateway returned no choices");
+                return;
+            };
             let assistant = serde_json::to_value(&choice.message).unwrap_or(json!({}));
             messages.push(assistant);
 
@@ -434,42 +479,7 @@ impl A2aRuntime {
                 return;
             }
             for call in &choice.message.tool_calls {
-                let args: serde_json::Value =
-                    serde_json::from_str(&call.function.arguments).unwrap_or(json!({}));
-                let peer = call
-                    .function
-                    .name
-                    .strip_prefix("delegate_to_")
-                    .filter(|p| self.cfg.peers.contains_key(*p));
-                let result_text = if let Some(peer) = peer {
-                    // Mesh delegation: SendMessage to the peer, one hop deeper.
-                    // No explicit message → forward the user's request.
-                    let ask = args["message"]
-                        .as_str()
-                        .filter(|m| !m.is_empty())
-                        .unwrap_or(&user_text)
-                        .to_string();
-                    match self.delegate(peer, &ask, incoming_hop + 1).await {
-                        Ok(answer) => answer,
-                        Err(e) => format!("tool error: {e}"),
-                    }
-                } else {
-                    match self
-                        .mcp_rpc(json!({
-                            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                            "params": { "name": call.function.name, "arguments": args }
-                        }))
-                        .await
-                    {
-                        Ok(result) => result["content"][0]["text"]
-                            .as_str()
-                            .unwrap_or_default()
-                            .to_string(),
-                        // A failing tool is information for the model, not a
-                        // task-fatal error — agents recover from tool errors.
-                        Err(e) => format!("tool error: {e}"),
-                    }
-                };
+                let result_text = self.execute_tool_call(call, &user_text, incoming_hop).await;
                 messages.push(json!({
                     "role": "tool",
                     "tool_call_id": call.id,
@@ -481,6 +491,98 @@ impl A2aRuntime {
             entry,
             &format!("agent loop exceeded max_hops = {}", self.cfg.max_hops),
         );
+    }
+
+    /// Tool definitions for the agent loop: the live MCP tool surface
+    /// (allowlist-filtered) mapped to the OpenAI shape the gateway speaks,
+    /// plus one `delegate_to_<name>` tool per `[agent.peers]` entry (the mesh).
+    async fn agent_tool_definitions(&self) -> Result<Vec<serde_json::Value>, String> {
+        let mut tools: Vec<serde_json::Value> = self
+            .allowed_mcp_tools()
+            .await?
+            .into_iter()
+            .map(|t| {
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.get("name").cloned().unwrap_or_default(),
+                        "description": t.get("description").cloned().unwrap_or_default(),
+                        "parameters": t.get("inputSchema").cloned().unwrap_or_default(),
+                    }
+                })
+            })
+            .collect();
+        for peer in self.cfg.peers.keys() {
+            let description = self.peer_description(peer).await;
+            tools.push(json!({
+                "type": "function",
+                "function": {
+                    "name": format!("delegate_to_{peer}"),
+                    "description": description,
+                    "parameters": {
+                        "type": "object",
+                        "properties": { "message": {
+                            "type": "string",
+                            "description": "What to ask the peer agent. Omit to forward the user's request."
+                        }},
+                    }
+                }
+            }));
+        }
+        Ok(tools)
+    }
+
+    /// Execute one model tool call: `delegate_to_<peer>` goes out over A2A one
+    /// hop deeper; anything else dispatches through the in-process MCP
+    /// surface. Failures come back as text — a failing tool is information
+    /// for the model, not a task-fatal error.
+    async fn execute_tool_call(
+        &self,
+        call: &crate::llm::types::ToolCall,
+        user_text: &str,
+        incoming_hop: u32,
+    ) -> String {
+        let args: serde_json::Value =
+            serde_json::from_str(&call.function.arguments).unwrap_or(json!({}));
+        let peer = call
+            .function
+            .name
+            .strip_prefix("delegate_to_")
+            .filter(|p| self.cfg.peers.contains_key(*p));
+        if let Some(peer) = peer {
+            // Mesh delegation: SendMessage to the peer, one hop deeper.
+            // No explicit message → forward the user's request. saturating:
+            // a saturated hop count is >= any max_hops, so the peer rejects
+            // it — exactly the loop-protection semantic wanted here.
+            let ask = args
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .filter(|m| !m.is_empty())
+                .unwrap_or(user_text)
+                .to_string();
+            match self
+                .delegate(peer, &ask, incoming_hop.saturating_add(1))
+                .await
+            {
+                Ok(answer) => answer,
+                Err(e) => format!("tool error: {e}"),
+            }
+        } else {
+            match self
+                .mcp_rpc(json!({
+                    "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                    "params": { "name": call.function.name, "arguments": args }
+                }))
+                .await
+            {
+                Ok(result) => result
+                    .pointer("/content/0/text")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                Err(e) => format!("tool error: {e}"),
+            }
+        }
     }
 
     // ───────────────────────── A2A client (the mesh) ────────────────────────
@@ -510,8 +612,10 @@ impl A2aRuntime {
             Some(resp) => match resp.json::<serde_json::Value>().await {
                 Ok(card) => format!(
                     "Delegate this task to agent '{}': {}",
-                    card["name"].as_str().unwrap_or(peer),
-                    card["description"].as_str().unwrap_or("")
+                    card.get("name")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or(peer),
+                    str_field(&card, "description")
                 ),
                 Err(_) => format!("Delegate this task to peer agent '{peer}'."),
             },
@@ -557,19 +661,27 @@ impl A2aRuntime {
         if let Some(err) = v.get("error").filter(|e| !e.is_null()) {
             return Err(format!(
                 "peer '{peer}': {}",
-                err["message"].as_str().unwrap_or("a2a error")
+                err.get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("a2a error")
             ));
         }
-        let task = &v["result"];
-        let state = task["status"]["state"].as_str().unwrap_or("");
+        let task = v.get("result").cloned().unwrap_or(serde_json::Value::Null);
+        let state = task
+            .pointer("/status/state")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
         if state != "completed" {
             return Err(format!(
                 "peer '{peer}' task ended in state '{state}' (task id {})",
-                task["id"].as_str().unwrap_or("?")
+                task.get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("?")
             ));
         }
-        Ok(task["artifacts"][0]["parts"][0]["text"]
-            .as_str()
+        Ok(task
+            .pointer("/artifacts/0/parts/0/text")
+            .and_then(serde_json::Value::as_str)
             .unwrap_or_default()
             .to_string())
     }
@@ -592,9 +704,13 @@ impl A2aRuntime {
         let v: serde_json::Value =
             serde_json::from_str(&body).map_err(|e| format!("mcp response not JSON: {e}"))?;
         if let Some(err) = v.get("error").filter(|e| !e.is_null()) {
-            return Err(err["message"].as_str().unwrap_or("mcp error").to_string());
+            return Err(err
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("mcp error")
+                .to_string());
         }
-        Ok(v["result"].clone())
+        Ok(v.get("result").cloned().unwrap_or(serde_json::Value::Null))
     }
 }
 
@@ -633,6 +749,22 @@ fn internal_mcp_event(rpc: &serde_json::Value, bearer: Option<&str>) -> ApiGatew
 
 fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+/// `v[key]` as a str, `""` when absent or not a string — the non-panicking
+/// spelling of the JSON-indexing idiom this module used to use.
+fn str_field<'v>(v: &'v serde_json::Value, key: &str) -> &'v str {
+    v.get(key).and_then(serde_json::Value::as_str).unwrap_or("")
+}
+
+/// `now + timeout` as a tokio Instant, saturating: a pathological
+/// `task_timeout_ms` that would overflow the platform's time representation
+/// clamps to ~1 day instead of panicking (rule 5: explicit recovery).
+fn deadline_after(timeout: std::time::Duration) -> tokio::time::Instant {
+    let now = tokio::time::Instant::now();
+    now.checked_add(timeout)
+        .or_else(|| now.checked_add(std::time::Duration::from_secs(86_400)))
+        .unwrap_or(now)
 }
 
 fn task_value(
@@ -681,7 +813,7 @@ fn stream_frames(
         St {
             events,
             rpc_id,
-            deadline: tokio::time::Instant::now() + timeout,
+            deadline: deadline_after(timeout),
             initial: Some(initial),
             done: false,
         },
@@ -695,7 +827,7 @@ fn stream_frames(
             loop {
                 match tokio::time::timeout_at(s.deadline, s.events.recv()).await {
                     Ok(Ok(event)) => {
-                        if event["final"] == json!(true) {
+                        if event.get("final") == Some(&serde_json::Value::Bool(true)) {
                             s.done = true;
                         }
                         return Some((Ok(sse_frame(&s.rpc_id, event)), s));
@@ -717,7 +849,9 @@ fn is_terminal(entry: &TaskEntry) -> bool {
         .lock()
         .map(|s| {
             matches!(
-                s["status"]["state"].as_str().unwrap_or(""),
+                s.pointer("/status/state")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or(""),
                 "completed" | "failed" | "canceled" | "rejected"
             )
         })
@@ -726,9 +860,7 @@ fn is_terminal(entry: &TaskEntry) -> bool {
 
 fn set_state(entry: &TaskEntry, state: &str) {
     let status = json!({ "state": state, "timestamp": now_iso() });
-    if let Ok(mut s) = entry.snapshot.lock() {
-        s["status"] = status.clone();
-    }
+    set_snapshot_field(entry, "status", status.clone());
     let (task_id, context_id) = entry.ids();
     let is_final = matches!(state, "completed" | "failed" | "canceled" | "rejected");
     entry.emit(json!({
@@ -741,15 +873,24 @@ fn set_state(entry: &TaskEntry, state: &str) {
     entry.changed.notify_waiters();
 }
 
+/// Write one top-level field of the task snapshot. The snapshot is always
+/// built by `task_value` (an object); the if-lets are the non-panicking
+/// spelling of that invariant.
+fn set_snapshot_field(entry: &TaskEntry, key: &str, value: serde_json::Value) {
+    if let Ok(mut s) = entry.snapshot.lock() {
+        if let Some(obj) = s.as_object_mut() {
+            obj.insert(key.to_string(), value);
+        }
+    }
+}
+
 fn fail(entry: &TaskEntry, message: &str) {
     let status = json!({
         "state": "failed",
         "timestamp": now_iso(),
         "message": { "role": "agent", "parts": [{ "kind": "text", "text": message }] },
     });
-    if let Ok(mut s) = entry.snapshot.lock() {
-        s["status"] = status.clone();
-    }
+    set_snapshot_field(entry, "status", status.clone());
     let (task_id, context_id) = entry.ids();
     entry.emit(json!({
         "kind": "status-update",
@@ -768,18 +909,20 @@ fn complete(entry: &TaskEntry, task_id: &str, user_message: &serde_json::Value, 
         "parts": [{ "kind": "text", "text": answer }],
     });
     let status = json!({ "state": "completed", "timestamp": now_iso() });
-    if let Ok(mut s) = entry.snapshot.lock() {
-        s["artifacts"] = json!([artifact]);
-        s["history"] = json!([
+    set_snapshot_field(entry, "artifacts", json!([artifact]));
+    set_snapshot_field(
+        entry,
+        "history",
+        json!([
             user_message,
             {
                 "kind": "message", "role": "agent",
                 "messageId": uuid::Uuid::new_v4().to_string(),
-                "parts": artifact["parts"].clone(),
+                "parts": artifact.get("parts").cloned().unwrap_or_else(|| json!([])),
             }
-        ]);
-        s["status"] = status.clone();
-    }
+        ]),
+    );
+    set_snapshot_field(entry, "status", status.clone());
     let (tid, context_id) = entry.ids();
     entry.emit(json!({
         "kind": "artifact-update",
@@ -796,4 +939,75 @@ fn complete(entry: &TaskEntry, task_id: &str, user_message: &serde_json::Value, 
         "final": true,
     }));
     entry.changed.notify_waiters();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry_in_state(state: &str) -> Arc<TaskEntry> {
+        let (events, _rx) = tokio::sync::broadcast::channel(4);
+        Arc::new(TaskEntry {
+            snapshot: Mutex::new(task_value("t", "c", state, vec![], vec![])),
+            changed: Arc::new(Notify::new()),
+            events,
+            handle: Mutex::new(None),
+        })
+    }
+
+    #[test]
+    fn task_store_rejects_insert_when_full_of_live_tasks() {
+        let store = TaskStore::new();
+        for i in 0..MAX_RETAINED_TASKS {
+            store
+                .try_insert(format!("task-{i}"), entry_in_state("working"))
+                .expect("under cap");
+        }
+        let err = store
+            .try_insert("one-too-many".into(), entry_in_state("working"))
+            .expect_err("store full of live tasks must reject");
+        assert_eq!(err.0, -32603);
+        assert!(err.1.contains("task store full"), "got: {}", err.1);
+        assert!(store.get("one-too-many").is_none());
+    }
+
+    #[test]
+    fn task_store_evicts_oldest_terminal_task_at_cap() {
+        let store = TaskStore::new();
+        store
+            .try_insert("done-old".into(), entry_in_state("completed"))
+            .unwrap();
+        for i in 1..MAX_RETAINED_TASKS {
+            store
+                .try_insert(format!("task-{i}"), entry_in_state("working"))
+                .unwrap();
+        }
+        // At cap: the terminal task is evicted, the new one lands.
+        store
+            .try_insert("newest".into(), entry_in_state("working"))
+            .expect("terminal eviction must make room");
+        assert!(store.get("done-old").is_none(), "oldest terminal evicted");
+        assert!(store.get("newest").is_some());
+        assert!(store.get("task-1").is_some(), "live tasks survive");
+    }
+
+    #[test]
+    fn deadline_after_saturates_instead_of_panicking() {
+        // A pathological config timeout must not panic the request path.
+        let d = deadline_after(std::time::Duration::from_millis(u64::MAX));
+        assert!(d >= tokio::time::Instant::now());
+        // The normal case still lands in the future.
+        let normal = deadline_after(std::time::Duration::from_millis(50));
+        assert!(normal > tokio::time::Instant::now());
+    }
+
+    #[test]
+    fn is_terminal_matches_terminal_states_only() {
+        for s in ["completed", "failed", "canceled", "rejected"] {
+            assert!(is_terminal(&entry_in_state(s)), "{s} must be terminal");
+        }
+        for s in ["submitted", "working", ""] {
+            assert!(!is_terminal(&entry_in_state(s)), "{s} must not be terminal");
+        }
+    }
 }

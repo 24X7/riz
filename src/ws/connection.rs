@@ -59,6 +59,14 @@ pub enum OutboundMessage {
     Close,
 }
 
+/// Capacity of each connection's bounded outbound queue (Power of 10 rule 3,
+/// docs/SAFETY.md: no unbounded growth behind a slow consumer). The writer
+/// task drains at socket speed, so 256 frames absorbs normal bursts; when a
+/// slow client lets the queue fill, `@connections` POST answers 429 — AWS
+/// parity with PostToConnection's LimitExceededException — instead of
+/// buffering without limit.
+pub const OUTBOUND_CAPACITY: usize = 256;
+
 /// Per-connection state held in the `ConnectionStore`. The writer task owns
 /// the WebSocket sink and reads from `outbound_rx` to push messages.
 pub struct Connection {
@@ -67,13 +75,11 @@ pub struct Connection {
     pub connected_at: Instant,
     pub last_active: std::sync::Mutex<Instant>,
     /// Outbound channel — anyone (incl. the management API) writes here to
-    /// send a message to this client.
-    ///
-    /// v0.1 NOTE: unbounded by design. A slow client paired with a chatty
-    /// server can grow this queue unbounded → OOM risk. Acceptable for the
-    /// initial release; revisit with `mpsc::channel(N)` + drop policy once
-    /// production load profiles emerge.
-    pub outbound: mpsc::UnboundedSender<OutboundMessage>,
+    /// send a message to this client. Bounded ([`OUTBOUND_CAPACITY`]): when a
+    /// slow client lets the queue fill, senders see an explicit `try_send`
+    /// error (surfaced by the management API as 429) instead of growing the
+    /// heap without limit.
+    pub outbound: mpsc::Sender<OutboundMessage>,
     /// Fires when the connection is being torn down — readers and writer
     /// tasks watch this and exit. Take-once via [`Connection::take_close_signal`].
     pub close_signal: std::sync::Mutex<Option<oneshot::Sender<()>>>,

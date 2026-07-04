@@ -78,7 +78,7 @@ mod tests {
     use tokio::sync::{mpsc, oneshot};
 
     fn fake_conn(id: &str, function: &str) -> Arc<Connection> {
-        let (tx, _rx) = mpsc::unbounded_channel::<OutboundMessage>();
+        let (tx, _rx) = mpsc::channel::<OutboundMessage>(1);
         let (close_tx, _close_rx) = oneshot::channel();
         Arc::new(Connection {
             id: ConnectionId(id.into()),
