@@ -58,6 +58,9 @@
       <b style="color:var(--t-hi)">three independent walls</b> — a WASI capability sandbox, an OS process
       boundary with an always-on safety profile, and a host-side resource broker —
       so "the model wrote it" stops being a production risk.
+    
+      And it all holds for agents too: MCP tool calls and the built-in A2A agent's tool
+      executions dispatch through the same guards and sandbox — no side door.
     </p>
     <div class="cta-row">
       <a class="cta pri" href="start.html">Start in 3 lines →</a>
