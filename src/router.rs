@@ -119,8 +119,14 @@ impl Router {
 }
 
 /// Decodes a percent-encoded string (e.g. "foo%2Fbar" → "foo/bar").
-/// Kept available for future path-param support (Spec B).
-#[allow(dead_code)]
+///
+/// Lenient by design (this is the query-string / path-param decoder, not the
+/// static-file traversal defense in `static_files.rs`, which stays strict):
+/// a malformed sequence (`%zz`, or `%4` at end of input) passes through
+/// verbatim instead of erroring. Used by `server.rs` (query strings),
+/// `runtime` (path params), and `ws::upgrade` ($connect query strings) —
+/// all remote input, so the loop is structurally bounded (one byte iterator,
+/// each `next()` consumes) and there is no index arithmetic to go wrong.
 pub fn percent_decode(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut bytes = s.bytes().peekable();
@@ -130,6 +136,7 @@ pub fn percent_decode(s: &str) -> String {
             let l = bytes.next();
             if let (Some(h), Some(l)) = (h, l) {
                 if let (Some(hi), Some(lo)) = (hex_val(h), hex_val(l)) {
+                    // hi/lo < 16 (to_digit bound), so hi << 4 | lo ≤ 0xFF.
                     result.push(char::from(hi << 4 | lo));
                     continue;
                 }
@@ -137,7 +144,12 @@ pub fn percent_decode(s: &str) -> String {
                 result.push(char::from(h));
                 result.push(char::from(l));
             } else {
+                // Truncated sequence at end of input ("%" or "%4"): pass
+                // every consumed byte through verbatim, losing nothing.
                 result.push('%');
+                if let Some(h) = h {
+                    result.push(char::from(h));
+                }
             }
         } else {
             result.push(char::from(b));
@@ -146,14 +158,13 @@ pub fn percent_decode(s: &str) -> String {
     result
 }
 
-#[allow(dead_code)]
+/// Value of one ASCII hex digit. `to_digit(16)` accepts exactly
+/// `[0-9a-fA-F]` and returns a value < 16, so the `u8` conversion is
+/// infallible — no subtraction chains for the ratchet to worry about.
 fn hex_val(b: u8) -> Option<u8> {
-    match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'a'..=b'f' => Some(b - b'a' + 10),
-        b'A'..=b'F' => Some(b - b'A' + 10),
-        _ => None,
-    }
+    char::from(b)
+        .to_digit(16)
+        .and_then(|d| u8::try_from(d).ok())
 }
 
 #[cfg(test)]
@@ -399,6 +410,24 @@ mod tests {
         assert_eq!(percent_decode("foo%2Fbar"), "foo/bar");
         assert_eq!(percent_decode("hello%20world"), "hello world");
         assert_eq!(percent_decode("normal"), "normal");
+    }
+
+    #[test]
+    fn percent_decode_malformed_sequences_pass_through() {
+        // Non-hex after '%': all three bytes pass through verbatim.
+        assert_eq!(percent_decode("%zz"), "%zz");
+        assert_eq!(percent_decode("a%2gb"), "a%2gb");
+        // Uppercase/lowercase hex both decode.
+        assert_eq!(percent_decode("%2f%2F"), "//");
+    }
+
+    #[test]
+    fn percent_decode_truncated_sequence_keeps_consumed_bytes() {
+        // Regression: "%4" previously decoded to "%" — the consumed '4'
+        // was silently dropped. Truncated input must pass through whole.
+        assert_eq!(percent_decode("%4"), "%4");
+        assert_eq!(percent_decode("%"), "%");
+        assert_eq!(percent_decode("x%"), "x%");
     }
 }
 
