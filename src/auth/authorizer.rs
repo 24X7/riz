@@ -70,6 +70,11 @@ pub trait Authorizer: Send + Sync {
 /// Keyed by: `(source_ip, auth_header_hash_hex, function_name)`.
 /// We hash the Authorization header rather than storing the raw value so
 /// the cache key is safe to log and doesn't leak credentials.
+///
+/// The hash is SHA-256, not `DefaultHasher`: this key gates a cached ALLOW
+/// decision, so a collision between two different credentials would be an
+/// authorization bypass. A fixed-key 64-bit SipHash is not collision-
+/// resistant against an adversary; a 256-bit cryptographic digest is.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct AuthCacheKey {
     source_ip: String,
@@ -79,15 +84,19 @@ pub struct AuthCacheKey {
 
 impl AuthCacheKey {
     pub fn new(source_ip: &str, auth_header: Option<&str>, function_name: &str) -> Self {
-        use std::hash::{Hash, Hasher};
-        let hash = {
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            auth_header.hash(&mut h);
-            h.finish()
-        };
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        // Domain-separate "no header" from any literal header value.
+        match auth_header {
+            Some(h) => {
+                hasher.update([1u8]);
+                hasher.update(h.as_bytes());
+            }
+            None => hasher.update([0u8]),
+        }
         Self {
             source_ip: source_ip.to_string(),
-            auth_header_hash: format!("{hash:016x}"),
+            auth_header_hash: format!("{:x}", hasher.finalize()),
             function_name: function_name.to_string(),
         }
     }
@@ -210,6 +219,15 @@ mod tests {
     fn auth_cache_key_handles_no_auth_header() {
         let k = AuthCacheKey::new("1.2.3.4", None, "api");
         assert!(!k.to_cache_string().is_empty());
+    }
+
+    #[test]
+    fn auth_cache_key_none_differs_from_empty_header() {
+        // Domain separation: an absent Authorization header must never alias
+        // an empty one (or any literal value).
+        let k1 = AuthCacheKey::new("1.2.3.4", None, "api");
+        let k2 = AuthCacheKey::new("1.2.3.4", Some(""), "api");
+        assert_ne!(k1.to_cache_string(), k2.to_cache_string());
     }
 
     #[tokio::test]

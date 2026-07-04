@@ -44,68 +44,105 @@ pub async fn enforce_authorizer(
             Ok(event)
         }
         AuthorizerConfig::FunctionRef(auth_fn_name) => {
-            // REQUEST authorizer.
-            let cache_key = AuthCacheKey::new(source_ip, auth_header, function_name);
-
-            if let Some(cached) = cache.get(&cache_key).await {
-                return Ok(inject_authorizer_context(event, &cached));
-            }
-
-            // 5 s authorizer timeout — fast enough to avoid holding the client
-            // while a misbehaving authorizer hangs. Configurable via
-            // `RequestAuthorizer::with_timeout_ms` if the caller needs looser SLAs.
-            let authorizer = RequestAuthorizer::new(auth_fn_name.clone(), process_manager.clone())
-                .with_timeout_ms(5_000);
-            match authorizer.authorize(&event).await {
-                Ok(output) => {
-                    cache.insert(cache_key, output.clone()).await;
-                    Ok(inject_authorizer_context(event, &output))
-                }
-                Err(e) => {
-                    warn!(
-                        source_ip = %source_ip,
-                        function_name = %function_name,
-                        authorizer_fn = %auth_fn_name,
-                        "REQUEST authorizer denied: {e}"
-                    );
-                    Err(e)
-                }
-            }
+            authorize_via_function(
+                auth_fn_name,
+                source_ip,
+                auth_header,
+                function_name,
+                event,
+                cache,
+                process_manager,
+            )
+            .await
         }
         AuthorizerConfig::Jwt(jwt_cfg) => {
-            // JWT authorizer.
-            let cache_key = AuthCacheKey::new(source_ip, auth_header, function_name);
+            authorize_via_jwt(jwt_cfg, source_ip, auth_header, function_name, event, cache).await
+        }
+    }
+}
 
-            if let Some(cached) = cache.get(&cache_key).await {
-                return Ok(inject_authorizer_context(event, &cached));
-            }
+/// REQUEST authorizer path: cache lookup → invoke the authorizer function →
+/// cache the ALLOW decision. Fail-closed: every error path returns `Err`
+/// (denials are never cached, so a transient failure cannot poison the cache).
+async fn authorize_via_function(
+    auth_fn_name: &str,
+    source_ip: &str,
+    auth_header: Option<&str>,
+    function_name: &str,
+    event: ApiGatewayV2httpRequest,
+    cache: &AuthCache,
+    process_manager: &Arc<ProcessManager>,
+) -> Result<ApiGatewayV2httpRequest, AuthError> {
+    let cache_key = AuthCacheKey::new(source_ip, auth_header, function_name);
 
-            let authorizer = JwtAuthorizer::new(jwt_cfg.clone()).await.map_err(|e| {
-                warn!(
-                    source_ip = %source_ip,
-                    function_name = %function_name,
-                    "JWT authorizer setup failed: {e}"
-                );
-                e
-            })?;
+    if let Some(cached) = cache.get(&cache_key).await {
+        return Ok(inject_authorizer_context(event, &cached));
+    }
 
-            match authorizer.authorize(&event).await {
-                Ok(output) => {
-                    cache.insert(cache_key, output.clone()).await;
-                    Ok(inject_authorizer_context(event, &output))
-                }
-                Err(e) => {
-                    // Evict any stale cached decision for this key so the next
-                    // request re-evaluates rather than serving a stale hit.
-                    cache.invalidate(&cache_key).await;
-                    warn!(
-                        source_ip = %source_ip,
-                        function_name = %function_name,
-                        "JWT authorizer denied: {e}"
-                    );
-                    Err(e)
-                }
-            }
+    // 5 s authorizer timeout — fast enough to avoid holding the client
+    // while a misbehaving authorizer hangs. Configurable via
+    // `RequestAuthorizer::with_timeout_ms` if the caller needs looser SLAs.
+    let authorizer = RequestAuthorizer::new(auth_fn_name.to_owned(), process_manager.clone())
+        .with_timeout_ms(5_000);
+    match authorizer.authorize(&event).await {
+        Ok(output) => {
+            cache.insert(cache_key, output.clone()).await;
+            Ok(inject_authorizer_context(event, &output))
+        }
+        Err(e) => {
+            warn!(
+                source_ip = %source_ip,
+                function_name = %function_name,
+                authorizer_fn = %auth_fn_name,
+                "REQUEST authorizer denied: {e}"
+            );
+            Err(e)
+        }
+    }
+}
+
+/// JWT authorizer path: cache lookup → JWKS setup → validate token → cache
+/// the ALLOW decision. Fail-closed: setup failure and validation failure both
+/// return `Err`; a denial additionally evicts the key so the next request
+/// re-evaluates rather than racing a concurrently-inserted stale hit.
+async fn authorize_via_jwt(
+    jwt_cfg: &crate::config::JwtAuthorizerConfig,
+    source_ip: &str,
+    auth_header: Option<&str>,
+    function_name: &str,
+    event: ApiGatewayV2httpRequest,
+    cache: &AuthCache,
+) -> Result<ApiGatewayV2httpRequest, AuthError> {
+    let cache_key = AuthCacheKey::new(source_ip, auth_header, function_name);
+
+    if let Some(cached) = cache.get(&cache_key).await {
+        return Ok(inject_authorizer_context(event, &cached));
+    }
+
+    let authorizer = JwtAuthorizer::new(jwt_cfg.clone()).await.map_err(|e| {
+        warn!(
+            source_ip = %source_ip,
+            function_name = %function_name,
+            "JWT authorizer setup failed: {e}"
+        );
+        e
+    })?;
+
+    match authorizer.authorize(&event).await {
+        Ok(output) => {
+            cache.insert(cache_key, output.clone()).await;
+            Ok(inject_authorizer_context(event, &output))
+        }
+        Err(e) => {
+            // Evict any stale cached decision for this key so the next
+            // request re-evaluates rather than serving a stale hit.
+            cache.invalidate(&cache_key).await;
+            warn!(
+                source_ip = %source_ip,
+                function_name = %function_name,
+                "JWT authorizer denied: {e}"
+            );
+            Err(e)
         }
     }
 }
