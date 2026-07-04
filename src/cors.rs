@@ -15,7 +15,7 @@
 //! header injection.
 
 use crate::config::CorsConfig;
-use http::HeaderMap;
+use http::{HeaderMap, HeaderValue};
 
 /// Returns true if `origin` is explicitly in the allow-list, or the
 /// allow-list contains the wildcard `"*"`.
@@ -48,6 +48,56 @@ fn is_safe_origin(origin: &str) -> bool {
     true
 }
 
+/// Validate the request Origin and parse it into a typed `HeaderValue`,
+/// applying the allow-list. Returns `None` — the module's documented
+/// "treat as absent" semantic — when the origin is unsafe, not in the
+/// allow-list, or not a legal HTTP header value.
+///
+/// The final `HeaderValue::from_str` is the authority on echoability:
+/// `is_safe_origin` admits ASCII control characters other than CR/LF (e.g.
+/// NUL), which are not legal header bytes. Parsing here means the insert
+/// sites hold an already-proven value — no panic on any input (rule 7).
+fn allowed_origin_value(cfg: &CorsConfig, origin: &str) -> Option<HeaderValue> {
+    if !is_safe_origin(origin) {
+        tracing::debug!(origin, "CORS: unsafe origin — treating as absent");
+        return None;
+    }
+    if !origin_allowed(origin, &cfg.allow_origins) {
+        tracing::debug!(
+            origin,
+            "CORS: origin not in allow-list — treating as absent"
+        );
+        return None;
+    }
+    match HeaderValue::from_str(origin) {
+        Ok(v) => Some(v),
+        Err(_) => {
+            tracing::debug!(
+                origin,
+                "CORS: origin is not a valid header value — treating as absent"
+            );
+            None
+        }
+    }
+}
+
+/// Join an operator-configured list ("GET", "POST" → "GET, POST") into a
+/// header value. Config is operator input, not remote input, but it must
+/// still never panic the request task (rule 7): a value the `http` crate
+/// rejects (e.g. an embedded newline) degrades to `fallback` with a warning,
+/// and the malformed text can never smuggle an injected header.
+fn joined_header_value(parts: &[String], header_name: &str, fallback: HeaderValue) -> HeaderValue {
+    let joined = parts.join(", ");
+    HeaderValue::from_str(&joined).unwrap_or_else(|_| {
+        tracing::warn!(
+            header = header_name,
+            value = ?joined,
+            "CORS: configured list is not a valid header value — using fallback"
+        );
+        fallback
+    })
+}
+
 /// Build the preflight (OPTIONS) response headers per the CORS spec.
 ///
 /// Returns an empty `HeaderMap` when the origin is not in the allow-list or
@@ -55,63 +105,47 @@ fn is_safe_origin(origin: &str) -> bool {
 /// CORS headers the browser will treat the preflight as rejected.
 pub fn preflight_headers(cfg: &CorsConfig, request_origin: &str) -> HeaderMap {
     let mut h = HeaderMap::new();
-    if !is_safe_origin(request_origin) {
-        tracing::debug!(
-            origin = request_origin,
-            "CORS preflight: unsafe origin — returning empty headers"
-        );
+    let Some(origin_value) = allowed_origin_value(cfg, request_origin) else {
         return h;
-    }
-    if !origin_allowed(request_origin, &cfg.allow_origins) {
-        tracing::debug!(
-            origin = request_origin,
-            "CORS preflight: origin not in allow-list — returning empty headers"
-        );
-        return h;
-    }
+    };
     tracing::debug!(
         origin = request_origin,
         "CORS preflight: origin allowed — building preflight headers"
     );
     // Use `insert` (overwrites any previous value); there is at most one of
     // each CORS header per response.
-    h.insert(
-        "access-control-allow-origin",
-        request_origin
-            .parse()
-            .expect("origin already validated as ASCII, no newlines"),
-    );
+    h.insert("access-control-allow-origin", origin_value);
     if cfg.allow_credentials {
         h.insert(
             "access-control-allow-credentials",
-            "true".parse().expect("static value"),
+            HeaderValue::from_static("true"),
         );
     }
     if !cfg.allow_methods.is_empty() {
         h.insert(
             "access-control-allow-methods",
-            cfg.allow_methods
-                .join(", ")
-                .parse()
-                .unwrap_or_else(|_| "GET".parse().expect("static fallback")),
+            joined_header_value(
+                &cfg.allow_methods,
+                "access-control-allow-methods",
+                HeaderValue::from_static("GET"),
+            ),
         );
     }
     if !cfg.allow_headers.is_empty() {
         h.insert(
             "access-control-allow-headers",
-            cfg.allow_headers
-                .join(", ")
-                .parse()
-                .unwrap_or_else(|_| "Content-Type".parse().expect("static fallback")),
+            joined_header_value(
+                &cfg.allow_headers,
+                "access-control-allow-headers",
+                HeaderValue::from_static("Content-Type"),
+            ),
         );
     }
     if cfg.max_age_secs > 0 {
+        // `From<u64>` renders the decimal digits — infallible by type.
         h.insert(
             "access-control-max-age",
-            cfg.max_age_secs
-                .to_string()
-                .parse()
-                .expect("u64 decimal is valid header value"),
+            HeaderValue::from(cfg.max_age_secs),
         );
     }
     h
@@ -128,43 +162,28 @@ pub fn response_headers(cfg: &CorsConfig, request_origin: Option<&str>) -> Heade
     let Some(origin) = request_origin else {
         return h;
     };
-    if !is_safe_origin(origin) {
-        tracing::debug!(
-            origin,
-            "CORS response: unsafe origin — skipping CORS headers"
-        );
+    let Some(origin_value) = allowed_origin_value(cfg, origin) else {
         return h;
-    }
-    if !origin_allowed(origin, &cfg.allow_origins) {
-        tracing::debug!(
-            origin,
-            "CORS response: origin not in allow-list — skipping CORS headers"
-        );
-        return h;
-    }
+    };
     tracing::debug!(
         origin,
         "CORS response: origin allowed — adding CORS headers"
     );
-    h.insert(
-        "access-control-allow-origin",
-        origin
-            .parse()
-            .expect("origin already validated as ASCII, no newlines"),
-    );
+    h.insert("access-control-allow-origin", origin_value);
     if cfg.allow_credentials {
         h.insert(
             "access-control-allow-credentials",
-            "true".parse().expect("static value"),
+            HeaderValue::from_static("true"),
         );
     }
     if !cfg.expose_headers.is_empty() {
         h.insert(
             "access-control-expose-headers",
-            cfg.expose_headers
-                .join(", ")
-                .parse()
-                .unwrap_or_else(|_| "".parse().expect("empty string is valid")),
+            joined_header_value(
+                &cfg.expose_headers,
+                "access-control-expose-headers",
+                HeaderValue::from_static(""),
+            ),
         );
     }
     h
@@ -384,5 +403,81 @@ mod tests {
         let cfg = cfg_with_origins(&["*"]);
         let h = response_headers(&cfg, Some("https://random.example.com"));
         assert!(h.get("access-control-allow-origin").is_some());
+    }
+
+    // ─── treat-as-absent fallbacks (never panic the request task) ───────────
+
+    #[test]
+    fn preflight_origin_with_control_char_treated_as_absent() {
+        // ASCII + no CR/LF passes is_safe_origin, but NUL is not a legal
+        // header byte — must degrade to empty headers, never panic.
+        let cfg = cfg_with_origins(&["*"]);
+        let h = preflight_headers(&cfg, "https://ev\u{0}il.com");
+        assert!(
+            h.is_empty(),
+            "control-char origin must produce empty headers"
+        );
+    }
+
+    #[test]
+    fn response_headers_origin_with_control_char_treated_as_absent() {
+        let cfg = cfg_with_origins(&["*"]);
+        let h = response_headers(&cfg, Some("https://ev\u{1}il.com"));
+        assert!(
+            h.is_empty(),
+            "control-char origin must produce empty headers"
+        );
+    }
+
+    #[test]
+    fn preflight_malformed_allow_methods_falls_back_to_get() {
+        let mut cfg = cfg_with_origins(&["https://example.com"]);
+        cfg.allow_methods = vec!["GET\r\nX-Evil: 1".into()];
+        let h = preflight_headers(&cfg, "https://example.com");
+        assert_eq!(
+            h.get("access-control-allow-methods")
+                .and_then(|v| v.to_str().ok()),
+            Some("GET"),
+            "malformed configured methods must fall back, not panic"
+        );
+        assert!(h.get("x-evil").is_none(), "no header injection via config");
+    }
+
+    #[test]
+    fn preflight_malformed_allow_headers_falls_back_to_content_type() {
+        let mut cfg = cfg_with_origins(&["https://example.com"]);
+        cfg.allow_headers = vec!["X-Ok\nX-Evil: 1".into()];
+        let h = preflight_headers(&cfg, "https://example.com");
+        assert_eq!(
+            h.get("access-control-allow-headers")
+                .and_then(|v| v.to_str().ok()),
+            Some("Content-Type")
+        );
+        assert!(h.get("x-evil").is_none(), "no header injection via config");
+    }
+
+    #[test]
+    fn response_malformed_expose_headers_falls_back_to_empty() {
+        let mut cfg = cfg_with_origins(&["https://example.com"]);
+        cfg.expose_headers = vec!["X-Ok\r\nX-Evil: 1".into()];
+        let h = response_headers(&cfg, Some("https://example.com"));
+        assert_eq!(
+            h.get("access-control-expose-headers")
+                .and_then(|v| v.to_str().ok()),
+            Some("")
+        );
+        assert!(h.get("x-evil").is_none(), "no header injection via config");
+    }
+
+    #[test]
+    fn preflight_max_age_renders_u64_decimal() {
+        let mut cfg = cfg_with_origins(&["https://example.com"]);
+        cfg.max_age_secs = u64::MAX;
+        let h = preflight_headers(&cfg, "https://example.com");
+        assert_eq!(
+            h.get("access-control-max-age")
+                .and_then(|v| v.to_str().ok()),
+            Some("18446744073709551615")
+        );
     }
 }
