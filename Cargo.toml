@@ -96,6 +96,9 @@ bytes = "1"
 # Same story as bytes: already in the tree via axum/hyper — named for ReaderStream
 # so static files stream to the socket instead of buffering fully per request.
 tokio-util = { version = "0.7", features = ["io"] }
+# Already in the tree via hyper (its Date header) — named for Last-Modified
+# formatting in static_files, replacing hand-rolled calendar arithmetic.
+httpdate = "1"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 subtle = "2"
 jsonwebtoken = "9"
