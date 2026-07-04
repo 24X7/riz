@@ -1,8 +1,9 @@
-//! End-to-end WebSocket test. Spins up the server with a test-fixture chat
-//! handler, connects with tokio-tungstenite, sends a message, and expects the
-//! echo back via the @connections management API path.
+//! End-to-end WebSocket tests. Spin up the server with a test-fixture chat
+//! handler, connect with tokio-tungstenite, and drive the socket directly:
+//! echo roundtrip via the @connections management path, and the inbound
+//! frame-size cap (AWS parity: 32 KB/frame, 128 KB/message).
 //!
-//! Requires `bun` on PATH (gated with `#[ignore]`).
+//! Requires `bun` on PATH.
 
 use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
@@ -10,8 +11,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
 
-#[tokio::test]
-async fn websocket_echo_roundtrip() {
+/// Start a riz server with the chat-handler fixture mounted at /chat.
+/// Returns the bound address; the server task runs until the test exits.
+async fn start_chat_server() -> SocketAddr {
     let handler_path = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/chat-handler/index.ts"
@@ -91,6 +93,13 @@ path = "/chat"
     // Give the server a moment to be ready.
     tokio::time::sleep(Duration::from_millis(300)).await;
 
+    addr
+}
+
+#[tokio::test]
+async fn websocket_echo_roundtrip() {
+    let addr = start_chat_server().await;
+
     // Connect via WebSocket.
     let url = format!("ws://{addr}/chat");
     let (mut socket, _resp) = tokio_tungstenite::connect_async(&url)
@@ -116,4 +125,48 @@ path = "/chat"
     }
 
     socket.close(None).await.unwrap();
+}
+
+#[tokio::test]
+async fn websocket_oversized_inbound_frame_closes_connection() {
+    let addr = start_chat_server().await;
+
+    let url = format!("ws://{addr}/chat");
+    let (mut socket, _resp) = tokio_tungstenite::connect_async(&url)
+        .await
+        .expect("ws connect should succeed");
+
+    // Sanity: the connection works for a normal-sized frame first.
+    socket.send(Message::Text("ping".into())).await.unwrap();
+    let reply = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await
+        .expect("no reply within 2s")
+        .expect("stream ended")
+        .expect("ws read error");
+    assert_eq!(reply, Message::Text("echo: ping".into()));
+
+    // A 200 KiB single-frame message exceeds both inbound caps
+    // (32 KiB/frame, 128 KiB/message — AWS API Gateway WebSocket quotas).
+    // The server must tear the connection down without ever dispatching the
+    // payload; the client sees a Close frame or a dropped connection, never
+    // an echo.
+    let oversized = "x".repeat(200 * 1024);
+    // The send itself may or may not error depending on how fast the server
+    // resets; either is acceptable.
+    let _ = socket.send(Message::Text(oversized)).await;
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let next = tokio::time::timeout_at(deadline, socket.next()).await;
+        match next {
+            Err(_) => panic!("connection still open 5s after oversized frame"),
+            Ok(None) => break,         // stream ended — connection dropped
+            Ok(Some(Err(_))) => break, // protocol/IO error — connection dead
+            Ok(Some(Ok(Message::Close(_)))) => break, // clean close
+            Ok(Some(Ok(Message::Text(s)))) => {
+                panic!("oversized frame must not be dispatched, got echo: {s}")
+            }
+            Ok(Some(Ok(_))) => continue, // ping/pong noise — keep waiting
+        }
+    }
 }

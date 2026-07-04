@@ -19,6 +19,20 @@ use crate::state::AppState;
 use crate::ws::connection::{Connection, ConnectionId, OutboundMessage, OUTBOUND_CAPACITY};
 use crate::ws::event::{build_connect, build_disconnect, build_message};
 
+/// Inbound size caps for client → server WebSocket traffic (Power of 10
+/// rule 3: every buffer growing from remote input carries an explicit cap).
+/// The values are AWS API Gateway's WebSocket quotas — riz's wire-parity
+/// target — so an app tested on riz cannot come to depend on frames that AWS
+/// would reject. Enforced by the transport: an oversized frame errors the
+/// read stream, which tears the connection down through the normal
+/// `$disconnect` path.
+const MAX_INBOUND_FRAME_BYTES: usize = 32 * 1024; // AWS quota: 32 KB/frame
+const MAX_INBOUND_MESSAGE_BYTES: usize = 128 * 1024; // AWS quota: 128 KB/message
+
+/// How long teardown waits for the writer task to flush queued frames before
+/// aborting it (clients then see a TCP close instead of a WS CLOSE).
+const WRITER_FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// axum handler that gets mounted at the WebSocket function's path.
 /// Captures the function name in the wrapper closure (see main.rs).
 pub async fn ws_upgrade_handler(
@@ -36,9 +50,29 @@ pub async fn ws_upgrade_handler(
         .map(parse_query_string)
         .unwrap_or_default();
 
-    ws.on_upgrade(move |socket| async move {
-        handle_socket(state, function_name, stage, headers, query, socket).await;
-    })
+    ws.max_frame_size(MAX_INBOUND_FRAME_BYTES)
+        .max_message_size(MAX_INBOUND_MESSAGE_BYTES)
+        .on_upgrade(move |socket| async move {
+            handle_socket(state, function_name, stage, headers, query, socket).await;
+        })
+}
+
+/// Everything the `$connect` / `$default` / `$disconnect` dispatch helpers
+/// need — one struct so the rule-4 split does not smuggle its complexity
+/// into seven-argument parameter lists.
+struct WsDispatchCtx {
+    state: Arc<AppState>,
+    function_name: String,
+    stage: String,
+    connection_id: ConnectionId,
+    connected_at_ms: i64,
+    timeout_ms: u64,
+}
+
+/// What the read loop should do after handling one inbound message.
+enum InboundOutcome {
+    KeepOpen,
+    Close,
 }
 
 async fn handle_socket(
@@ -71,79 +105,32 @@ async fn handle_socket(
             .unwrap_or(30_000)
     };
 
-    // 1. Dispatch $connect. If non-200, close immediately.
-    let connect_evt = build_connect(
-        &stage,
-        connection_id.as_str(),
+    let ctx = WsDispatchCtx {
+        state: state.clone(),
+        function_name,
+        stage,
+        connection_id: connection_id.clone(),
         connected_at_ms,
-        // The upgrade path — fetch from the function's first declared route.
-        "/", // overwritten just below
-        headers.clone(),
-        query.clone(),
-    );
-
-    let connect_start = std::time::Instant::now();
-    let connect_resp: ApiGatewayProxyResponse = match state
-        .process_manager
-        .invoke_generic(&function_name, &connect_evt, timeout_ms)
-        .await
-    {
-        Ok(r) => r,
-        Err(PoolError::Timeout(ref name, ms)) => {
-            warn!(function = %name, timeout_ms = ms, "ws $connect timed out — closing connection");
-            let _ = socket.send(Message::Close(None)).await;
-            return;
-        }
-        Err(PoolError::InvalidResponse(ref name, ref detail)) => {
-            warn!(function = %name, detail = %detail, "ws $connect malformed response — closing connection");
-            let _ = socket.send(Message::Close(None)).await;
-            return;
-        }
-        Err(PoolError::SemaphoreExhausted(ref name)) => {
-            warn!(function = %name, "ws $connect semaphore exhausted — closing connection");
-            let _ = socket.send(Message::Close(None)).await;
-            return;
-        }
-        Err(e) => {
-            warn!("ws $connect failed for {function_name}: {e}");
-            let _ = socket.send(Message::Close(None)).await;
-            return;
-        }
+        timeout_ms,
     };
-    let connect_latency = connect_start.elapsed().as_secs_f64() * 1000.0;
-    let connect_healthy = connect_resp.status_code < 500;
-    state
-        .riz_state
-        .record_invocation(&function_name, connect_latency, connect_healthy, false)
-        .await;
-    state.push_log(
-        "INFO",
-        Some(&function_name),
-        format!(
-            "WS $connect {} {:.0}ms conn={} fn={function_name}",
-            connect_resp.status_code, connect_latency, connection_id
-        ),
-    );
-    if connect_resp.status_code != 200 {
-        warn!(
-            "ws $connect rejected by {function_name}: status {}",
-            connect_resp.status_code
-        );
-        let _ = socket.send(Message::Close(None)).await;
+
+    // 1. Dispatch $connect. On any dispatch failure or non-200, close
+    //    immediately — the connection is never registered.
+    if !dispatch_connect(&ctx, headers, query, &mut socket).await {
         return;
     }
 
     // 2. Register connection. Bounded queue (rule 3): the writer drains at
     //    socket speed; a slow client filling it surfaces as try_send errors
     //    to pushers instead of unbounded buffering.
-    let (outbound_tx, mut outbound_rx) = mpsc::channel::<OutboundMessage>(OUTBOUND_CAPACITY);
+    let (outbound_tx, outbound_rx) = mpsc::channel::<OutboundMessage>(OUTBOUND_CAPACITY);
     // Keep a local sender clone so the teardown path can queue a Close frame
     // and then drop both senders, terminating the writer's recv() loop naturally.
     let outbound_local = outbound_tx.clone();
-    let (close_tx, mut close_rx) = oneshot::channel::<()>();
+    let (close_tx, close_rx) = oneshot::channel::<()>();
     let conn = Arc::new(Connection {
         id: connection_id.clone(),
-        function_name: function_name.clone(),
+        function_name: ctx.function_name.clone(),
         connected_at,
         last_active: std::sync::Mutex::new(connected_at),
         outbound: outbound_tx,
@@ -151,7 +138,7 @@ async fn handle_socket(
     });
     if let Err(reason) = state.ws_connections.try_insert(conn.clone()) {
         warn!(
-            function = %function_name,
+            function = %ctx.function_name,
             connection_id = %connection_id,
             "ws connection rejected: {reason} (RIZ_MAX_CONNECTIONS ceiling)"
         );
@@ -160,15 +147,90 @@ async fn handle_socket(
     }
     info!(
         "ws connected: {} (function {})",
-        connection_id, function_name
+        connection_id, ctx.function_name
     );
 
-    // 3. Split the socket. Writer task reads from outbound_rx, sends to client.
-    //    Reader loop in this task: each Message → dispatch $default event.
-    let (mut sink, mut stream) = futures_util::StreamExt::split(socket);
-    use futures_util::SinkExt;
+    // 3. Split the socket. Writer task reads from outbound_rx, sends to the
+    //    client; the reader loop dispatches each Message as a $default event.
+    let (sink, stream) = futures_util::StreamExt::split(socket);
+    let writer = spawn_writer(sink, outbound_rx);
+    read_loop(&ctx, &conn, stream, close_rx).await;
 
-    let writer = tokio::spawn(async move {
+    // 4. Dispatch $disconnect (best-effort), remove from store, wait for writer.
+    teardown(&ctx, conn, outbound_local, writer).await;
+}
+
+/// Step 1: dispatch `$connect`. Returns `true` when the function answered 200
+/// and the connection may proceed; on every dispatch failure or non-200
+/// status it sends a Close frame and returns `false`.
+async fn dispatch_connect(
+    ctx: &WsDispatchCtx,
+    headers: axum::http::HeaderMap,
+    query: HashMap<String, String>,
+    socket: &mut WebSocket,
+) -> bool {
+    let connect_evt = build_connect(
+        &ctx.stage,
+        ctx.connection_id.as_str(),
+        ctx.connected_at_ms,
+        // The mount path is not threaded through to $connect today; AWS
+        // parity for requestContext identity fields is tracked separately.
+        "/",
+        headers,
+        query,
+    );
+
+    let connect_start = std::time::Instant::now();
+    let connect_resp: ApiGatewayProxyResponse = match ctx
+        .state
+        .process_manager
+        .invoke_generic(&ctx.function_name, &connect_evt, ctx.timeout_ms)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            // Every dispatch failure closes: PoolError's Display carries the
+            // variant detail (timeout ms, malformed-response detail,
+            // semaphore exhaustion), so one arm loses no diagnostics.
+            warn!(function = %ctx.function_name, "ws $connect failed — closing connection: {e}");
+            let _ = socket.send(Message::Close(None)).await;
+            return false;
+        }
+    };
+    let connect_latency = connect_start.elapsed().as_secs_f64() * 1000.0;
+    let connect_healthy = connect_resp.status_code < 500;
+    ctx.state
+        .riz_state
+        .record_invocation(&ctx.function_name, connect_latency, connect_healthy, false)
+        .await;
+    ctx.state.push_log(
+        "INFO",
+        Some(&ctx.function_name),
+        format!(
+            "WS $connect {} {:.0}ms conn={} fn={}",
+            connect_resp.status_code, connect_latency, ctx.connection_id, ctx.function_name
+        ),
+    );
+    if connect_resp.status_code != 200 {
+        warn!(
+            "ws $connect rejected by {}: status {}",
+            ctx.function_name, connect_resp.status_code
+        );
+        let _ = socket.send(Message::Close(None)).await;
+        return false;
+    }
+    true
+}
+
+/// Writer task: drains the bounded outbound queue to the client at socket
+/// speed. Exits on a queued Close frame, a send failure, or when every
+/// sender handle is dropped (recv → None after the drain).
+fn spawn_writer(
+    mut sink: futures_util::stream::SplitSink<WebSocket, Message>,
+    mut outbound_rx: mpsc::Receiver<OutboundMessage>,
+) -> tokio::task::JoinHandle<()> {
+    use futures_util::SinkExt;
+    tokio::spawn(async move {
         while let Some(msg) = outbound_rx.recv().await {
             let frame = match msg {
                 OutboundMessage::Text(s) => Message::Text(s),
@@ -182,152 +244,181 @@ async fn handle_socket(
                 break;
             }
         }
-    });
+    })
+}
 
-    // Reader loop — terminates on client disconnect, server close signal,
-    // or stream error. Either way we dispatch $disconnect on the way out.
-    let read_state = state.clone();
-    let read_fn = function_name.clone();
-    let read_id = connection_id.clone();
+/// Step 3 reader loop — terminates on client disconnect, the server close
+/// signal, a stream error (including a frame over the inbound size caps), or
+/// a dispatch outcome that closes the connection. Supervised event-loop
+/// contract (rule 2): awaits every iteration, bounded work per iteration
+/// (one frame → at most one function invocation), exits on the close signal.
+async fn read_loop(
+    ctx: &WsDispatchCtx,
+    conn: &Connection,
+    mut stream: futures_util::stream::SplitStream<WebSocket>,
+    mut close_rx: oneshot::Receiver<()>,
+) {
     loop {
         tokio::select! {
             biased;
             _ = &mut close_rx => break,
             msg = futures_util::StreamExt::next(&mut stream) => {
-                let Some(msg) = msg else { break };
-                let Ok(msg) = msg else { break };
+                let Some(Ok(msg)) = msg else { break };
                 conn.touch();
-                match msg {
+                let outcome = match msg {
                     Message::Text(text) => {
                         let msg_bytes = text.len();
-                        let ev = build_message(&stage, read_id.as_str(), connected_at_ms, Some(text), false);
-                        let start = std::time::Instant::now();
-                        let result = read_state.process_manager
-                            .invoke_generic::<_, ApiGatewayProxyResponse>(&read_fn, &ev, timeout_ms)
-                            .await;
-                        let latency = start.elapsed().as_secs_f64() * 1000.0;
-                        match result {
-                            Ok(resp) => {
-                                let healthy = resp.status_code < 500;
-                                read_state.riz_state
-                                    .record_invocation(&read_fn, latency, healthy, false)
-                                    .await;
-                                read_state.push_log(
-                                    "INFO",
-                                    Some(&read_fn),
-                                    format!(
-                                        "WS $default {} {:.0}ms conn={} bytes={msg_bytes} fn={read_fn}",
-                                        resp.status_code, latency, read_id
-                                    ),
-                                );
-                            }
-                            Err(PoolError::Timeout(ref name, ms)) => {
-                                read_state.riz_state.record_invocation(&read_fn, latency, false, false).await;
-                                read_state.push_log("WARN", Some(name), format!("WS $default timeout {ms}ms conn={read_id} fn={name}"));
-                                warn!(function = %name, timeout_ms = ms, "ws $default timed out — closing connection");
-                                break;
-                            }
-                            Err(PoolError::InvalidResponse(ref name, ref detail)) => {
-                                read_state.riz_state.record_invocation(&read_fn, latency, false, false).await;
-                                read_state.push_log("ERROR", Some(name), format!("WS $default malformed conn={read_id} fn={name}: {detail}"));
-                                warn!(function = %name, detail = %detail, "ws $default malformed response — closing connection");
-                                break;
-                            }
-                            Err(PoolError::SemaphoreExhausted(ref name)) => {
-                                read_state.push_log("WARN", Some(name), format!("WS $default backpressure conn={read_id} fn={name}"));
-                                warn!(function = %name, "ws $default semaphore exhausted (transient backpressure)");
-                                // keep connection open — transient backpressure
-                            }
-                            Err(e) => {
-                                read_state.riz_state.record_invocation(&read_fn, latency, false, false).await;
-                                read_state.push_log("ERROR", Some(&read_fn), format!("WS $default error conn={read_id} fn={read_fn}: {e}"));
-                                warn!("ws $default dispatch error on {read_fn}: {e}");
-                            }
-                        }
+                        dispatch_inbound(ctx, text, false, msg_bytes).await
                     }
                     Message::Binary(bytes) => {
                         use base64::Engine;
                         let msg_bytes = bytes.len();
                         let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                        let ev = build_message(&stage, read_id.as_str(), connected_at_ms, Some(b64), true);
-                        let start = std::time::Instant::now();
-                        let result = read_state.process_manager
-                            .invoke_generic::<_, ApiGatewayProxyResponse>(&read_fn, &ev, timeout_ms)
-                            .await;
-                        let latency = start.elapsed().as_secs_f64() * 1000.0;
-                        match result {
-                            Ok(resp) => {
-                                let healthy = resp.status_code < 500;
-                                read_state.riz_state
-                                    .record_invocation(&read_fn, latency, healthy, false)
-                                    .await;
-                                read_state.push_log(
-                                    "INFO",
-                                    Some(&read_fn),
-                                    format!(
-                                        "WS $default(bin) {} {:.0}ms conn={} bytes={msg_bytes} fn={read_fn}",
-                                        resp.status_code, latency, read_id
-                                    ),
-                                );
-                            }
-                            Err(PoolError::Timeout(ref name, ms)) => {
-                                read_state.riz_state.record_invocation(&read_fn, latency, false, false).await;
-                                read_state.push_log("WARN", Some(name), format!("WS $default(bin) timeout {ms}ms conn={read_id} fn={name}"));
-                                warn!(function = %name, timeout_ms = ms, "ws $default (binary) timed out — closing connection");
-                                break;
-                            }
-                            Err(PoolError::InvalidResponse(ref name, ref detail)) => {
-                                read_state.riz_state.record_invocation(&read_fn, latency, false, false).await;
-                                read_state.push_log("ERROR", Some(name), format!("WS $default(bin) malformed conn={read_id} fn={name}: {detail}"));
-                                warn!(function = %name, detail = %detail, "ws $default (binary) malformed response — closing connection");
-                                break;
-                            }
-                            Err(PoolError::SemaphoreExhausted(ref name)) => {
-                                read_state.push_log("WARN", Some(name), format!("WS $default(bin) backpressure conn={read_id} fn={name}"));
-                                warn!(function = %name, "ws $default (binary) semaphore exhausted (transient backpressure)");
-                            }
-                            Err(e) => {
-                                read_state.riz_state.record_invocation(&read_fn, latency, false, false).await;
-                                read_state.push_log("ERROR", Some(&read_fn), format!("WS $default(bin) error conn={read_id} fn={read_fn}: {e}"));
-                                warn!("ws $default (binary) dispatch error on {read_fn}: {e}");
-                            }
-                        }
+                        dispatch_inbound(ctx, b64, true, msg_bytes).await
                     }
-                    Message::Close(_) => break,
-                    Message::Ping(_) | Message::Pong(_) => {} // axum auto-pongs
+                    Message::Close(_) => InboundOutcome::Close,
+                    Message::Ping(_) | Message::Pong(_) => InboundOutcome::KeepOpen, // axum auto-pongs
+                };
+                if matches!(outcome, InboundOutcome::Close) {
+                    break;
                 }
             }
         }
     }
+}
 
-    // 4. Dispatch $disconnect (best-effort), remove from store, wait for writer.
-    let disc_evt = build_disconnect(&stage, read_id.as_str(), connected_at_ms);
-    let disc_start = std::time::Instant::now();
-    let disc_result = state
+/// Dispatch one inbound frame as a `$default` event and translate the result
+/// into keep-open/close. Text and binary frames get identical handling — the
+/// only differences are the log label and the base64 flag on the event.
+async fn dispatch_inbound(
+    ctx: &WsDispatchCtx,
+    payload: String,
+    is_binary: bool,
+    msg_bytes: usize,
+) -> InboundOutcome {
+    let label = if is_binary {
+        "$default(bin)"
+    } else {
+        "$default"
+    };
+    let ev = build_message(
+        &ctx.stage,
+        ctx.connection_id.as_str(),
+        ctx.connected_at_ms,
+        Some(payload),
+        is_binary,
+    );
+    let start = std::time::Instant::now();
+    let result = ctx
+        .state
         .process_manager
-        .invoke_generic::<_, ApiGatewayProxyResponse>(&function_name, &disc_evt, timeout_ms)
+        .invoke_generic::<_, ApiGatewayProxyResponse>(&ctx.function_name, &ev, ctx.timeout_ms)
+        .await;
+    let latency = start.elapsed().as_secs_f64() * 1000.0;
+    let conn_id = &ctx.connection_id;
+    let fn_name = &ctx.function_name;
+    let resp = match result {
+        Ok(resp) => resp,
+        Err(e) => {
+            // One decision table instead of four near-identical arms:
+            // (log level, log message, records an invocation, closes).
+            // Timeout / malformed close the connection; backpressure keeps
+            // it open without recording (the invocation never ran); every
+            // other error keeps it open but records the failure.
+            let (level, message, records, closes) = match &e {
+                PoolError::Timeout(name, ms) => (
+                    "WARN",
+                    format!("WS {label} timeout {ms}ms conn={conn_id} fn={name}"),
+                    true,
+                    true,
+                ),
+                PoolError::InvalidResponse(name, detail) => (
+                    "ERROR",
+                    format!("WS {label} malformed conn={conn_id} fn={name}: {detail}"),
+                    true,
+                    true,
+                ),
+                PoolError::SemaphoreExhausted(name) => (
+                    "WARN",
+                    format!("WS {label} backpressure conn={conn_id} fn={name}"),
+                    false,
+                    false,
+                ),
+                _ => (
+                    "ERROR",
+                    format!("WS {label} error conn={conn_id} fn={fn_name}: {e}"),
+                    true,
+                    false,
+                ),
+            };
+            if records {
+                ctx.state
+                    .riz_state
+                    .record_invocation(fn_name, latency, false, false)
+                    .await;
+            }
+            warn!(function = %fn_name, closes, "ws {label} dispatch failed: {e}");
+            ctx.state.push_log(level, Some(fn_name), message);
+            return if closes {
+                InboundOutcome::Close
+            } else {
+                InboundOutcome::KeepOpen
+            };
+        }
+    };
+    let healthy = resp.status_code < 500;
+    ctx.state
+        .riz_state
+        .record_invocation(fn_name, latency, healthy, false)
+        .await;
+    ctx.state.push_log(
+        "INFO",
+        Some(fn_name),
+        format!(
+            "WS {label} {} {latency:.0}ms conn={conn_id} bytes={msg_bytes} fn={fn_name}",
+            resp.status_code
+        ),
+    );
+    InboundOutcome::KeepOpen
+}
+
+/// Step 4: dispatch `$disconnect` (best-effort), remove the connection from
+/// the store, queue a final Close frame, and give the writer a bounded window
+/// to flush before aborting it.
+async fn teardown(
+    ctx: &WsDispatchCtx,
+    conn: Arc<Connection>,
+    outbound_local: mpsc::Sender<OutboundMessage>,
+    writer: tokio::task::JoinHandle<()>,
+) {
+    let disc_evt = build_disconnect(&ctx.stage, ctx.connection_id.as_str(), ctx.connected_at_ms);
+    let disc_start = std::time::Instant::now();
+    let disc_result = ctx
+        .state
+        .process_manager
+        .invoke_generic::<_, ApiGatewayProxyResponse>(&ctx.function_name, &disc_evt, ctx.timeout_ms)
         .await;
     let disc_latency = disc_start.elapsed().as_secs_f64() * 1000.0;
     let (disc_status, disc_healthy) = match &disc_result {
         Ok(r) => (r.status_code, r.status_code < 500),
         Err(_) => (0i64, false),
     };
-    state
+    ctx.state
         .riz_state
-        .record_invocation(&function_name, disc_latency, disc_healthy, false)
+        .record_invocation(&ctx.function_name, disc_latency, disc_healthy, false)
         .await;
-    state.push_log(
+    ctx.state.push_log(
         "INFO",
-        Some(&function_name),
+        Some(&ctx.function_name),
         format!(
-            "WS $disconnect {disc_status} {disc_latency:.0}ms conn={} fn={function_name}",
-            read_id
+            "WS $disconnect {disc_status} {disc_latency:.0}ms conn={} fn={}",
+            ctx.connection_id, ctx.function_name
         ),
     );
 
     // Remove from store — this drops the Arc<Connection> held by the store,
     // but `conn` (this task) and `outbound_local` still hold sender references.
-    state.ws_connections.remove(&read_id);
+    ctx.state.ws_connections.remove(&ctx.connection_id);
 
     // Queue a Close frame so the writer sends a clean WebSocket close to the
     // client (idempotent: if management API already queued one, it drains first).
@@ -342,19 +433,22 @@ async fn handle_socket(
     drop(outbound_local);
     drop(conn);
 
-    // Wait up to 5 s for the writer to flush queued messages and exit cleanly.
-    // Fall back to abort() only on timeout — clients see CLOSE instead of RST.
-    let writer_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    // Wait up to WRITER_FLUSH_TIMEOUT for the writer to flush queued messages
+    // and exit cleanly. Fall back to abort() only on timeout — clients see
+    // CLOSE instead of RST.
     tokio::pin!(writer);
     tokio::select! {
         _ = &mut writer => {}
-        _ = tokio::time::sleep_until(writer_deadline) => {
-            warn!("ws writer task timed out for {} — aborting", read_id);
+        _ = tokio::time::sleep(WRITER_FLUSH_TIMEOUT) => {
+            warn!("ws writer task timed out for {} — aborting", ctx.connection_id);
             writer.abort();
         }
     }
 
-    info!("ws disconnected: {} (function {})", read_id, function_name);
+    info!(
+        "ws disconnected: {} (function {})",
+        ctx.connection_id, ctx.function_name
+    );
 }
 
 /// Parse a raw query string ("a=1&b=hello%20world&flag") into single-value,

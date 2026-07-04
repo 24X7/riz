@@ -101,6 +101,10 @@ tokio-util = { version = "0.7", features = ["io"] }
 httpdate = "1"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 subtle = "2"
+# Already in the tree (transitively, several times over) — named for the auth
+# cache key: the credential digest must be a cryptographic hash, since a
+# collision between two Authorization headers would alias a cached ALLOW.
+sha2 = "0.10"
 jsonwebtoken = "9"
 # "stream" powers SSE consumption (tests read /_riz/mcp event streams; the
 # gateway will proxy upstream token streams with it later).
