@@ -69,7 +69,8 @@ claude mcp add riz-local --transport http http://localhost:3000/_riz/mcp
 | **Agent Card** | `/.well-known/agent-card.json` — identity, endpoint, capabilities, one skill per allowlisted function (derived live) |
 | **Endpoint** | `POST /_riz/a2a` — JSON-RPC: `SendMessage` · `SendStreamingMessage` (SSE: live status + artifact events) · `GetTask` · `CancelTask` (0.x aliases accepted); bearer-gated |
 | **The brain** | Delegated tasks run a server-side agent loop: the configured gateway `model` reasons with this instance's own functions as tools — the same typed MCP tools (WebSocket sessions included), metered + `budget_usd`-capped |
-| **Offline proof** | The deterministic mock provider drives delegate → reason → act → answer in CI with zero keys |
+| **The mesh (client)** | `[agent.peers]` name→URL entries become `delegate_to_<name>` tools — riz delegating to riz; `riz-a2a-hop` header + `max_hops` stop delegation loops |
+| **Offline proof** | The deterministic mock provider drives delegate → reason → act → answer in CI with zero keys — including a two-instance mesh e2e |
 
 ---
 
@@ -133,6 +134,7 @@ This measures the riz dispatch path (routing + process pool bridge). Real throug
 | `riz mcp inspect` | `initialize` + `tools/list` one-screen report |
 | `riz deploy` | S3 hot-swap — in-flight requests drain over 30 s, new pool promoted atomically, auto health-check rollback |
 | `riz doctor` | Preflight environment check |
+| `riz a2a send <url> "msg"` | Delegate one task to any A2A server (card-discovered endpoint) and print the completed task |
 
 ---
 

@@ -142,6 +142,7 @@ handler = <span class="s">"./index.lookupOrder"</span>
         <ul class="facts" style="margin-top:1rem">
           <li>The agent wields the exact typed MCP tools external clients see — HTTP and WebSocket session tools alike</li>
           <li><b>Live streaming</b>: <code>SendStreamingMessage</code> answers as SSE — the Task snapshot, status updates as the loop progresses, artifact events, and a <code>final: true</code> close</li>
+          <li><b>The mesh</b>: <code>[agent.peers]</code> exposes other A2A agents as <code>delegate_to_&lt;name&gt;</code> tools — riz delegating to riz, with <code>riz-a2a-hop</code> loop protection capped at <code>max_hops</code></li>
           <li>Every model call is metered: FinOps ledger, <code>budget_usd</code>, OTel GenAI spans</li>
           <li>Deterministic offline: the mock provider drives delegate → reason → act → answer in CI, zero keys</li>
         </ul>
@@ -149,6 +150,8 @@ handler = <span class="s">"./index.lookupOrder"</span>
           <span class="tag">proof</span>
           <span><code>send_message_runs_the_agent_loop_to_completion</code> ·
           <code>send_streaming_message_emits_status_and_artifact_events</code> ·
+          <code>front_desk_delegates_to_warehouse_and_answers</code> ·
+          <code>self_peering_agent_terminates_at_hop_cap</code> ·
           <code>agent_card_is_served_with_allowlisted_skills</code></span>
         </div>
       </div>
@@ -166,6 +169,9 @@ name = <span class="s">"shop-support"</span>
 model = <span class="s">"anthropic/claude-sonnet-5"</span>
 system_prompt = <span class="s">"You are a concise support agent."</span>
 tools = [<span class="s">"orders"</span>]              <span class="c"># omit = all functions</span>
+
+<span class="k">[agent.peers]</span>                     <span class="c"># the mesh: peers become</span>
+warehouse = <span class="s">"http://wh:3000"</span>      <span class="c"># delegate_to_warehouse tools</span>
 
 <span class="k">[function.orders]</span>
 runtime = <span class="s">"bun"</span>

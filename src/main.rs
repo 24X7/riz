@@ -87,6 +87,12 @@ enum Commands {
         #[command(subcommand)]
         cmd: McpCmd,
     },
+    /// A2A utilities — talk to any agent2agent server (a riz [agent] or any
+    /// other A2A implementation).
+    A2a {
+        #[command(subcommand)]
+        cmd: A2aCmd,
+    },
     /// Pre-flight diagnostic: validates riz.toml, checks runtime binaries
     /// (bun / python3), confirms each function's handler file is present,
     /// probes the configured port, and (if riz is already running) pings
@@ -161,6 +167,24 @@ enum ScaffoldCmd {
         /// Overwrite existing generated files.
         #[arg(long)]
         force: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum A2aCmd {
+    /// SendMessage to an A2A server and print the resulting task — state,
+    /// answer artifact, and task id. `<base>` is the server root (e.g.
+    /// `http://localhost:3000`); the endpoint is discovered from its Agent
+    /// Card, falling back to `<base>/_riz/a2a`.
+    Send {
+        /// A2A server base URL.
+        base: String,
+        /// The message text to delegate.
+        message: String,
+        /// Bearer token for auth-gated endpoints. Reads $RIZ_AUTH_BEARER_TOKEN
+        /// when omitted.
+        #[arg(long)]
+        bearer: Option<String>,
     },
 }
 
@@ -354,6 +378,67 @@ fn print_next_steps(spec: &str, target: &std::path::Path) {
 /// a human-readable report. Intended as a self-validation step before
 /// pointing Claude / Cursor / any MCP client at the server — surfaces
 /// auth, transport, and tool-registration problems in one place.
+/// `riz a2a send <base> <message>` — delegate one task and print the result.
+async fn run_a2a_send(base: &str, message: &str, bearer: Option<&str>) -> anyhow::Result<()> {
+    let base = base.trim_end_matches('/');
+    let client = reqwest::Client::new();
+
+    // Discover the endpoint from the Agent Card; fall back to the riz path.
+    let endpoint = match client
+        .get(format!("{base}/.well-known/agent-card.json"))
+        .timeout(std::time::Duration::from_secs(3))
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            let card: serde_json::Value = resp.json().await.unwrap_or_default();
+            if let Some(name) = card["name"].as_str() {
+                println!(
+                    "agent: {name} — {}",
+                    card["description"].as_str().unwrap_or("")
+                );
+            }
+            card["url"]
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("{base}/_riz/a2a"))
+        }
+        _ => format!("{base}/_riz/a2a"),
+    };
+
+    let body = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "SendMessage",
+        "params": { "message": {
+            "kind": "message", "role": "user",
+            "messageId": uuid::Uuid::new_v4().to_string(),
+            "parts": [{ "kind": "text", "text": message }],
+        }}
+    });
+    let mut req = client.post(&endpoint).json(&body);
+    if let Some(tok) = bearer {
+        req = req.bearer_auth(tok);
+    }
+    let v: serde_json::Value = req.send().await?.json().await?;
+    if let Some(err) = v.get("error").filter(|e| !e.is_null()) {
+        anyhow::bail!(
+            "a2a error {}: {}",
+            err["code"],
+            err["message"].as_str().unwrap_or("")
+        );
+    }
+    let task = &v["result"];
+    let state = task["status"]["state"].as_str().unwrap_or("?");
+    println!("task:  {}", task["id"].as_str().unwrap_or("?"));
+    println!("state: {state}");
+    if let Some(answer) = task["artifacts"][0]["parts"][0]["text"].as_str() {
+        println!("\n{answer}");
+    }
+    if state != "completed" {
+        anyhow::bail!("task did not complete (state: {state})");
+    }
+    Ok(())
+}
+
 async fn run_mcp_inspect(url: &str, bearer: Option<&str>) -> anyhow::Result<()> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
@@ -958,6 +1043,21 @@ async fn async_main() -> anyhow::Result<()> {
             .clone()
             .or_else(|| std::env::var("RIZ_AUTH_BEARER_TOKEN").ok());
         return run_mcp_inspect(url, token.as_deref()).await;
+    }
+
+    // `riz a2a send` talks to a running A2A server — no config needed.
+    if let Some(Commands::A2a {
+        cmd: A2aCmd::Send {
+            base,
+            message,
+            bearer,
+        },
+    }) = &cli.command
+    {
+        let token = bearer
+            .clone()
+            .or_else(|| std::env::var("RIZ_AUTH_BEARER_TOKEN").ok());
+        return run_a2a_send(base, message, token.as_deref()).await;
     }
 
     // `riz doctor` has its own config-load path that surfaces parse failures

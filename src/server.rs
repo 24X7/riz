@@ -212,6 +212,13 @@ pub fn build_app(state: Arc<AppState>) -> AxumRouter {
                                         {
                                             return resp;
                                         }
+                                        // Mesh chain depth (loop protection):
+                                        // set by a delegating riz peer.
+                                        let hop = headers
+                                            .get("riz-a2a-hop")
+                                            .and_then(|v| v.to_str().ok())
+                                            .and_then(|v| v.parse::<u32>().ok())
+                                            .unwrap_or(0);
                                         // SendStreamingMessage answers as SSE
                                         // (spec §7); everything else is a
                                         // single JSON-RPC response.
@@ -232,7 +239,7 @@ pub fn build_app(state: Arc<AppState>) -> AxumRouter {
                                                 .cloned()
                                                 .unwrap_or(serde_json::json!({}));
                                             return match rt
-                                                .send_streaming(params, rpc_id.clone())
+                                                .send_streaming(params, rpc_id.clone(), hop)
                                                 .await
                                             {
                                                 Ok(stream) => axum::response::sse::Sse::new(stream)
@@ -244,7 +251,7 @@ pub fn build_app(state: Arc<AppState>) -> AxumRouter {
                                                 .into_response(),
                                             };
                                         }
-                                        Json(rt.handle(body.0).await).into_response()
+                                        Json(rt.handle(body.0, hop).await).into_response()
                                     }
                                 },
                             ),

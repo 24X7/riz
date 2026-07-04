@@ -131,6 +131,18 @@ status = "proven"
 proof = "send_message_runs_the_agent_loop_to_completion"
 
 [[claim]]
+id = "a2a-mesh-delegation"
+page_text = "front_desk_delegates_to_warehouse_and_answers"
+status = "proven"
+proof = "front_desk_delegates_to_warehouse_and_answers"
+
+[[claim]]
+id = "a2a-mesh-hop-cap"
+page_text = "self_peering_agent_terminates_at_hop_cap"
+status = "proven"
+proof = "self_peering_agent_terminates_at_hop_cap"
+
+[[claim]]
 id = "a2a-streaming"
 page_text = "send_streaming_message_emits_status_and_artifact_events"
 status = "proven"
