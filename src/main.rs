@@ -1167,6 +1167,10 @@ async fn async_main() -> anyhow::Result<()> {
             return Ok(());
         }
         Some(Commands::Routes) => {
+            // Two origins, obviously different: your functions, then the
+            // system surface riz itself mounts (from the same table the
+            // registry and --dev TUI report).
+            println!("user functions:");
             for (name, f) in &config.functions {
                 let routes: Vec<String> = f
                     .effective_routes(name)
@@ -1174,13 +1178,16 @@ async fn async_main() -> anyhow::Result<()> {
                     .map(|r| format!("{} {}", r.method, r.path))
                     .collect();
                 println!(
-                    "{} [{}] {:?} ({})  routes: {}",
+                    "  {} [{}] {:?}  routes: {}",
                     name,
                     f.runtime.as_str(),
                     f.handler,
-                    f.runtime.as_str(),
                     routes.join(", ")
                 );
+            }
+            println!("\nsystem surface (mounted by riz):");
+            for (name, routes) in system::system_surface(&config) {
+                println!("  {} [system]  routes: {}", name, routes.join(", "));
             }
             return Ok(());
         }
@@ -1239,35 +1246,14 @@ async fn async_main() -> anyhow::Result<()> {
     let riz_state = Arc::new(state::RizState::new());
     let stage = config.server.stage.clone();
     let default_ttl = config.cache.default_ttl_secs;
-    // Register system endpoints first.
-    riz_state
-        .register(state::FunctionState::system(
-            "_riz_health",
-            vec!["GET /_riz/health".into()],
-            &stage,
-        ))
-        .await;
-    riz_state
-        .register(state::FunctionState::system(
-            "_riz_metrics",
-            vec!["GET /_riz/metrics".into()],
-            &stage,
-        ))
-        .await;
-    riz_state
-        .register(state::FunctionState::system(
-            "_riz_registry",
-            vec!["GET /_riz/registry".into()],
-            &stage,
-        ))
-        .await;
-    riz_state
-        .register(state::FunctionState::system(
-            "_riz_mcp",
-            vec!["POST /_riz/mcp".into()],
-            &stage,
-        ))
-        .await;
+    // Register the ENTIRE system surface (probes, /_riz/* admin, and the
+    // conditional gateway/A2A endpoints) from the one shared table — the
+    // --dev TUI, /_riz/registry, and `riz routes` all report the same truth.
+    for (name, routes) in system::system_surface(&config) {
+        riz_state
+            .register(state::FunctionState::system(name, routes, &stage))
+            .await;
+    }
     // Register user functions by name.
     for (name, cfg) in &config.functions {
         riz_state
