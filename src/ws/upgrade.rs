@@ -16,7 +16,7 @@ use tracing::{info, warn};
 use crate::gateway::ApiGatewayProxyResponse;
 use crate::process::PoolError;
 use crate::state::AppState;
-use crate::ws::connection::{Connection, ConnectionId, OutboundMessage};
+use crate::ws::connection::{Connection, ConnectionId, OutboundMessage, OUTBOUND_CAPACITY};
 use crate::ws::event::{build_connect, build_disconnect, build_message};
 
 /// axum handler that gets mounted at the WebSocket function's path.
@@ -133,8 +133,10 @@ async fn handle_socket(
         return;
     }
 
-    // 2. Register connection.
-    let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<OutboundMessage>();
+    // 2. Register connection. Bounded queue (rule 3): the writer drains at
+    //    socket speed; a slow client filling it surfaces as try_send errors
+    //    to pushers instead of unbounded buffering.
+    let (outbound_tx, mut outbound_rx) = mpsc::channel::<OutboundMessage>(OUTBOUND_CAPACITY);
     // Keep a local sender clone so the teardown path can queue a Close frame
     // and then drop both senders, terminating the writer's recv() loop naturally.
     let outbound_local = outbound_tx.clone();
@@ -329,10 +331,14 @@ async fn handle_socket(
 
     // Queue a Close frame so the writer sends a clean WebSocket close to the
     // client (idempotent: if management API already queued one, it drains first).
-    let _ = outbound_local.send(OutboundMessage::Close);
+    // try_send: if the bounded queue is still full of unflushed frames, skip
+    // it — the sender drops below end the writer loop after the drain, and the
+    // client sees a TCP close instead of a WS CLOSE (degraded but bounded;
+    // never block teardown on a slow client).
+    let _ = outbound_local.try_send(OutboundMessage::Close);
 
     // Drop both remaining sender handles (the local clone and the conn Arc) so
-    // the writer's unbounded_channel recv() returns None after draining the queue.
+    // the writer's channel recv() returns None after draining the queue.
     drop(outbound_local);
     drop(conn);
 

@@ -151,14 +151,22 @@ impl ConnectionsHandler {
         let Some(conn) = self.connections.get(id) else {
             return Ok(error_response(410, "connection gone"));
         };
-        if conn
+        // Bounded queue: a full queue means the client isn't draining fast
+        // enough — explicit backpressure to the pusher (429, AWS parity with
+        // PostToConnection's LimitExceededException), never unbounded growth.
+        match conn
             .outbound
-            .send(OutboundMessage::Text(payload.to_string()))
-            .is_err()
+            .try_send(OutboundMessage::Text(payload.to_string()))
         {
-            return Ok(error_response(410, "connection writer closed"));
+            Ok(()) => Ok(empty_response(200)),
+            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => Ok(error_response(
+                429,
+                "connection backlogged: outbound queue full",
+            )),
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                Ok(error_response(410, "connection writer closed"))
+            }
         }
-        Ok(empty_response(200))
     }
 
     fn delete(&self, id: &ConnectionId) -> Result<ApiGatewayV2httpResponse, HandlerError> {
@@ -172,7 +180,9 @@ impl ConnectionsHandler {
         }
         // Queue a Close frame so the writer sends a clean WebSocket CLOSE to
         // the client; the reader and writer now wind down in parallel.
-        let _ = conn.outbound.send(OutboundMessage::Close);
+        // try_send: best-effort (as the discarded result already was) — on a
+        // full queue the reader-exit signal above still tears the socket down.
+        let _ = conn.outbound.try_send(OutboundMessage::Close);
         Ok(empty_response(204))
     }
 }
@@ -193,11 +203,22 @@ mod tests {
         conn_id: &str,
     ) -> (
         ConnectionStore,
-        mpsc::UnboundedReceiver<OutboundMessage>,
+        mpsc::Receiver<OutboundMessage>,
+        oneshot::Receiver<()>,
+    ) {
+        fake_store_with_conn_capacity(conn_id, 8)
+    }
+
+    fn fake_store_with_conn_capacity(
+        conn_id: &str,
+        capacity: usize,
+    ) -> (
+        ConnectionStore,
+        mpsc::Receiver<OutboundMessage>,
         oneshot::Receiver<()>,
     ) {
         let store = ConnectionStore::new();
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(capacity);
         let (close_tx, close_rx) = oneshot::channel();
         store.insert(Arc::new(Connection {
             id: ConnectionId(conn_id.into()),
@@ -306,6 +327,25 @@ mod tests {
         ev.body = Some("hello".into());
         let resp = h.invoke(ev).await.unwrap();
         assert_eq!(resp.status_code, 200);
+    }
+
+    /// Bounded outbound queue (Power of 10 rule 3): a full queue must answer
+    /// 429 — explicit backpressure — instead of buffering without limit.
+    #[tokio::test]
+    async fn post_returns_429_when_outbound_queue_full() {
+        let (store, _rx, _close_rx) = fake_store_with_conn_capacity("c1", 1);
+        let h = ConnectionsHandler::new(store, None);
+        let mut ev = make_event("POST", "/_riz/connections/c1");
+        ev.path_parameters.insert("id".into(), "c1".into());
+        ev.body = Some("fills the queue".into());
+        let resp = h.invoke(ev).await.unwrap();
+        assert_eq!(resp.status_code, 200, "first frame fits");
+
+        let mut ev = make_event("POST", "/_riz/connections/c1");
+        ev.path_parameters.insert("id".into(), "c1".into());
+        ev.body = Some("overflows".into());
+        let resp = h.invoke(ev).await.unwrap();
+        assert_eq!(resp.status_code, 429, "full queue must apply backpressure");
     }
 
     #[tokio::test]

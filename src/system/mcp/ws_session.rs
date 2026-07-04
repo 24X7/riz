@@ -22,7 +22,7 @@ use tokio::sync::mpsc;
 
 use crate::gateway::ApiGatewayProxyResponse;
 use crate::process::ProcessManager;
-use crate::ws::connection::{Connection, ConnectionId, OutboundMessage};
+use crate::ws::connection::{Connection, ConnectionId, OutboundMessage, OUTBOUND_CAPACITY};
 use crate::ws::event::{build_connect, build_disconnect, build_message};
 use crate::ws::ConnectionStore;
 
@@ -132,35 +132,23 @@ impl McpHandler {
             .as_millis() as i64;
 
         // 1. $connect — a non-200 rejects the session, like a real upgrade.
-        let connect_evt = build_connect(
-            &deps.stage,
-            connection_id.as_str(),
+        Self::session_connect(
+            &deps,
+            function_name,
+            &connection_id,
             connected_at_ms,
-            "/",
-            http::HeaderMap::new(),
-            std::collections::HashMap::new(),
-        );
-        let connect_resp: ApiGatewayProxyResponse = deps
-            .process_manager
-            .invoke_generic(function_name, &connect_evt, fn_timeout_ms)
-            .await
-            .map_err(|e| JsonRpcError {
-                code: -32603,
-                message: format!("$connect failed for '{function_name}': {e}"),
-            })?;
-        if connect_resp.status_code != 200 {
-            return Err(JsonRpcError {
-                code: -32603,
-                message: format!(
-                    "'{function_name}' rejected the session: $connect returned {}",
-                    connect_resp.status_code
-                ),
-            });
-        }
+            fn_timeout_ms,
+        )
+        .await?;
 
         // 2. Register the collector-backed connection. Pushes to
         //    /_riz/connections/{id} land in `rx` because this entry is real.
-        let (tx, mut rx) = mpsc::unbounded_channel::<OutboundMessage>();
+        //    Bounded (rule 3): the session drains only after $default returns,
+        //    so a handler pushing more than OUTBOUND_CAPACITY frames in one
+        //    invocation gets 429 from the @connections API — the same explicit
+        //    backpressure a slow real socket applies — and the session reports
+        //    the frames that fit.
+        let (tx, mut rx) = mpsc::channel::<OutboundMessage>(OUTBOUND_CAPACITY);
         let now = Instant::now();
         let conn = Arc::new(Connection {
             id: connection_id.clone(),
@@ -183,19 +171,17 @@ impl McpHandler {
 
         // 3. $default with the message. Pushes made DURING the invocation are
         //    already queued in rx when it returns (same-process HTTP).
-        let msg_evt = build_message(
-            &deps.stage,
-            connection_id.as_str(),
+        let default_status = match Self::session_default(
+            &deps,
+            function_name,
+            &connection_id,
             connected_at_ms,
-            Some(message),
-            false,
-        );
-        let default_result: Result<ApiGatewayProxyResponse, _> = deps
-            .process_manager
-            .invoke_generic(function_name, &msg_evt, fn_timeout_ms)
-            .await;
-        let default_status = match &default_result {
-            Ok(r) => r.status_code,
+            fn_timeout_ms,
+            message,
+        )
+        .await
+        {
+            Ok(status) => status,
             Err(e) => {
                 // Still fire $disconnect below via the guard-less best-effort
                 // call, then surface the dispatch failure.
@@ -207,27 +193,12 @@ impl McpHandler {
                     fn_timeout_ms,
                 )
                 .await;
-                return Err(JsonRpcError {
-                    code: -32603,
-                    message: format!("$default failed for '{function_name}': {e}"),
-                });
+                return Err(e);
             }
         };
 
-        // 4. Collect. Deterministic rule: drain what's queued; if nothing
-        //    arrived by the time the handler returned, wait up to `wait_ms`
-        //    for the FIRST async push, then drain whatever came with it.
-        let mut frames: Vec<serde_json::Value> = Vec::new();
-        let mut closed = false;
-        drain(&mut rx, &mut frames, &mut closed);
-        if frames.is_empty() && !closed {
-            if let Ok(Some(first)) =
-                tokio::time::timeout(Duration::from_millis(wait_ms), rx.recv()).await
-            {
-                push_frame(first, &mut frames, &mut closed);
-                drain(&mut rx, &mut frames, &mut closed);
-            }
-        }
+        // 4. Collect what the handler pushed.
+        let frames = collect_session_frames(&mut rx, wait_ms).await;
 
         // 5. $disconnect — best-effort, always.
         let _ = Self::fire_disconnect(
@@ -255,6 +226,71 @@ impl McpHandler {
         }))
     }
 
+    /// Step 1: dispatch $connect; a non-200 (or a dispatch failure) rejects
+    /// the session, like a real upgrade.
+    async fn session_connect(
+        deps: &WsSessionDeps,
+        function_name: &str,
+        connection_id: &ConnectionId,
+        connected_at_ms: i64,
+        fn_timeout_ms: u64,
+    ) -> Result<(), JsonRpcError> {
+        let connect_evt = build_connect(
+            &deps.stage,
+            connection_id.as_str(),
+            connected_at_ms,
+            "/",
+            http::HeaderMap::new(),
+            std::collections::HashMap::new(),
+        );
+        let connect_resp: ApiGatewayProxyResponse = deps
+            .process_manager
+            .invoke_generic(function_name, &connect_evt, fn_timeout_ms)
+            .await
+            .map_err(|e| JsonRpcError {
+                code: -32603,
+                message: format!("$connect failed for '{function_name}': {e}"),
+            })?;
+        if connect_resp.status_code != 200 {
+            return Err(JsonRpcError {
+                code: -32603,
+                message: format!(
+                    "'{function_name}' rejected the session: $connect returned {}",
+                    connect_resp.status_code
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    /// Step 3: dispatch $default with the message; returns the handler's
+    /// status code.
+    async fn session_default(
+        deps: &WsSessionDeps,
+        function_name: &str,
+        connection_id: &ConnectionId,
+        connected_at_ms: i64,
+        fn_timeout_ms: u64,
+        message: String,
+    ) -> Result<i64, JsonRpcError> {
+        let msg_evt = build_message(
+            &deps.stage,
+            connection_id.as_str(),
+            connected_at_ms,
+            Some(message),
+            false,
+        );
+        let resp: ApiGatewayProxyResponse = deps
+            .process_manager
+            .invoke_generic(function_name, &msg_evt, fn_timeout_ms)
+            .await
+            .map_err(|e| JsonRpcError {
+                code: -32603,
+                message: format!("$default failed for '{function_name}': {e}"),
+            })?;
+        Ok(resp.status_code)
+    }
+
     async fn fire_disconnect(
         deps: &WsSessionDeps,
         function_name: &str,
@@ -269,6 +305,28 @@ impl McpHandler {
     }
 }
 
+/// Step 4 collection. Deterministic rule: drain what's queued; if nothing
+/// arrived by the time the handler returned, wait up to `wait_ms` for the
+/// FIRST async push, then drain whatever came with it. Bounded by the
+/// collector channel's capacity per drain pass.
+async fn collect_session_frames(
+    rx: &mut mpsc::Receiver<OutboundMessage>,
+    wait_ms: u64,
+) -> Vec<serde_json::Value> {
+    let mut frames: Vec<serde_json::Value> = Vec::new();
+    let mut closed = false;
+    drain(rx, &mut frames, &mut closed);
+    if frames.is_empty() && !closed {
+        if let Ok(Some(first)) =
+            tokio::time::timeout(Duration::from_millis(wait_ms), rx.recv()).await
+        {
+            push_frame(first, &mut frames, &mut closed);
+            drain(rx, &mut frames, &mut closed);
+        }
+    }
+    frames
+}
+
 fn push_frame(msg: OutboundMessage, frames: &mut Vec<serde_json::Value>, closed: &mut bool) {
     match msg {
         OutboundMessage::Text(s) => frames.push(serde_json::Value::String(s)),
@@ -280,7 +338,7 @@ fn push_frame(msg: OutboundMessage, frames: &mut Vec<serde_json::Value>, closed:
 }
 
 fn drain(
-    rx: &mut mpsc::UnboundedReceiver<OutboundMessage>,
+    rx: &mut mpsc::Receiver<OutboundMessage>,
     frames: &mut Vec<serde_json::Value>,
     closed: &mut bool,
 ) {
