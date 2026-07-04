@@ -297,6 +297,107 @@ async fn range_request_returns_206() {
     assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
 }
 
+/// Adversarial Range headers: values at and beyond u64::MAX must answer 416
+/// — never panic, never wrap. Pins the checked range math in
+/// `parse_single_range` (Power of 10, rule 5).
+#[tokio::test]
+async fn extreme_range_values_return_416_not_panic() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("v.bin"), b"0123456789").unwrap();
+    let cfg = static_cfg(dir.path(), "");
+
+    for spec in [
+        "bytes=18446744073709551615-",                     // start = u64::MAX
+        "bytes=18446744073709551615-18446744073709551615", // both = u64::MAX
+        "bytes=0-99999999999999999999999999",              // end > u64::MAX
+        "bytes=99999999999999999999999999-",               // start > u64::MAX
+        "bytes=-18446744073709551616",                     // suffix > u64::MAX
+        "bytes=9-0",                                       // inverted
+    ] {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::RANGE, HeaderValue::from_str(spec).unwrap());
+        let resp = serve(Method::GET, "/v.bin", headers, &cfg)
+            .await
+            .expect("served");
+        assert_eq!(
+            resp.status(),
+            StatusCode::RANGE_NOT_SATISFIABLE,
+            "{spec}: expected 416"
+        );
+    }
+}
+
+/// A suffix range longer than the file serves the whole file (the RFC 9110
+/// saturating semantic), even at u64::MAX.
+#[tokio::test]
+async fn oversized_suffix_range_serves_whole_file() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("v.bin"), b"0123456789").unwrap();
+    let cfg = static_cfg(dir.path(), "");
+
+    for spec in ["bytes=-9999999", "bytes=-18446744073709551615"] {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::RANGE, HeaderValue::from_str(spec).unwrap());
+        let resp = serve(Method::GET, "/v.bin", headers, &cfg)
+            .await
+            .expect("served");
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT, "{spec}");
+        assert_eq!(
+            resp.headers()
+                .get(header::CONTENT_RANGE)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "bytes 0-9/10",
+            "{spec}"
+        );
+        assert_eq!(body_bytes(resp).await, b"0123456789");
+    }
+}
+
+/// An operator-supplied Cache-Control string that is not a legal header
+/// value degrades to an empty 500 — the request task must never panic on a
+/// response-builder error (Power of 10, rule 7), and the bad value must not
+/// smuggle extra headers into the response.
+#[tokio::test]
+async fn malformed_cache_control_config_returns_500_not_panic() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("page.html"), "<h1>hi</h1>").unwrap();
+    let mut cfg = static_cfg(dir.path(), "");
+    cfg.cache_html = "no-cache\r\nX-Injected: 1".to_string();
+
+    let (m, p, h) = get("/page.html");
+    let resp = serve(m, p, h, &cfg).await.expect("served");
+    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        resp.headers().get("X-Injected").is_none(),
+        "malformed config value must not smuggle a header"
+    );
+    assert!(body_bytes(resp).await.is_empty());
+}
+
+/// Last-Modified must stay a valid IMF-fixdate after the switch to the
+/// `httpdate` crate (round-trips through its own strict parser).
+#[tokio::test]
+async fn last_modified_is_valid_imf_fixdate() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("app.js"), b"x").unwrap();
+    let cfg = static_cfg(dir.path(), "");
+
+    let (m, p, h) = get("/app.js");
+    let resp = serve(m, p, h, &cfg).await.expect("served");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let lm = resp
+        .headers()
+        .get(header::LAST_MODIFIED)
+        .expect("Last-Modified present")
+        .to_str()
+        .unwrap()
+        .to_string();
+    httpdate::parse_http_date(&lm).expect("valid RFC 9110 IMF-fixdate");
+    assert!(lm.ends_with(" GMT"), "IMF-fixdate is always GMT: {lm}");
+}
+
 // ───────────────────────────── large files (streamed) ───────────────────────
 // Large assets are streamed to the socket, not buffered whole per request —
 // these pin byte-exact correctness across the streaming path's internal

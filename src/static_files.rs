@@ -144,24 +144,23 @@ fn resolve(dir: &Path, rel: &str) -> Resolved {
 }
 
 /// Minimal, strict percent-decoder: returns `None` on malformed `%`.
+///
+/// Iterator-driven so the loop is structurally bounded by the input length
+/// (rule 2) with no index arithmetic. `out` grows at most to `s.len()`, which
+/// is itself bounded by hyper's request-head cap (rule 3).
 fn percent_decode(s: &str) -> Option<String> {
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'%' => {
-                let h = bytes.get(i + 1)?;
-                let l = bytes.get(i + 2)?;
-                let hi = (*h as char).to_digit(16)?;
-                let lo = (*l as char).to_digit(16)?;
-                out.push((hi * 16 + lo) as u8);
-                i += 3;
-            }
-            b => {
-                out.push(b);
-                i += 1;
-            }
+    let mut out = Vec::with_capacity(s.len());
+    let mut bytes = s.bytes();
+    while let Some(b) = bytes.next() {
+        if b == b'%' {
+            let hi = (bytes.next()? as char).to_digit(16)?;
+            let lo = (bytes.next()? as char).to_digit(16)?;
+            // hi/lo are hex digits (≤ 15), so hi·16 + lo ≤ 255: the checked
+            // forms cannot fail here — they keep the bound explicit (rule 5).
+            let byte = u8::try_from(hi.checked_mul(16)?.checked_add(lo)?).ok()?;
+            out.push(byte);
+        } else {
+            out.push(b);
         }
     }
     String::from_utf8(out).ok()
@@ -190,10 +189,11 @@ async fn file_response(
 
     // Conditional request → 304 (no body), keeping validators.
     if not_modified(req_headers, &etag) {
-        return build(StatusCode::NOT_MODIFIED, &ctype, &cache, &etag, mtime)
-            .header(http::header::CONTENT_LENGTH, "0")
-            .body(Body::empty())
-            .unwrap();
+        return finish(
+            build(StatusCode::NOT_MODIFIED, &ctype, &cache, &etag, mtime)
+                .header(http::header::CONTENT_LENGTH, "0"),
+            Body::empty(),
+        );
     }
 
     // Precompressed sibling (path.br / path.gz) when allowed.
@@ -221,33 +221,34 @@ async fn file_response(
             .and_then(|v| v.to_str().ok())
         {
             match parse_single_range(range, total) {
-                Some((start, end)) => {
+                Some((start, end, len)) => {
                     let b = build(StatusCode::PARTIAL_CONTENT, &ctype, &cache, &etag, mtime)
                         .header(http::header::ACCEPT_RANGES, "bytes")
                         .header(
                             http::header::CONTENT_RANGE,
                             format!("bytes {start}-{end}/{total}"),
                         )
-                        .header(http::header::CONTENT_LENGTH, (end - start + 1).to_string());
+                        .header(http::header::CONTENT_LENGTH, len.to_string());
                     if is_head {
-                        return b.body(Body::empty()).unwrap();
+                        return finish(b, Body::empty());
                     }
-                    return match open_range(&read_path, start, end).await {
-                        Some(stream) => b.body(Body::from_stream(stream)).unwrap(),
+                    return match open_range(&read_path, start, len).await {
+                        Some(stream) => finish(b, Body::from_stream(stream)),
                         None => not_found(cfg, is_head).await,
                     };
                 }
                 None => {
-                    return build(
-                        StatusCode::RANGE_NOT_SATISFIABLE,
-                        &ctype,
-                        &cache,
-                        &etag,
-                        mtime,
-                    )
-                    .header(http::header::CONTENT_RANGE, format!("bytes */{total}"))
-                    .body(Body::empty())
-                    .unwrap();
+                    return finish(
+                        build(
+                            StatusCode::RANGE_NOT_SATISFIABLE,
+                            &ctype,
+                            &cache,
+                            &etag,
+                            mtime,
+                        )
+                        .header(http::header::CONTENT_RANGE, format!("bytes */{total}")),
+                        Body::empty(),
+                    );
                 }
             }
         }
@@ -262,33 +263,49 @@ async fn file_response(
             .header(http::header::VARY, "Accept-Encoding");
     }
     if is_head {
-        return b.body(Body::empty()).unwrap();
+        return finish(b, Body::empty());
     }
     match tokio::fs::File::open(&read_path).await {
-        Ok(file) => b
-            .body(Body::from_stream(
-                tokio_util::io::ReaderStream::with_capacity(file, STREAM_CHUNK),
-            ))
-            .unwrap(),
+        Ok(file) => finish(
+            b,
+            Body::from_stream(tokio_util::io::ReaderStream::with_capacity(
+                file,
+                STREAM_CHUNK,
+            )),
+        ),
         Err(_) => not_found(cfg, is_head).await,
     }
+}
+
+/// Finalize a response builder. The only way the `http` builder fails here is
+/// a header value that is not legal HTTP — e.g. an operator-supplied
+/// `Cache-Control` string containing control characters. Rule 7: a request
+/// path recovers (empty 500) rather than panicking the connection task; the
+/// body stays empty so a HEAD fallback is still well-formed.
+fn finish(b: http::response::Builder, body: Body) -> Response {
+    b.body(body).unwrap_or_else(|_| {
+        let mut r = Response::new(Body::empty());
+        *r.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+        r
+    })
 }
 
 /// Streaming chunk size: large enough to amortize syscalls on big assets,
 /// small enough to keep per-connection memory flat.
 const STREAM_CHUNK: usize = 64 * 1024;
 
-/// Open `path`, seek to `start`, and stream exactly `end - start + 1` bytes.
+/// Open `path`, seek to `start`, and stream exactly `len` bytes (the length
+/// is computed once, checked, in `parse_single_range`).
 async fn open_range(
     path: &Path,
     start: u64,
-    end: u64,
+    len: u64,
 ) -> Option<tokio_util::io::ReaderStream<tokio::io::Take<tokio::fs::File>>> {
     use tokio::io::{AsyncReadExt, AsyncSeekExt};
     let mut file = tokio::fs::File::open(path).await.ok()?;
     file.seek(std::io::SeekFrom::Start(start)).await.ok()?;
     Some(tokio_util::io::ReaderStream::with_capacity(
-        file.take(end - start + 1),
+        file.take(len),
         STREAM_CHUNK,
     ))
 }
@@ -306,7 +323,11 @@ fn build(
         .header(http::header::CACHE_CONTROL, cache)
         .header(http::header::ETAG, etag);
     if mtime > 0 {
-        b = b.header(http::header::LAST_MODIFIED, httpdate(mtime));
+        // `checked_add` guards the (theoretical) SystemTime overflow — a file
+        // claiming an mtime that far out simply omits Last-Modified.
+        if let Some(t) = std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(mtime)) {
+            b = b.header(http::header::LAST_MODIFIED, httpdate::fmt_http_date(t));
+        }
     }
     b
 }
@@ -320,9 +341,9 @@ async fn not_found(cfg: &StaticConfig, is_head: bool) -> Response {
                 .header(http::header::CONTENT_TYPE, content_type(&p))
                 .header(http::header::CACHE_CONTROL, &cfg.cache_html);
             if is_head {
-                return b.body(Body::empty()).unwrap();
+                return finish(b, Body::empty());
             }
-            return b.body(Body::from(bytes)).unwrap();
+            return finish(b, Body::from(bytes));
         }
     }
     let body = if is_head {
@@ -330,11 +351,12 @@ async fn not_found(cfg: &StaticConfig, is_head: bool) -> Response {
     } else {
         Body::from("404 not found")
     };
-    Response::builder()
-        .status(StatusCode::NOT_FOUND)
-        .header(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")
-        .body(body)
-        .unwrap()
+    finish(
+        Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .header(http::header::CONTENT_TYPE, "text/plain; charset=utf-8"),
+        body,
+    )
 }
 
 fn not_modified(req: &HeaderMap, etag: &str) -> bool {
@@ -443,12 +465,16 @@ fn accepts_html(req: &HeaderMap) -> bool {
         .unwrap_or(false)
 }
 
-/// Parse a single `bytes=start-end` range. Returns the inclusive (start, end)
-/// or `None` if malformed/unsatisfiable. Only one range is supported.
-fn parse_single_range(header: &str, total: u64) -> Option<(u64, u64)> {
+/// Parse a single `bytes=start-end` range against a `total` file size.
+/// Returns the inclusive `(start, end)` plus the byte length to serve, or
+/// `None` if malformed/unsatisfiable (the caller answers 416). Only one
+/// range is supported. All arithmetic on these remote-controlled values is
+/// checked (rule 5): an overflowing spec is rejected, never wrapped.
+fn parse_single_range(header: &str, total: u64) -> Option<(u64, u64, u64)> {
     if total == 0 {
         return None;
     }
+    let last = total.checked_sub(1)?; // total > 0 above, cannot fail
     let spec = header.strip_prefix("bytes=")?;
     if spec.contains(',') {
         return None; // multi-range unsupported → treat as unsatisfiable
@@ -457,20 +483,25 @@ fn parse_single_range(header: &str, total: u64) -> Option<(u64, u64)> {
     let (start, end) = match (a.trim(), b.trim()) {
         ("", "") => return None,
         ("", n) => {
-            // suffix: last N bytes
+            // suffix: last N bytes — saturating is the RFC 9110 semantic
+            // (a suffix longer than the file means the whole file).
             let n: u64 = n.parse().ok()?;
             if n == 0 {
                 return None;
             }
-            (total.saturating_sub(n), total - 1)
+            (total.saturating_sub(n), last)
         }
-        (s, "") => (s.parse().ok()?, total - 1),
+        (s, "") => (s.parse().ok()?, last),
         (s, e) => (s.parse().ok()?, e.parse().ok()?),
     };
-    if start > end || end >= total {
+    if start > end || end > last {
         return None;
     }
-    Some((start, end))
+    // Inclusive range ⇒ len = end − start + 1. In range because end ≥ start
+    // and end < total ≤ u64::MAX, but stays checked so a future edit cannot
+    // reintroduce a wrap.
+    let len = end.checked_sub(start)?.checked_add(1)?;
+    Some((start, end, len))
 }
 
 /// Extension → Content-Type. Dependency-free; covers the web set + the types
@@ -519,35 +550,45 @@ fn content_type(path: &Path) -> String {
     }
 }
 
-/// RFC 7231 IMF-fixdate from a unix timestamp (for `Last-Modified`).
-fn httpdate(secs: u64) -> String {
-    // days since epoch → civil date (Howard Hinnant's algorithm)
-    let days = (secs / 86400) as i64;
-    let rem = secs % 86400;
-    let (h, mi, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
-    let dow = ((days % 7 + 4) % 7 + 7) % 7; // 1970-01-01 = Thursday(4)
-    let z = days + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = if m <= 2 { y + 1 } else { y };
-    const DOW: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const MON: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
-    format!(
-        "{}, {:02} {} {} {:02}:{:02}:{:02} GMT",
-        DOW[dow as usize],
-        d,
-        MON[(m - 1) as usize],
-        year,
-        h,
-        mi,
-        s
-    )
+// `Last-Modified` formatting (RFC 9110 IMF-fixdate) is `httpdate` — the same
+// crate hyper already links for its `Date` header, so no new tree weight; it
+// replaced a hand-rolled civil-date routine whose unchecked calendar
+// arithmetic sat in a remote-facing response path (rules 5 and 9).
+
+#[cfg(test)]
+mod proptest_tests {
+    use super::parse_single_range;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Rules 5/10: range parsing must never panic, and any accepted range
+        /// must be in-bounds and internally consistent — for ANY header bytes
+        /// and ANY file size.
+        #[test]
+        fn parse_single_range_never_panics_and_stays_in_bounds(
+            header in ".{0,64}",
+            total in any::<u64>(),
+        ) {
+            if let Some((start, end, len)) = parse_single_range(&header, total) {
+                prop_assert!(start <= end);
+                prop_assert!(end < total);
+                prop_assert_eq!(len, end - start + 1);
+            }
+        }
+
+        /// Adversarially range-shaped headers: numeric strings up to 25
+        /// digits (well past u64::MAX) on either side of the dash.
+        #[test]
+        fn parse_single_range_handles_rangelike_headers(
+            a in "[0-9]{0,25}",
+            b in "[0-9]{0,25}",
+            total in any::<u64>(),
+        ) {
+            let header = format!("bytes={a}-{b}");
+            if let Some((start, end, len)) = parse_single_range(&header, total) {
+                prop_assert!(start <= end && end < total);
+                prop_assert_eq!(len, end - start + 1);
+            }
+        }
+    }
 }
