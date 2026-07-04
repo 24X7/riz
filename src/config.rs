@@ -144,6 +144,12 @@ pub struct AgentConfig {
     /// snapshot (the task keeps running; poll GetTask).
     #[serde(default = "default_agent_task_timeout")]
     pub task_timeout_ms: u64,
+    /// A2A client side (`[agent.peers]`): name → base URL of another A2A
+    /// server. Each peer becomes a `delegate_to_<name>` tool the agent can
+    /// wield — the riz-to-riz mesh. Delegations carry a `riz-a2a-hop` header;
+    /// an incoming task at or past `max_hops` is rejected (loop protection).
+    #[serde(default)]
+    pub peers: std::collections::HashMap<String, String>,
 }
 
 fn default_agent_max_hops() -> u32 {
@@ -893,6 +899,19 @@ impl Config {
                 if !self.functions.contains_key(t) {
                     return Err(format!(
                         "[agent] tools allowlist names unknown function '{t}'"
+                    ));
+                }
+            }
+            for (peer, url) in &agent.peers {
+                if url.trim().is_empty() {
+                    return Err(format!("[agent.peers] '{peer}' has an empty URL"));
+                }
+                if !peer
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                {
+                    return Err(format!(
+                        "[agent.peers] name '{peer}' must be alphanumeric/_/- (it becomes the tool name delegate_to_{peer})"
                     ));
                 }
             }

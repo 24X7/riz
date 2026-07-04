@@ -44,6 +44,10 @@ pub struct A2aRuntime {
     /// Base for the Agent Card's service endpoint URL.
     public_base: String,
     tasks: DashMap<String, Arc<TaskEntry>>,
+    /// A2A client side: outgoing delegations to `[agent.peers]`.
+    http: reqwest::Client,
+    /// Peer Agent-Card descriptions, fetched lazily and cached.
+    peer_descriptions: tokio::sync::Mutex<std::collections::HashMap<String, String>>,
 }
 
 struct TaskEntry {
@@ -92,6 +96,8 @@ impl A2aRuntime {
             bearer,
             public_base,
             tasks: DashMap::new(),
+            http: reqwest::Client::new(),
+            peer_descriptions: tokio::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -149,12 +155,23 @@ impl A2aRuntime {
 
     // ───────────────────────── JSON-RPC surface ─────────────────────────────
 
-    pub async fn handle(self: &Arc<Self>, raw: serde_json::Value) -> serde_json::Value {
+    pub async fn handle(self: &Arc<Self>, raw: serde_json::Value, hop: u32) -> serde_json::Value {
         let id = raw.get("id").cloned().unwrap_or(serde_json::Value::Null);
         let method = raw["method"].as_str().unwrap_or("");
         let params = raw.get("params").cloned().unwrap_or(json!({}));
+        // Mesh loop protection: a delegation chain at or past max_hops is
+        // rejected outright instead of spawning another agent loop.
+        if hop >= self.cfg.max_hops && matches!(method, "SendMessage" | "message/send") {
+            return json!({
+                "jsonrpc": "2.0", "id": id,
+                "error": { "code": -32603, "message": format!(
+                    "a2a hop limit reached (max_hops = {}): refusing further delegation",
+                    self.cfg.max_hops
+                )}
+            });
+        }
         let result = match method {
-            "SendMessage" | "message/send" => self.send_message(params).await,
+            "SendMessage" | "message/send" => self.send_message(params, hop).await,
             "GetTask" | "tasks/get" => self.get_task(&params),
             "CancelTask" | "tasks/cancel" => self.cancel_task(&params),
             other => Err((-32601, format!("method not found: {other}"))),
@@ -174,6 +191,7 @@ impl A2aRuntime {
     fn start_task(
         self: &Arc<Self>,
         params: serde_json::Value,
+        hop: u32,
     ) -> Result<
         (
             Arc<TaskEntry>,
@@ -225,7 +243,7 @@ impl A2aRuntime {
         let run_entry = entry.clone();
         let run_task_id = task_id.clone();
         let handle = tokio::spawn(async move {
-            rt.run_agent_loop(&run_task_id, &run_entry, user_text, message)
+            rt.run_agent_loop(&run_task_id, &run_entry, user_text, message, hop)
                 .await;
         });
         if let Ok(mut h) = entry.handle.lock() {
@@ -237,8 +255,9 @@ impl A2aRuntime {
     async fn send_message(
         self: &Arc<Self>,
         params: serde_json::Value,
+        hop: u32,
     ) -> Result<serde_json::Value, (i32, String)> {
-        let (entry, _events) = self.start_task(params)?;
+        let (entry, _events) = self.start_task(params, hop)?;
 
         // Wait for a terminal state up to task_timeout_ms, then return the
         // snapshot either way (WORKING = keep polling).
@@ -264,6 +283,7 @@ impl A2aRuntime {
         self: &Arc<Self>,
         params: serde_json::Value,
         rpc_id: serde_json::Value,
+        hop: u32,
     ) -> Result<
         impl futures_util::Stream<
                 Item = Result<axum::response::sse::Event, std::convert::Infallible>,
@@ -271,7 +291,16 @@ impl A2aRuntime {
             + 'static,
         (i32, String),
     > {
-        let (entry, events) = self.start_task(params)?;
+        if hop >= self.cfg.max_hops {
+            return Err((
+                -32603,
+                format!(
+                    "a2a hop limit reached (max_hops = {}): refusing further delegation",
+                    self.cfg.max_hops
+                ),
+            ));
+        }
+        let (entry, events) = self.start_task(params, hop)?;
         let initial = entry.snapshot.lock().map(|s| s.clone()).unwrap_or_default();
         let timeout = std::time::Duration::from_millis(self.cfg.task_timeout_ms);
 
@@ -319,12 +348,13 @@ impl A2aRuntime {
         entry: &Arc<TaskEntry>,
         user_text: String,
         user_message: serde_json::Value,
+        incoming_hop: u32,
     ) {
         set_state(entry, "working");
 
         // Tool definitions = the live MCP tool surface, allowlist-filtered,
         // mapped to the OpenAI shape the gateway speaks.
-        let tools: Vec<serde_json::Value> = match self
+        let mut tools: Vec<serde_json::Value> = match self
             .mcp_rpc(json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}))
             .await
         {
@@ -350,6 +380,24 @@ impl A2aRuntime {
                 return;
             }
         };
+        // The mesh: every [agent.peers] entry is a delegate_to_<name> tool.
+        for peer in self.cfg.peers.keys() {
+            let description = self.peer_description(peer).await;
+            tools.push(json!({
+                "type": "function",
+                "function": {
+                    "name": format!("delegate_to_{peer}"),
+                    "description": description,
+                    "parameters": {
+                        "type": "object",
+                        "properties": { "message": {
+                            "type": "string",
+                            "description": "What to ask the peer agent. Omit to forward the user's request."
+                        }},
+                    }
+                }
+            }));
+        }
 
         let mut messages: Vec<serde_json::Value> = Vec::new();
         if let Some(system) = &self.cfg.system_prompt {
@@ -388,20 +436,39 @@ impl A2aRuntime {
             for call in &choice.message.tool_calls {
                 let args: serde_json::Value =
                     serde_json::from_str(&call.function.arguments).unwrap_or(json!({}));
-                let result_text = match self
-                    .mcp_rpc(json!({
-                        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                        "params": { "name": call.function.name, "arguments": args }
-                    }))
-                    .await
-                {
-                    Ok(result) => result["content"][0]["text"]
+                let peer = call
+                    .function
+                    .name
+                    .strip_prefix("delegate_to_")
+                    .filter(|p| self.cfg.peers.contains_key(*p));
+                let result_text = if let Some(peer) = peer {
+                    // Mesh delegation: SendMessage to the peer, one hop deeper.
+                    // No explicit message → forward the user's request.
+                    let ask = args["message"]
                         .as_str()
-                        .unwrap_or_default()
-                        .to_string(),
-                    // A failing tool is information for the model, not a
-                    // task-fatal error — agents recover from tool errors.
-                    Err(e) => format!("tool error: {e}"),
+                        .filter(|m| !m.is_empty())
+                        .unwrap_or(&user_text)
+                        .to_string();
+                    match self.delegate(peer, &ask, incoming_hop + 1).await {
+                        Ok(answer) => answer,
+                        Err(e) => format!("tool error: {e}"),
+                    }
+                } else {
+                    match self
+                        .mcp_rpc(json!({
+                            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                            "params": { "name": call.function.name, "arguments": args }
+                        }))
+                        .await
+                    {
+                        Ok(result) => result["content"][0]["text"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_string(),
+                        // A failing tool is information for the model, not a
+                        // task-fatal error — agents recover from tool errors.
+                        Err(e) => format!("tool error: {e}"),
+                    }
                 };
                 messages.push(json!({
                     "role": "tool",
@@ -414,6 +481,97 @@ impl A2aRuntime {
             entry,
             &format!("agent loop exceeded max_hops = {}", self.cfg.max_hops),
         );
+    }
+
+    // ───────────────────────── A2A client (the mesh) ────────────────────────
+
+    /// Peer tool description: the peer's Agent Card identity when reachable
+    /// (fetched once, cached), else a generic line — the peer may simply not
+    /// be up yet, and delegation can still succeed later.
+    async fn peer_description(&self, peer: &str) -> String {
+        if let Some(d) = self.peer_descriptions.lock().await.get(peer) {
+            return d.clone();
+        }
+        let Some(url) = self.cfg.peers.get(peer) else {
+            return format!("Delegate this task to peer agent '{peer}'.");
+        };
+        let fetched = self
+            .http
+            .get(format!(
+                "{}/.well-known/agent-card.json",
+                url.trim_end_matches('/')
+            ))
+            .timeout(std::time::Duration::from_secs(3))
+            .send()
+            .await
+            .ok()
+            .filter(|r| r.status().is_success());
+        let description = match fetched {
+            Some(resp) => match resp.json::<serde_json::Value>().await {
+                Ok(card) => format!(
+                    "Delegate this task to agent '{}': {}",
+                    card["name"].as_str().unwrap_or(peer),
+                    card["description"].as_str().unwrap_or("")
+                ),
+                Err(_) => format!("Delegate this task to peer agent '{peer}'."),
+            },
+            None => return format!("Delegate this task to peer agent '{peer}'."),
+        };
+        self.peer_descriptions
+            .lock()
+            .await
+            .insert(peer.to_string(), description.clone());
+        description
+    }
+
+    /// SendMessage to a peer and return its answer text (the completed task's
+    /// artifact). The `riz-a2a-hop` header carries the chain depth; the peer
+    /// rejects at its own max_hops — mesh loop protection.
+    async fn delegate(&self, peer: &str, message: &str, hop: u32) -> Result<String, String> {
+        let url = self
+            .cfg
+            .peers
+            .get(peer)
+            .ok_or_else(|| format!("unknown peer '{peer}'"))?;
+        let body = json!({
+            "jsonrpc": "2.0", "id": 1, "method": "SendMessage",
+            "params": { "message": {
+                "kind": "message", "role": "user",
+                "messageId": uuid::Uuid::new_v4().to_string(),
+                "parts": [{ "kind": "text", "text": message }],
+            }}
+        });
+        let resp = self
+            .http
+            .post(format!("{}/_riz/a2a", url.trim_end_matches('/')))
+            .header("riz-a2a-hop", hop.to_string())
+            .json(&body)
+            .timeout(std::time::Duration::from_millis(self.cfg.task_timeout_ms))
+            .send()
+            .await
+            .map_err(|e| format!("peer '{peer}' unreachable: {e}"))?;
+        let v: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("peer '{peer}' answered non-JSON: {e}"))?;
+        if let Some(err) = v.get("error").filter(|e| !e.is_null()) {
+            return Err(format!(
+                "peer '{peer}': {}",
+                err["message"].as_str().unwrap_or("a2a error")
+            ));
+        }
+        let task = &v["result"];
+        let state = task["status"]["state"].as_str().unwrap_or("");
+        if state != "completed" {
+            return Err(format!(
+                "peer '{peer}' task ended in state '{state}' (task id {})",
+                task["id"].as_str().unwrap_or("?")
+            ));
+        }
+        Ok(task["artifacts"][0]["parts"][0]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string())
     }
 
     // ───────────────────── In-process MCP dispatch ───────────────────────────

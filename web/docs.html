@@ -269,6 +269,7 @@ endpoint = "http://localhost:4318"   <span class="c"># any OTLP/HTTP collector o
       <tr><td><code>tools</code></td><td>all functions</td><td>allowlist of functions the agent may wield (also gates the card's skills)</td></tr>
       <tr><td><code>max_hops</code></td><td>5</td><td>agent-loop cap: one model → tools round trip = one hop</td></tr>
       <tr><td><code>task_timeout_ms</code></td><td>60000</td><td>how long <code>SendMessage</code> blocks before returning a <code>working</code> snapshot (poll <code>GetTask</code>)</td></tr>
+      <tr><td><code>peers</code></td><td>off</td><td><code>[agent.peers]</code> name→URL map — each peer's Agent Card is fetched and the peer becomes a <code>delegate_to_&lt;name&gt;</code> tool (riz-to-riz mesh; <code>riz-a2a-hop</code> header + <code>max_hops</code> stop delegation loops). Test any A2A server with <code>riz a2a send &lt;url&gt; "message"</code></td></tr>
     </table>
 
     <h2 id="lifecycle">Lifecycle</h2>
