@@ -174,6 +174,9 @@ mod tests {
         cmd.arg("-c")
             .arg("grep -E '^NoNewPrivs:' /proc/self/status");
         cmd.stdout(Stdio::piped());
+        // SAFETY: apply_always_on_limits is async-signal-safe — only
+        // calls setrlimit + prctl, both on the POSIX safe list.
+        #[allow(unsafe_code)]
         unsafe {
             cmd.pre_exec(apply_always_on_limits);
         }
@@ -206,6 +209,9 @@ mod tests {
         let mut cmd = Command::new("/bin/bash");
         cmd.arg("-c").arg("ulimit -H -v; ulimit -H -t");
         cmd.stdout(Stdio::piped());
+        // SAFETY: both functions are async-signal-safe — only setrlimit +
+        // prctl syscalls, both on the POSIX safe list.
+        #[allow(unsafe_code)]
         unsafe {
             cmd.pre_exec(|| {
                 apply_always_on_limits()?;
@@ -282,6 +288,10 @@ mod tests {
             .arg("test -r /etc/hosts && echo CAN || echo CANT");
         cmd.stdout(Stdio::piped());
         let allowed: Vec<PathBuf> = vec!["/tmp".into()];
+        // SAFETY: setrlimit + prctl are async-signal-safe; the landlock
+        // crate allocates internally but is attested safe in pre_exec by
+        // widespread production use (see pool.rs spawn for the full note).
+        #[allow(unsafe_code)]
         unsafe {
             cmd.pre_exec(move || {
                 apply_always_on_limits()?;
@@ -315,6 +325,7 @@ mod tests {
         cmd.stdout(Stdio::piped());
         // SAFETY: apply_always_on_limits is async-signal-safe — only
         // calls setrlimit + prctl, both on the POSIX safe list.
+        #[allow(unsafe_code)]
         unsafe {
             cmd.pre_exec(apply_always_on_limits);
         }

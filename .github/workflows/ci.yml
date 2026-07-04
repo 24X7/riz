@@ -51,6 +51,14 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # Power of 10 safety gate (docs/SAFETY.md): zero-tolerance lints over
+      # production code only (--lib --bins). These are rules test helpers
+      # legitimately break (panic-as-assertion), so they can't be denied
+      # workspace-wide in [workspace.lints] — this step scopes them to the
+      # code that ships in the riz binary.
+      - name: safety gate (Power of 10)
+        run: ./scripts/safety-check.sh --gate
+
       - name: cargo build
         run: cargo build --workspace
 
