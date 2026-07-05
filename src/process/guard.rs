@@ -57,6 +57,24 @@ pub struct GuardVerdict {
     pub body: Option<String>,
 }
 
+/// A guard verdict AFTER the fail-closed gate: the only two actions that
+/// exist for callers. Encoding the closed set in a type (rule 5) removes the
+/// "unknown action" arm — and its `unreachable!` — from every call site;
+/// garbage actions are rejected where the verdict is parsed.
+#[derive(Debug)]
+pub enum GuardDecision {
+    /// Proceed; the verdict may carry a mutated `event` (guard_in) or a
+    /// replacement `response` (guard_out).
+    Allow(GuardVerdict),
+    /// Reject with this status and body; the guarded stage never runs.
+    Deny { status_code: u16, body: String },
+}
+
+/// Deny default status when the guard names none.
+pub const DENY_DEFAULT_STATUS: u16 = 403;
+/// Deny default body when the guard names none.
+pub const DENY_DEFAULT_BODY: &str = r#"{"error":"rejected by guard"}"#;
+
 /// Synthesize the pool config a guard runs under: always the WASM runtime,
 /// the guard module as the handler, and the parent function's concurrency
 /// (a guard must never be a tighter bottleneck than the handler it guards).
