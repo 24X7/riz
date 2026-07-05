@@ -150,12 +150,16 @@ impl Gateway {
     }
 
     /// Record a successful call's tokens + cost against a provider.
+    ///
+    /// Saturating arithmetic throughout: the ledger backs the budget cap, so
+    /// a saturated counter stays HIGH and keeps over-counting spend (fails
+    /// closed) — wrapping would reset it and silently re-open the budget.
     fn record_usage(&self, provider: &str, model: &str, tokens_in: u32, tokens_out: u32) {
         if let Ok(mut ledger) = self.usage.lock() {
             let entry = ledger.entry(provider.to_string()).or_default();
-            entry.requests += 1;
-            entry.tokens_in += tokens_in as u64;
-            entry.tokens_out += tokens_out as u64;
+            entry.requests = entry.requests.saturating_add(1);
+            entry.tokens_in = entry.tokens_in.saturating_add(u64::from(tokens_in));
+            entry.tokens_out = entry.tokens_out.saturating_add(u64::from(tokens_out));
             entry.cost_usd += cost::cost_usd(model, tokens_in, tokens_out);
         }
     }
@@ -270,7 +274,12 @@ impl Gateway {
         }
         let mut last_err = None;
         for name in order {
-            let provider = &self.providers[&name];
+            // attempt_order only lists configured names; the table is
+            // immutable after startup, so a miss is a logic bug — skip the
+            // hop rather than panic the request task.
+            let Some(provider) = self.providers.get(&name) else {
+                continue;
+            };
             match provider.chat(req).await {
                 Ok(resp) => {
                     self.record_usage(
@@ -288,7 +297,7 @@ impl Gateway {
                 }
             }
         }
-        Err(last_err.unwrap())
+        Err(last_err.unwrap_or_else(|| no_provider_answered(&req.model)))
     }
 
     /// Route a `stream: true` chat request. Providers with native SSE are
@@ -322,96 +331,107 @@ impl Gateway {
                 "no provider configured for this model and no fallback available".into(),
             ));
         }
-        let mut on_complete: Option<Box<dyn FnOnce(Usage) + Send>> = Some(Box::new(on_complete));
         let mut last_err = None;
         for name in order {
-            // Native-stream attempt for providers that support it (all frames
-            // reach the client in OpenAI chunk format either way); None = no
-            // native streaming → plain buffered call below.
-            let native: Option<Result<BoxedByteStream, ProviderError>> =
-                match &self.providers[&name] {
-                    Provider::OpenAi(p) => Some(p.chat_stream(req).await.map(boxed_stream)),
-                    Provider::Anthropic(p) => Some(p.chat_stream(req).await.map(boxed_stream)),
-                    Provider::Mock(_) => None,
-                };
-            match native {
-                Some(Ok(stream)) => {
-                    let gw = Arc::clone(self);
-                    let model = req.model.clone();
-                    let prompt_approx = req
-                        .messages
-                        .iter()
-                        .map(|m| types::approx_tokens(m.text_content()))
-                        .sum::<u32>();
-                    let done = on_complete.take().expect("consumed once");
-                    let tee = UsageTee {
-                        inner: stream,
-                        line_buf: String::new(),
-                        usage: None,
-                        approx_completion: 0,
-                        prompt_approx,
-                        on_end: Some(Box::new(move |usage: Usage| {
-                            gw.record_usage(
-                                &name,
-                                &model,
-                                usage.prompt_tokens,
-                                usage.completion_tokens,
-                            );
-                            done(usage);
-                        })),
-                    };
+            match self.stream_attempt(&name, req).await {
+                // Moving `on_complete` here is fine: both success arms return,
+                // so the loop can never reach a second move.
+                Ok(StreamAttempt::Native(stream)) => {
+                    let tee = self.metered_tee(name, req, stream, on_complete);
                     return Ok(ChatStream::Upstream(Box::pin(tee)));
                 }
-                Some(Err(e @ ProviderError::BadRequest(_))) => return Err(e),
-                // The upstream answered but refused the STREAMING request
-                // (e.g. an OpenAI-compatible server without stream_options) —
-                // it may still serve buffered. Retry this provider once
-                // before walking the chain.
-                Some(Err(e @ ProviderError::Upstream(_, _))) => {
-                    tracing::warn!(
-                        "gateway: provider '{name}' rejected the stream request ({e}); retrying buffered"
+                Ok(StreamAttempt::Buffered(resp)) => {
+                    self.record_usage(
+                        &name,
+                        &req.model,
+                        resp.usage.prompt_tokens,
+                        resp.usage.completion_tokens,
                     );
-                    match self.providers[&name].chat(req).await {
-                        Ok(resp) => {
-                            self.record_usage(
-                                &name,
-                                &req.model,
-                                resp.usage.prompt_tokens,
-                                resp.usage.completion_tokens,
-                            );
-                            (on_complete.take().expect("consumed once"))(resp.usage.clone());
-                            return Ok(ChatStream::Buffered(resp));
-                        }
-                        Err(e2) => {
-                            tracing::warn!("gateway: provider '{name}' failed: {e2}; trying next");
-                            last_err = Some(e2);
-                        }
-                    }
+                    on_complete(resp.usage.clone());
+                    return Ok(ChatStream::Buffered(resp));
                 }
-                Some(Err(e)) => {
+                Err(e @ ProviderError::BadRequest(_)) => return Err(e),
+                Err(e) => {
                     tracing::warn!("gateway: provider '{name}' failed: {e}; trying next");
                     last_err = Some(e);
                 }
-                None => match self.providers[&name].chat(req).await {
-                    Ok(resp) => {
-                        self.record_usage(
-                            &name,
-                            &req.model,
-                            resp.usage.prompt_tokens,
-                            resp.usage.completion_tokens,
-                        );
-                        (on_complete.take().expect("consumed once"))(resp.usage.clone());
-                        return Ok(ChatStream::Buffered(resp));
-                    }
-                    Err(e @ ProviderError::BadRequest(_)) => return Err(e),
-                    Err(e) => {
-                        tracing::warn!("gateway: provider '{name}' failed: {e}; trying next");
-                        last_err = Some(e);
-                    }
-                },
             }
         }
-        Err(last_err.unwrap())
+        Err(last_err.unwrap_or_else(|| no_provider_answered(&req.model)))
+    }
+
+    /// One provider's shot at a streaming request: a native SSE stream when
+    /// the provider supports it, otherwise (or when the upstream refuses the
+    /// STREAMING request but may still serve buffered — e.g. an
+    /// OpenAI-compatible server without stream_options) a buffered response.
+    async fn stream_attempt(
+        &self,
+        name: &str,
+        req: &ChatRequest,
+    ) -> Result<StreamAttempt, ProviderError> {
+        // attempt_order only lists configured names; the table is immutable
+        // after startup, so a miss is a logic bug — fail the hop, not the task.
+        let Some(provider) = self.providers.get(name) else {
+            return Err(ProviderError::Unavailable(
+                name.to_string(),
+                "provider not configured".into(),
+            ));
+        };
+        // None = no native streaming → plain buffered call below (the HTTP
+        // layer re-emits it as synthesized chunks).
+        let native: Option<Result<BoxedByteStream, ProviderError>> = match provider {
+            Provider::OpenAi(p) => Some(p.chat_stream(req).await.map(boxed_stream)),
+            Provider::Anthropic(p) => Some(p.chat_stream(req).await.map(boxed_stream)),
+            Provider::Mock(_) => None,
+        };
+        match native {
+            Some(Ok(stream)) => Ok(StreamAttempt::Native(stream)),
+            Some(Err(e @ ProviderError::Upstream(_, _))) => {
+                tracing::warn!(
+                    "gateway: provider '{name}' rejected the stream request ({e}); retrying buffered"
+                );
+                provider.chat(req).await.map(StreamAttempt::Buffered)
+            }
+            Some(Err(e)) => Err(e),
+            None => provider.chat(req).await.map(StreamAttempt::Buffered),
+        }
+    }
+
+    /// Wrap a native upstream stream in the usage-metering tee: forwards
+    /// bytes untouched, then records the ledger entry and fires `done`
+    /// exactly once when the stream ends (or the client disconnects).
+    fn metered_tee(
+        self: &Arc<Self>,
+        provider: String,
+        req: &ChatRequest,
+        stream: BoxedByteStream,
+        done: impl FnOnce(Usage) + Send + 'static,
+    ) -> UsageTee {
+        let gw = Arc::clone(self);
+        let model = req.model.clone();
+        // Saturating fold: the prompt approximation feeds budget metering, so
+        // it must never wrap down (fail closed, same as record_usage).
+        let prompt_approx = req
+            .messages
+            .iter()
+            .map(|m| types::approx_tokens(m.text_content()))
+            .fold(0u32, u32::saturating_add);
+        UsageTee {
+            inner: stream,
+            line_buf: String::new(),
+            usage: None,
+            approx_completion: 0,
+            prompt_approx,
+            on_end: Some(Box::new(move |usage: Usage| {
+                gw.record_usage(
+                    &provider,
+                    &model,
+                    usage.prompt_tokens,
+                    usage.completion_tokens,
+                );
+                done(usage);
+            })),
+        }
     }
 
     /// Route an embeddings request through the provider chain (same routing +
@@ -436,7 +456,11 @@ impl Gateway {
         }
         let mut last_err = None;
         for name in order {
-            match self.providers[&name].embed(&model, inputs.clone()).await {
+            // Same non-panicking lookup rationale as in `chat`.
+            let Some(provider) = self.providers.get(&name) else {
+                continue;
+            };
+            match provider.embed(&model, inputs.clone()).await {
                 Ok(resp) => {
                     self.record_usage(&name, &model, resp.usage.prompt_tokens, 0);
                     return Ok(resp);
@@ -448,8 +472,28 @@ impl Gateway {
                 }
             }
         }
-        Err(last_err.unwrap())
+        Err(last_err.unwrap_or_else(|| no_provider_answered(&model)))
     }
+}
+
+/// The terminal error when the fallback chain is exhausted without any
+/// provider producing an error to report — structurally impossible today
+/// (every attempted hop either returns or records `last_err`), but the
+/// gateway degrades with a clean upstream error rather than unwrapping.
+fn no_provider_answered(model: &str) -> ProviderError {
+    ProviderError::Unavailable(
+        model.to_string(),
+        "no provider in the chain produced a response".into(),
+    )
+}
+
+/// Outcome of one provider hop in [`Gateway::chat_stream`].
+enum StreamAttempt {
+    /// Native upstream SSE — already OpenAI chunk format.
+    Native(BoxedByteStream),
+    /// Buffered response (no native streaming, or stream refused but the
+    /// buffered retry succeeded).
+    Buffered(ChatResponse),
 }
 
 /// The boxed byte-stream shape every native-streaming provider reduces to.
@@ -477,6 +521,16 @@ pub enum ChatStream {
 /// few KB; anything past this is a misbehaving upstream and we stop scanning
 /// (passthrough continues untouched, usage falls back to the approximation).
 const TEE_LINE_BUF_CAP: usize = 1 << 20;
+
+/// Read a token-count field from a provider `usage` object. Absent or
+/// malformed fields read 0; values beyond `u32::MAX` clamp HIGH (the ledger
+/// over-counts — fails closed) instead of the old `as` truncation, which
+/// would wrap a hostile count down to a small number.
+fn token_field(u: &serde_json::Value, key: &str) -> u32 {
+    u.get(key)
+        .and_then(serde_json::Value::as_u64)
+        .map_or(0, |n| u32::try_from(n).unwrap_or(u32::MAX))
+}
 
 /// Forwards upstream bytes untouched while scanning SSE lines for the final
 /// `usage` chunk (and accumulating an approximate completion-token count as a
@@ -510,12 +564,18 @@ impl UsageTee {
             };
             if let Some(u) = v.get("usage").filter(|u| !u.is_null()) {
                 self.usage = Some(Usage {
-                    prompt_tokens: u["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-                    completion_tokens: u["completion_tokens"].as_u64().unwrap_or(0) as u32,
-                    total_tokens: u["total_tokens"].as_u64().unwrap_or(0) as u32,
+                    prompt_tokens: token_field(u, "prompt_tokens"),
+                    completion_tokens: token_field(u, "completion_tokens"),
+                    total_tokens: token_field(u, "total_tokens"),
                 });
-            } else if let Some(content) = v["choices"][0]["delta"]["content"].as_str() {
-                self.approx_completion += types::approx_tokens(content);
+            } else if let Some(content) = v
+                .pointer("/choices/0/delta/content")
+                .and_then(serde_json::Value::as_str)
+            {
+                // Saturating: metering fallback must never wrap down.
+                self.approx_completion = self
+                    .approx_completion
+                    .saturating_add(types::approx_tokens(content));
             }
         }
     }
@@ -525,7 +585,8 @@ impl UsageTee {
             let usage = self.usage.take().unwrap_or(Usage {
                 prompt_tokens: self.prompt_approx,
                 completion_tokens: self.approx_completion,
-                total_tokens: self.prompt_approx + self.approx_completion,
+                // Saturating: fail closed (over-count) rather than wrap.
+                total_tokens: self.prompt_approx.saturating_add(self.approx_completion),
             });
             done(usage);
         }
@@ -691,5 +752,64 @@ kind = "ollama"
         let gw = Gateway::new(HashMap::new(), "mock".into(), vec![]);
         let err = gw.chat(&user_req("gpt-4o", "x")).await.unwrap_err();
         assert!(matches!(err, ProviderError::Unavailable(_, _)));
+    }
+
+    /// Drive a UsageTee over the given upstream frames; returns the bytes it
+    /// forwarded and the Usage it reported to on_end.
+    async fn run_tee(frames: Vec<&'static str>, prompt: &str) -> (Vec<bytes::Bytes>, Usage) {
+        use futures_util::StreamExt;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let gw = Arc::new(mock_gateway());
+        let req = user_req("mock", prompt);
+        let items: Vec<Result<bytes::Bytes, ProviderError>> = frames
+            .into_iter()
+            .map(|f| Ok(bytes::Bytes::from(f)))
+            .collect();
+        let tee = gw.metered_tee(
+            "mock".into(),
+            &req,
+            boxed_stream(futures_util::stream::iter(items)),
+            move |u| {
+                tx.send(u).unwrap();
+            },
+        );
+        let forwarded: Vec<_> = Box::pin(tee)
+            .map(|r| r.expect("test frames are all Ok"))
+            .collect()
+            .await;
+        (forwarded, rx.recv().expect("on_end must fire exactly once"))
+    }
+
+    #[tokio::test]
+    async fn usage_tee_survives_malformed_provider_chunks_and_meters_approx() {
+        // A misbehaving upstream: junk JSON, wrong shapes, no usage chunk,
+        // no [DONE] — the tee must forward bytes untouched, never panic, and
+        // fall back to the approximation when the stream ends.
+        let frames = vec![
+            "data: {not json}\n",
+            "data: {\"choices\": \"not-an-array\"}\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"two words\"}}]}\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":42}}]}\n",
+            "data: {\"usage\": null}\n",
+        ];
+        let (forwarded, usage) = run_tee(frames.clone(), "three word prompt").await;
+        assert_eq!(forwarded.len(), frames.len(), "passthrough is untouched");
+        assert_eq!(usage.prompt_tokens, 3, "approx from the request messages");
+        assert_eq!(usage.completion_tokens, 2, "approx from the one text delta");
+        assert_eq!(usage.total_tokens, 5);
+    }
+
+    #[tokio::test]
+    async fn usage_tee_clamps_hostile_usage_counts_high_not_wrapped() {
+        // A usage chunk with counts beyond u32 must clamp HIGH (over-count →
+        // budget fails closed), not truncate to a small number.
+        let frames = vec![
+            "data: {\"usage\":{\"prompt_tokens\":18446744073709551615,\
+             \"completion_tokens\":7,\"total_tokens\":\"junk\"}}\n",
+        ];
+        let (_, usage) = run_tee(frames, "hi").await;
+        assert_eq!(usage.prompt_tokens, u32::MAX);
+        assert_eq!(usage.completion_tokens, 7);
+        assert_eq!(usage.total_tokens, 0, "malformed field reads 0, no panic");
     }
 }
