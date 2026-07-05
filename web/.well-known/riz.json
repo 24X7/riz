@@ -21,6 +21,7 @@
   "runtimes": ["bun", "node", "python", "rust", "go", "wasm"],
   "wire_compat": "AWS API Gateway v2 HTTP + WebSocket payloads via aws_lambda_events — handlers move between AWS and riz unchanged",
   "cold_start": "No per-request cold start. Warm pre-spawned process pool per function; cold starts only at boot, respawn, or hot-swap. WASM cold start is sub-millisecond.",
+  "scaling": "Run always-on replicas with a warm floor (min-instances >= 1) on any managed HTTP container platform; each instance serves many concurrent requests. WebSocket constraint: the @connections registry is per-instance (in-memory), so multiple replicas behind a load balancer REQUIRE sticky sessions / session affinity (Cloud Run --session-affinity, ALB target-group stickiness, nginx ip_hash); a push to a socket held by another replica returns 410 Gone. Cross-replica broadcast needs a shared backplane — roadmap, not in the binary today.",
   "mcp": {
     "endpoint_pattern": "/_riz/mcp",
     "transport": "JSON-RPC 2.0 over Streamable HTTP",

@@ -37,7 +37,7 @@ All six are **cross-runtime parity-tested** — every HTTP capability (verbs, pa
 | Protocol | Detail |
 |---|---|
 | **HTTP API Gateway v2** | Exact `aws_lambda_events` types · all 7 verbs · `{id}` / `{proxy+}` paths · `$default` catch-all · stage variables · real Lambda context |
-| **WebSocket APIs** | `$connect` / `$disconnect` / `$default` lifecycle · `@connections` management API (GET / POST / DELETE / LIST) for server→client push |
+| **WebSocket APIs** | `$connect` / `$disconnect` / `$default` lifecycle · `@connections` management API (GET / POST / DELETE / LIST) for server→client push · connection registry is per-instance — sticky sessions (session affinity) REQUIRED behind a load balancer; cross-replica broadcast = roadmap backplane |
 | **Wire compat** | Handlers move between AWS and riz unchanged — same `index.handler` resolution, same request IDs, same `getRemainingTimeInMillis` |
 
 ---
