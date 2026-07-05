@@ -89,8 +89,15 @@ URL + ALB + SSL, autoscaled), or **Azure Container Apps**
 concurrent requests from its warm pools, so even the first request after a spike
 hits a warm instance — never a container cold start. (Scale-to-zero is available
 but reintroduces that cold start; keep the floor on the hot path. More control:
-ECS on Fargate, k8s, or a VM behind a load balancer.) Details on
-[riz.dev/compare.html](https://riz.dev/compare.html).
+ECS on Fargate, k8s, or a VM behind a load balancer.)
+
+**WebSockets across replicas:** connections and the `@connections` push registry
+are per-instance (in-memory), so running N replicas behind a load balancer
+**requires sticky sessions** (session affinity — Cloud Run `--session-affinity`,
+ALB target-group stickiness, nginx `ip_hash`). Affinity keeps a client's socket
+and the pushes its own requests trigger on one instance; cross-client broadcast
+across replicas needs a shared backplane, which is a roadmap item, not in the
+binary today. Details on [riz.dev/compare.html](https://riz.dev/compare.html).
 
 ## What riz is *not*
 

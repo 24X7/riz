@@ -224,6 +224,13 @@ required = <span class="n">true</span></pre>
       <tr><td><code>POST /cache/invalidate</code></td><td>bearer</td><td>evict cached responses by key or prefix</td></tr>
     </table>
     <p>"bearer" = gated when <code>RIZ_AUTH_BEARER_TOKEN</code> / <code>[auth] bearer_token</code> is set (constant-time compare); open for local dev when unset.</p>
+    <p><b>Scaling note (WebSockets):</b> the connection registry behind <code>@connections</code> is
+    per-instance (in-memory). Running multiple replicas behind a load balancer <b>requires sticky
+    sessions</b> (session affinity — Cloud Run <code>--session-affinity</code>, ALB target-group
+    stickiness, nginx <code>ip_hash</code>); a push to a socket held by another replica returns
+    <code>410 Gone</code>, exactly as API Gateway does for a stale connection. Cross-replica
+    broadcast needs a shared backplane — a roadmap item, not in the binary today.
+    The full story is on <a href="compare.html">the compare page</a>.</p>
 
     <h2 id="observability">Observability</h2>
     <p>riz exports <b>traces</b> as <b>OTLP/HTTP-JSON</b> to <code>&lt;endpoint&gt;/v1/traces</code> — spec-correct hex ids, a <code>service.name = riz</code> resource attribute — so any OTLP backend accepts them. There is exactly <b>one</b> export path: every backend below is the same POST with a different <code>endpoint</code> + <code>headers</code>. Independently, <code>GET /_riz/metrics</code> serves <b>Prometheus</b> text.</p>
