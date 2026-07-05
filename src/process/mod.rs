@@ -28,7 +28,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock, Semaphore};
 use tokio::time::{timeout, Duration};
 use tracing::{error, trace, warn};
@@ -162,7 +162,10 @@ async fn runtime_api_roundtrip<E: Serialize>(
     let (tx, rx) = oneshot::channel();
     let inv = Invocation {
         request_id: uuid::Uuid::new_v4().to_string(),
-        deadline_ms: now_ms + timeout_ms as i64,
+        // Saturating: clock-epoch millis + a config timeout can only overflow
+        // on a pathological timeout_ms; a saturated deadline just reads as
+        // "no time left" to the worker, which is the safe degradation.
+        deadline_ms: now_ms.saturating_add(timeout_ms as i64),
         invoked_arn: format!("arn:riz:lambda:local:000000000000:function:{function_name}"),
         event,
         respond: tx,
@@ -176,6 +179,173 @@ async fn runtime_api_roundtrip<E: Serialize>(
         Ok(Err(_)) => RtOutcome::WorkerGone, // sender dropped → worker died
         Err(_) => RtOutcome::Timeout,
     }
+}
+
+/// Grab a concurrency permit and a free worker handle from the pool.
+/// Rejects — never queues — when the pool is saturated (rule 3: overload is
+/// answered with backpressure, not buffering).
+async fn acquire_worker(
+    pool: &Arc<RoutePool>,
+    function_name: &str,
+) -> Result<(tokio::sync::OwnedSemaphorePermit, Arc<Mutex<ProcessHandle>>), PoolError> {
+    let permit = match pool.semaphore.clone().try_acquire_owned() {
+        Ok(p) => p,
+        Err(tokio::sync::TryAcquireError::NoPermits) => {
+            return Err(PoolError::SemaphoreExhausted(function_name.into()))
+        }
+        Err(tokio::sync::TryAcquireError::Closed) => {
+            return Err(PoolError::SemaphoreClosed(function_name.into()))
+        }
+    };
+    let free_arc = {
+        let handles = pool.handles.read().await;
+        handles.iter().find(|h| h.try_lock().is_ok()).cloned()
+    };
+    match free_arc {
+        Some(arc) => Ok((permit, arc)),
+        None => Err(PoolError::Other(
+            function_name.into(),
+            anyhow::anyhow!("no free process handle"),
+        )),
+    }
+}
+
+/// Crash-path recovery: kill + respawn via `handle_process_failure` (which
+/// feeds the consecutive-crash circuit breaker), then re-arm the liveness
+/// watcher for the new PID.
+async fn fail_and_rearm(
+    pool: &Arc<RoutePool>,
+    arc: &Arc<Mutex<ProcessHandle>>,
+    handle: &mut ProcessHandle,
+    function_name: &str,
+) {
+    handle_process_failure(pool, handle, function_name).await;
+    spawn_liveness_watcher(
+        handle.pid,
+        arc.clone(),
+        pool.clone(),
+        function_name.to_string(),
+    );
+}
+
+/// Timeout-path recovery: the worker may be wedged mid-invocation, so it is
+/// killed outright, replaced in place, and the watcher re-armed. Unlike the
+/// crash path this does NOT feed the consecutive-crash breaker: a timeout is
+/// workload behavior (a slow handler), each occurrence is paced by a request
+/// that already paid `timeout_ms`, and marking the pool unhealthy for it
+/// would let one slow route park the whole function.
+async fn respawn_after_timeout(
+    pool: &Arc<RoutePool>,
+    arc: &Arc<Mutex<ProcessHandle>>,
+    handle: &mut ProcessHandle,
+    function_name: &str,
+) {
+    kill_process_group(handle.pid);
+    // Result explicitly discarded (rule 7): the group kill above usually
+    // already reaped the child; "already exited" is the expected case.
+    let _ = handle._child.kill().await;
+    match spawn_with_cold_start_record(pool, function_name).await {
+        Ok(new_handle) => {
+            *handle = new_handle;
+            spawn_liveness_watcher(
+                handle.pid,
+                arc.clone(),
+                pool.clone(),
+                function_name.to_string(),
+            );
+        }
+        Err(spawn_err) => {
+            error!("failed to respawn {function_name}: {spawn_err}");
+            pool.healthy.store(false, Ordering::Relaxed);
+        }
+    }
+    pool.restart_count.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Cap on one stdio response line from a worker (rule 3: the response path
+/// must not balloon host memory on a worker that streams an endless line).
+/// AWS Lambda caps response payloads at 6 MB; riz's envelope carries the
+/// response JSON with a possibly base64-inflated body, so 16 MiB leaves
+/// AWS-shaped workloads untouched while bounding a misbehaving worker. A
+/// line truncated at the cap fails JSON parsing downstream → the malformed-
+/// response arm kills and respawns the worker (the pipe holds residue, so
+/// replacing the worker is the only safe recovery).
+const MAX_RESPONSE_LINE_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Outcome of one stdio round-trip — mirrors [`RtOutcome`] for the pipe
+/// transport so both transports share the caller-side failure arms.
+enum StdioOutcome {
+    /// One complete response line (parse still pending).
+    Line(String),
+    /// Pipe I/O failed — the worker crashed or closed its pipes.
+    Io(anyhow::Error),
+    /// No response line within `timeout_ms`.
+    TimedOut,
+}
+
+/// Write one envelope line to the worker's stdin and read one capped
+/// response line back, under `timeout_ms`.
+///
+/// Cancel-safety: if this future is dropped mid-roundtrip (the integration
+/// timeout above us, a vanished WS client), the pipe is DESYNCED — the
+/// worker's eventual response line would be read as the answer to the NEXT
+/// invocation (for a guard pool, a stale "allow" answering the wrong
+/// request). The drop guard kills the worker's process group so the
+/// liveness watcher replaces it with a clean one. Disarmed on completion:
+/// the completed-path arms own their own kill/respawn decisions.
+///
+/// Returns `Err` only for the not-a-stdio-worker dispatch bug — a failed
+/// invocation, never a panic (rule 1: a supervisor degrades, it does not
+/// crash the host).
+async fn stdio_roundtrip(
+    handle: &mut ProcessHandle,
+    function_name: &str,
+    payload: &str,
+    timeout_ms: u64,
+) -> Result<StdioOutcome, PoolError> {
+    let worker_pid = handle.pid;
+    let HandleTransport::Stdio { stdin, stdout } = &mut handle.transport else {
+        // Callers dispatch RuntimeApi before calling this; if a transport
+        // ever falls through, fail the one invocation instead of panicking.
+        return Err(PoolError::Other(
+            function_name.into(),
+            anyhow::anyhow!("transport dispatch bug: stdio roundtrip on a non-stdio worker"),
+        ));
+    };
+
+    struct PipeDropGuard(Arc<AtomicU32>);
+    impl Drop for PipeDropGuard {
+        fn drop(&mut self) {
+            let pid = self.0.swap(0, Ordering::Relaxed);
+            if pid != 0 {
+                kill_process_group(pid);
+            }
+        }
+    }
+    let armed_pid = Arc::new(AtomicU32::new(worker_pid));
+    let _pipe_guard = PipeDropGuard(armed_pid.clone());
+
+    let outcome = match timeout(Duration::from_millis(timeout_ms), async {
+        stdin.write_all(payload.as_bytes()).await?;
+        stdin.flush().await?;
+        let mut line = String::new();
+        // `take` bounds how many bytes this invocation may pull off the
+        // pipe; the BufReader's position is preserved across calls.
+        let mut limited = stdout.take(MAX_RESPONSE_LINE_BYTES);
+        limited.read_line(&mut line).await?;
+        Ok::<String, anyhow::Error>(line)
+    })
+    .await
+    {
+        Ok(Ok(line)) => StdioOutcome::Line(line),
+        Ok(Err(e)) => StdioOutcome::Io(e),
+        Err(_elapsed) => StdioOutcome::TimedOut,
+    };
+    // The roundtrip COMPLETED (even by timeout) — disarm. The caller's
+    // failure arms kill/respawn under the same handle lock; firing the
+    // guard as well would just re-SIGKILL an already-replaced pgid.
+    armed_pid.store(0, Ordering::Relaxed);
+    Ok(outcome)
 }
 
 impl ProcessManager {
@@ -289,48 +459,19 @@ impl ProcessManager {
         request: &ApiGatewayV2httpRequest,
         timeout_ms: u64,
     ) -> Result<ApiGatewayV2httpResponse, PoolError> {
-        let pools = self.pools.read().await;
-        let pool = pools
+        let pool = self
+            .pools
+            .read()
+            .await
             .get(function_name)
-            .ok_or_else(|| PoolError::NoPool(function_name.into()))?
-            .clone();
-        drop(pools);
+            .cloned()
+            .ok_or_else(|| PoolError::NoPool(function_name.into()))?;
 
         if !pool.healthy.load(Ordering::Relaxed) {
             return Ok(error_response(503, "lambda unhealthy"));
         }
 
-        let _permit = match pool.semaphore.try_acquire() {
-            Ok(p) => p,
-            Err(tokio::sync::TryAcquireError::NoPermits) => {
-                return Err(PoolError::SemaphoreExhausted(function_name.into()))
-            }
-            Err(tokio::sync::TryAcquireError::Closed) => {
-                return Err(PoolError::SemaphoreClosed(function_name.into()))
-            }
-        };
-
-        let free_arc = {
-            let handles = pool.handles.read().await;
-            let mut found: Option<Arc<Mutex<ProcessHandle>>> = None;
-            for handle_mutex in handles.iter() {
-                if handle_mutex.try_lock().is_ok() {
-                    found = Some(handle_mutex.clone());
-                    break;
-                }
-            }
-            found
-        };
-
-        let arc = match free_arc {
-            Some(a) => a,
-            None => {
-                return Err(PoolError::Other(
-                    function_name.into(),
-                    anyhow::anyhow!("no free process handle"),
-                ))
-            }
-        };
+        let (_permit, arc) = acquire_worker(&pool, function_name).await?;
         let mut handle = arc.lock().await;
 
         // RuntimeApi (rust/go): the unmodified official binary speaks the AWS
@@ -352,13 +493,7 @@ impl ProcessManager {
                 }
                 RtOutcome::WorkerGone => {
                     warn!("runtime-api worker on {function_name} exited without responding — restarting");
-                    handle_process_failure(&pool, &mut handle, function_name).await;
-                    spawn_liveness_watcher(
-                        handle.pid,
-                        arc.clone(),
-                        pool.clone(),
-                        function_name.to_string(),
-                    );
+                    fail_and_rearm(&pool, &arc, &mut handle, function_name).await;
                     Err(PoolError::Other(
                         function_name.into(),
                         anyhow::anyhow!("worker exited without responding"),
@@ -366,24 +501,7 @@ impl ProcessManager {
                 }
                 RtOutcome::Timeout => {
                     warn!("lambda timeout on {function_name} after {timeout_ms}ms — killing and restarting");
-                    kill_process_group(handle.pid);
-                    let _ = handle._child.kill().await;
-                    match spawn_with_cold_start_record(&pool, function_name).await {
-                        Ok(new_handle) => {
-                            *handle = new_handle;
-                            spawn_liveness_watcher(
-                                handle.pid,
-                                arc.clone(),
-                                pool.clone(),
-                                function_name.to_string(),
-                            );
-                        }
-                        Err(spawn_err) => {
-                            error!("failed to respawn {function_name}: {spawn_err}");
-                            pool.healthy.store(false, Ordering::Relaxed);
-                        }
-                    }
-                    pool.restart_count.fetch_add(1, Ordering::Relaxed);
+                    respawn_after_timeout(&pool, &arc, &mut handle, function_name).await;
                     Err(PoolError::Timeout(function_name.into(), timeout_ms))
                 }
             };
@@ -393,86 +511,29 @@ impl ProcessManager {
             .map_err(|e| PoolError::Other(function_name.into(), e.into()))?
             + "\n";
 
-        let guard_pid = Arc::new(std::sync::atomic::AtomicU32::new(handle.pid));
-        let guard_pid_inner = guard_pid.clone();
-        struct PipeDropGuard(Arc<std::sync::atomic::AtomicU32>);
-        impl Drop for PipeDropGuard {
-            fn drop(&mut self) {
-                let pid = self.0.swap(0, std::sync::atomic::Ordering::Relaxed);
-                if pid != 0 {
-                    kill_process_group(pid);
-                }
-            }
-        }
-        let _pipe_guard = PipeDropGuard(guard_pid.clone());
-
-        let result = {
-            let HandleTransport::Stdio { stdin, stdout } = &mut handle.transport else {
-                unreachable!("RuntimeApi handled above")
-            };
-            timeout(Duration::from_millis(timeout_ms), async {
-                stdin.write_all(payload.as_bytes()).await?;
-                stdin.flush().await?;
-                let mut line = String::new();
-                stdout.read_line(&mut line).await?;
-                guard_pid_inner.store(0, std::sync::atomic::Ordering::Relaxed);
-                Ok::<String, anyhow::Error>(line)
-            })
-            .await
-        };
-
-        match result {
-            Ok(Ok(line)) => match serde_json::from_str(line.trim()) {
+        match stdio_roundtrip(&mut handle, function_name, &payload, timeout_ms).await? {
+            StdioOutcome::Line(line) => match serde_json::from_str(line.trim()) {
                 Ok(resp) => {
                     pool.consecutive_crashes.store(0, Ordering::Relaxed);
                     Ok(resp)
                 }
                 Err(e) => {
                     warn!("malformed lambda response on {function_name}: {line:?} — killing and restarting");
-                    handle_process_failure(&pool, &mut handle, function_name).await;
-                    spawn_liveness_watcher(
-                        handle.pid,
-                        arc.clone(),
-                        pool.clone(),
-                        function_name.to_string(),
-                    );
+                    fail_and_rearm(&pool, &arc, &mut handle, function_name).await;
                     Err(PoolError::InvalidResponse(
                         function_name.into(),
                         e.to_string(),
                     ))
                 }
             },
-            Ok(Err(e)) => {
+            StdioOutcome::Io(e) => {
                 warn!("lambda crash on {function_name}: {e} — restarting");
-                handle_process_failure(&pool, &mut handle, function_name).await;
-                spawn_liveness_watcher(
-                    handle.pid,
-                    arc.clone(),
-                    pool.clone(),
-                    function_name.to_string(),
-                );
+                fail_and_rearm(&pool, &arc, &mut handle, function_name).await;
                 Err(PoolError::Other(function_name.into(), e))
             }
-            Err(_) => {
+            StdioOutcome::TimedOut => {
                 warn!("lambda timeout on {function_name} after {timeout_ms}ms — killing and restarting");
-                kill_process_group(handle.pid);
-                let _ = handle._child.kill().await;
-                match spawn_with_cold_start_record(&pool, function_name).await {
-                    Ok(new_handle) => {
-                        *handle = new_handle;
-                        spawn_liveness_watcher(
-                            handle.pid,
-                            arc.clone(),
-                            pool.clone(),
-                            function_name.to_string(),
-                        );
-                    }
-                    Err(spawn_err) => {
-                        error!("failed to respawn {function_name}: {spawn_err}");
-                        pool.healthy.store(false, Ordering::Relaxed);
-                    }
-                }
-                pool.restart_count.fetch_add(1, Ordering::Relaxed);
+                respawn_after_timeout(&pool, &arc, &mut handle, function_name).await;
                 Err(PoolError::Timeout(function_name.into(), timeout_ms))
             }
         }
@@ -493,48 +554,19 @@ impl ProcessManager {
         E: serde::Serialize,
         R: serde::de::DeserializeOwned + Default,
     {
-        let pools = self.pools.read().await;
-        let pool = pools
+        let pool = self
+            .pools
+            .read()
+            .await
             .get(function_name)
-            .ok_or_else(|| PoolError::NoPool(function_name.into()))?
-            .clone();
-        drop(pools);
+            .cloned()
+            .ok_or_else(|| PoolError::NoPool(function_name.into()))?;
 
         if !pool.healthy.load(Ordering::Relaxed) {
             return Ok(R::default());
         }
 
-        let _permit = match pool.semaphore.try_acquire() {
-            Ok(p) => p,
-            Err(tokio::sync::TryAcquireError::NoPermits) => {
-                return Err(PoolError::SemaphoreExhausted(function_name.into()))
-            }
-            Err(tokio::sync::TryAcquireError::Closed) => {
-                return Err(PoolError::SemaphoreClosed(function_name.into()))
-            }
-        };
-
-        let free_arc = {
-            let handles = pool.handles.read().await;
-            let mut found: Option<Arc<Mutex<ProcessHandle>>> = None;
-            for handle_mutex in handles.iter() {
-                if handle_mutex.try_lock().is_ok() {
-                    found = Some(handle_mutex.clone());
-                    break;
-                }
-            }
-            found
-        };
-
-        let arc = match free_arc {
-            Some(a) => a,
-            None => {
-                return Err(PoolError::Other(
-                    function_name.into(),
-                    anyhow::anyhow!("no free process handle"),
-                ))
-            }
-        };
+        let (_permit, arc) = acquire_worker(&pool, function_name).await?;
         let mut handle = arc.lock().await;
 
         // RuntimeApi (rust/go) generic-event path (WebSocket etc.). A handler
@@ -558,13 +590,7 @@ impl ProcessManager {
                 }
                 RtOutcome::WorkerGone => {
                     warn!("runtime-api ws worker on {function_name} exited without responding — restarting");
-                    handle_process_failure(&pool, &mut handle, function_name).await;
-                    spawn_liveness_watcher(
-                        handle.pid,
-                        arc.clone(),
-                        pool.clone(),
-                        function_name.to_string(),
-                    );
+                    fail_and_rearm(&pool, &arc, &mut handle, function_name).await;
                     Err(PoolError::Other(
                         function_name.into(),
                         anyhow::anyhow!("worker exited without responding"),
@@ -574,21 +600,7 @@ impl ProcessManager {
                     warn!(
                         "ws handler timeout on {function_name} after {timeout_ms}ms — restarting"
                     );
-                    kill_process_group(handle.pid);
-                    let _ = handle._child.kill().await;
-                    if let Ok(new_handle) = spawn_with_cold_start_record(&pool, function_name).await
-                    {
-                        *handle = new_handle;
-                        spawn_liveness_watcher(
-                            handle.pid,
-                            arc.clone(),
-                            pool.clone(),
-                            function_name.to_string(),
-                        );
-                    } else {
-                        pool.healthy.store(false, Ordering::Relaxed);
-                    }
-                    pool.restart_count.fetch_add(1, Ordering::Relaxed);
+                    respawn_after_timeout(&pool, &arc, &mut handle, function_name).await;
                     Err(PoolError::Timeout(function_name.into(), timeout_ms))
                 }
             };
@@ -597,80 +609,30 @@ impl ProcessManager {
         let payload = build_envelope_payload(request, function_name, timeout_ms)
             .map_err(|e| PoolError::Other(function_name.into(), e.into()))?
             + "\n";
-        let result = {
-            let HandleTransport::Stdio { stdin, stdout } = &mut handle.transport else {
-                unreachable!("RuntimeApi handled above")
-            };
-            timeout(Duration::from_millis(timeout_ms), async {
-                stdin.write_all(payload.as_bytes()).await?;
-                stdin.flush().await?;
-                let mut line = String::new();
-                stdout.read_line(&mut line).await?;
-                Ok::<String, anyhow::Error>(line)
-            })
-            .await
-        };
 
-        match result {
-            Ok(Ok(line)) => match serde_json::from_str(line.trim()) {
+        match stdio_roundtrip(&mut handle, function_name, &payload, timeout_ms).await? {
+            StdioOutcome::Line(line) => match serde_json::from_str(line.trim()) {
                 Ok(resp) => {
                     pool.consecutive_crashes.store(0, Ordering::Relaxed);
                     Ok(resp)
                 }
                 Err(e) => {
                     warn!("malformed ws handler response on {function_name}: {line:?} — killing and restarting");
-                    handle_process_failure(&pool, &mut handle, function_name).await;
-                    spawn_liveness_watcher(
-                        handle.pid,
-                        arc.clone(),
-                        pool.clone(),
-                        function_name.to_string(),
-                    );
+                    fail_and_rearm(&pool, &arc, &mut handle, function_name).await;
                     Err(PoolError::InvalidResponse(
                         function_name.into(),
                         e.to_string(),
                     ))
                 }
             },
-            Ok(Err(e)) => {
+            StdioOutcome::Io(e) => {
                 warn!("ws handler crash on {function_name}: {e} — restarting");
-                handle_process_failure(&pool, &mut handle, function_name).await;
-                // Re-arm the liveness watcher for the respawned PID — same as
-                // the HTTP invoke path and the malformed-response arm above.
-                // Without this the respawned WS process is left unwatched and
-                // a later out-of-band death would never be respawned.
-                spawn_liveness_watcher(
-                    handle.pid,
-                    arc.clone(),
-                    pool.clone(),
-                    function_name.to_string(),
-                );
+                fail_and_rearm(&pool, &arc, &mut handle, function_name).await;
                 Err(PoolError::Other(function_name.into(), e))
             }
-            Err(_) => {
+            StdioOutcome::TimedOut => {
                 warn!("ws handler timeout on {function_name} after {timeout_ms}ms — killing and restarting");
-                kill_process_group(handle.pid);
-                let _ = handle._child.kill().await;
-                // Respawn in place and re-arm the watcher — mirrors the HTTP
-                // invoke timeout arm. Previously this left a dead handle in the
-                // pool (stale PID in pool_stats) until the 200ms liveness poll
-                // happened to notice.
-                match spawn_with_cold_start_record(&pool, function_name).await {
-                    Ok(new_handle) => {
-                        *handle = new_handle;
-                        spawn_liveness_watcher(
-                            handle.pid,
-                            arc.clone(),
-                            pool.clone(),
-                            function_name.to_string(),
-                        );
-                    }
-                    Err(spawn_err) => {
-                        error!("failed to respawn {function_name}: {spawn_err}");
-                        pool.healthy.store(false, Ordering::Relaxed);
-                    }
-                }
-                pool.restart_count.fetch_add(1, Ordering::Relaxed);
+                respawn_after_timeout(&pool, &arc, &mut handle, function_name).await;
                 Err(PoolError::Timeout(function_name.into(), timeout_ms))
             }
         }
@@ -789,7 +751,13 @@ impl ProcessManager {
     /// its memory/CPU footprint.
     pub fn host_stats(&self) -> HostStats {
         let pid = std::process::id();
-        let mut sys = self.sys.lock().unwrap();
+        // Poison recovery (rule 7): `sys` is a stats-only sysinfo cache — if
+        // another thread panicked mid-refresh, the worst case is one stale
+        // sample, overwritten by the refresh below. Never worth a panic.
+        let mut sys = self
+            .sys
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         sys.refresh_processes_specifics(
             ProcessesToUpdate::Some(&[sysinfo::Pid::from_u32(pid)]),
             ProcessRefreshKind::new().with_memory().with_cpu(),
@@ -842,7 +810,11 @@ impl ProcessManager {
             .flat_map(|r| r.pids.iter().map(|&p| sysinfo::Pid::from_u32(p)))
             .collect();
 
-        let mut sys = self.sys.lock().unwrap();
+        // Poison recovery (rule 7): same stats-only rationale as host_stats.
+        let mut sys = self
+            .sys
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         sys.refresh_processes_specifics(
             ProcessesToUpdate::Some(&all_pids),
             ProcessRefreshKind::new().with_memory().with_cpu(),
@@ -850,9 +822,12 @@ impl ProcessManager {
 
         raw.into_iter()
             .map(|r| {
+                // saturating_add: summed RSS across a pool cannot overflow u64
+                // in practice; saturation (not wrap) keeps the stat honest-ish
+                // if it ever did.
                 let (mem_bytes, cpu) = r.pids.iter().fold((0u64, 0f32), |(m, c), &pid| {
                     match sys.process(Pid::from_u32(pid)) {
-                        Some(p) => (m + p.memory(), c + p.cpu_usage()),
+                        Some(p) => (m.saturating_add(p.memory()), c + p.cpu_usage()),
                         None => (m, c),
                     }
                 });
@@ -914,6 +889,86 @@ mod tests {
         assert!(
             deadline <= now_ms + 6000,
             "__riz_deadline_ms {deadline} must be <= now+6000ms (clock skew guard)"
+        );
+    }
+
+    /// The former `unreachable!("RuntimeApi handled above")` is now an error
+    /// return: a runtime-api worker reaching the stdio roundtrip fails that
+    /// ONE invocation instead of panicking the supervisor.
+    #[tokio::test]
+    async fn stdio_roundtrip_on_runtime_api_worker_is_an_error_not_a_panic() {
+        let endpoint = crate::process::runtime_api::WorkerEndpoint::start()
+            .await
+            .expect("endpoint");
+        let mut child = tokio::process::Command::new("true")
+            .kill_on_drop(true)
+            .spawn()
+            .expect("spawn `true`");
+        let pid = child.id().unwrap_or(0);
+        // Reap eagerly so the test never leaks; `true` exits on its own.
+        let _ = child.wait().await;
+        let mut handle = ProcessHandle {
+            pid,
+            spawned_at: std::time::Instant::now(),
+            _child: child,
+            transport: HandleTransport::RuntimeApi { endpoint },
+        };
+        let err = match stdio_roundtrip(&mut handle, "test-fn", "{}\n", 100).await {
+            Err(e) => e,
+            Ok(_) => panic!("a non-stdio worker must fail the invocation"),
+        };
+        assert!(
+            err.to_string().contains("transport dispatch bug"),
+            "error must name the dispatch bug: {err}"
+        );
+    }
+
+    /// Cancel-safety of the stdio roundtrip: dropping the future mid-flight
+    /// (integration timeout, vanished WS client) must kill the worker so the
+    /// desynced pipe can never answer a LATER invocation with a stale line.
+    /// This also pins the fix for `invoke_generic`, which previously had no
+    /// drop guard at all.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn dropped_stdio_roundtrip_kills_the_worker() {
+        let mut cmd = tokio::process::Command::new("sleep");
+        cmd.arg("30")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .kill_on_drop(true);
+        cmd.process_group(0); // kill_process_group targets the pgid
+        let mut child = cmd.spawn().expect("spawn `sleep 30`");
+        let pid = child.id().expect("live child has a pid");
+        let transport = HandleTransport::Stdio {
+            stdin: child.stdin.take().expect("piped stdin (test setup)"),
+            stdout: tokio::io::BufReader::new(child.stdout.take().expect("piped stdout")),
+        };
+        let mut handle = ProcessHandle {
+            pid,
+            spawned_at: std::time::Instant::now(),
+            _child: child,
+            transport,
+        };
+
+        // `sleep` never answers, so the roundtrip parks in read_line; the
+        // select drops it after 50ms — the mid-flight cancellation.
+        tokio::select! {
+            biased;
+            _ = tokio::time::sleep(Duration::from_millis(50)) => {}
+            _ = stdio_roundtrip(&mut handle, "test-fn", "{}\n", 60_000) => {
+                panic!("roundtrip against `sleep` must not complete");
+            }
+        }
+
+        // The drop guard must have SIGKILLed the group: wait() resolves well
+        // before sleep's 30s, with a non-success status.
+        let status = timeout(Duration::from_secs(5), handle._child.wait())
+            .await
+            .expect("worker must die promptly after the roundtrip is dropped")
+            .expect("wait() on the killed worker");
+        assert!(
+            !status.success(),
+            "worker must have been killed, not exited cleanly: {status:?}"
         );
     }
 

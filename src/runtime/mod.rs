@@ -81,29 +81,26 @@ impl RouteEntry {
         let path_parts: Vec<&str> = path.trim_matches('/').split('/').collect();
         let mut params = HashMap::new();
         for (idx, pat) in pattern_parts.iter().enumerate() {
-            // Greedy `{name+}` — consumes all remaining path segments.
+            // Greedy `{name+}` — consumes all remaining path segments
+            // (at least one: `/api` does not match `/api/{proxy+}`).
             if let Some(inner) = pat.strip_prefix('{').and_then(|s| s.strip_suffix("+}")) {
-                if idx >= path_parts.len() {
-                    return None;
-                }
-                let tail = path_parts[idx..].join("/");
+                let tail = match path_parts.get(idx..) {
+                    Some(rest) if !rest.is_empty() => rest.join("/"),
+                    _ => return None,
+                };
                 params.insert(inner.to_string(), crate::router::percent_decode(&tail));
                 return Some(params);
             }
             // Single-segment `{name}` capture.
             if let Some(inner) = pat.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
-                if idx >= path_parts.len() {
-                    return None;
-                }
-                params.insert(
-                    inner.to_string(),
-                    crate::router::percent_decode(path_parts[idx]),
-                );
+                let seg = path_parts.get(idx)?;
+                params.insert(inner.to_string(), crate::router::percent_decode(seg));
                 continue;
             }
-            // Literal segment.
-            if idx >= path_parts.len() || *pat != path_parts[idx] {
-                return None;
+            // Literal segment: must exist and match exactly.
+            match path_parts.get(idx) {
+                Some(seg) if pat == seg => {}
+                _ => return None,
             }
         }
         // No greedy capture consumed the rest — segment counts must match.

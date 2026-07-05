@@ -5,6 +5,7 @@
 
 use crate::config::{FunctionConfig, RouteSpec};
 use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
+use crate::process::guard::GuardDecision;
 use crate::process::{PoolError, ProcessManager};
 use crate::runtime::{HandlerError, LambdaHandler, RouteEntry, RouteMethod};
 use async_trait::async_trait;
@@ -62,35 +63,28 @@ impl ProcessHandler {
     /// Run a guard pool against a JSON payload and interpret the verdict.
     /// EVERY failure path (pool error, unhealthy pool, garbage verdict,
     /// unknown action) fails CLOSED — a configured policy that can't run
-    /// must never silently allow traffic.
+    /// must never silently allow traffic. The closed allow/deny set is
+    /// encoded in [`GuardDecision`], so callers cannot see (and need no
+    /// `unreachable!` arm for) an unknown action.
     async fn run_guard(
         &self,
         pool_name: &str,
         payload: &serde_json::Value,
-    ) -> Result<crate::process::guard::GuardVerdict, HandlerError> {
-        use crate::process::guard::{GuardVerdict, GUARD_TIMEOUT_MS};
+    ) -> Result<GuardDecision, HandlerError> {
+        use crate::process::guard::{
+            GuardVerdict, DENY_DEFAULT_BODY, DENY_DEFAULT_STATUS, GUARD_TIMEOUT_MS,
+        };
         let started = std::time::Instant::now();
         let verdict: Result<GuardVerdict, PoolError> = self
             .process_manager
             .invoke_generic(pool_name, payload, GUARD_TIMEOUT_MS)
             .await;
-        let ok = matches!(
-            &verdict,
-            Ok(v) if v.action == "allow" || v.action == "deny"
-        );
-        // Guard timing surfaces in /_riz/health under the guard pool name
-        // (no-op unless the name is registered, which main.rs does).
-        self.process_manager
-            .riz_state()
-            .record_invocation(
-                pool_name,
-                started.elapsed().as_secs_f64() * 1000.0,
-                ok,
-                false,
-            )
-            .await;
-        match verdict {
-            Ok(v) if v.action == "allow" || v.action == "deny" => Ok(v),
+        let decision = match verdict {
+            Ok(v) if v.action == "allow" => Ok(GuardDecision::Allow(v)),
+            Ok(v) if v.action == "deny" => Ok(GuardDecision::Deny {
+                status_code: v.status_code.unwrap_or(DENY_DEFAULT_STATUS),
+                body: v.body.unwrap_or_else(|| DENY_DEFAULT_BODY.to_string()),
+            }),
             Ok(v) => Err(HandlerError::Process(format!(
                 "guard '{pool_name}' verdict not understood (action={:?}) — failing closed",
                 v.action
@@ -98,7 +92,19 @@ impl ProcessHandler {
             Err(e) => Err(HandlerError::Process(format!(
                 "guard '{pool_name}' failed ({e}) — failing closed"
             ))),
-        }
+        };
+        // Guard timing surfaces in /_riz/health under the guard pool name
+        // (no-op unless the name is registered, which main.rs does).
+        self.process_manager
+            .riz_state()
+            .record_invocation(
+                pool_name,
+                started.elapsed().as_secs_f64() * 1000.0,
+                decision.is_ok(),
+                false,
+            )
+            .await;
+        decision
     }
 
     #[allow(dead_code)]
@@ -133,9 +139,8 @@ impl LambdaHandler for ProcessHandler {
         if let Some(guard_pool) = &self.guard_in_pool {
             let payload = serde_json::to_value(&event)
                 .map_err(|e| HandlerError::Internal(format!("event serialize: {e}")))?;
-            let verdict = self.run_guard(guard_pool, &payload).await?;
-            match verdict.action.as_str() {
-                "allow" => {
+            match self.run_guard(guard_pool, &payload).await? {
+                GuardDecision::Allow(verdict) => {
                     if let Some(mutated) = verdict.event {
                         event = serde_json::from_value(mutated).map_err(|e| {
                             HandlerError::Process(format!(
@@ -145,18 +150,13 @@ impl LambdaHandler for ProcessHandler {
                         })?;
                     }
                 }
-                "deny" => {
-                    let status = verdict.status_code.unwrap_or(403);
-                    let body = verdict
-                        .body
-                        .unwrap_or_else(|| r#"{"error":"rejected by guard"}"#.to_string());
+                GuardDecision::Deny { status_code, body } => {
                     return Ok(crate::runtime::response::text_response(
-                        status,
+                        status_code,
                         "application/json",
                         body,
                     ));
                 }
-                _ => unreachable!("run_guard only passes allow/deny through"),
             }
         }
 
@@ -205,9 +205,8 @@ impl LambdaHandler for ProcessHandler {
         if let Some(guard_pool) = &self.guard_out_pool {
             let payload = serde_json::to_value(&resp)
                 .map_err(|e| HandlerError::Internal(format!("response serialize: {e}")))?;
-            let verdict = self.run_guard(guard_pool, &payload).await?;
-            match verdict.action.as_str() {
-                "allow" => {
+            match self.run_guard(guard_pool, &payload).await? {
+                GuardDecision::Allow(verdict) => {
                     if let Some(replacement) = verdict.response {
                         resp = serde_json::from_value(replacement).map_err(|e| {
                             HandlerError::Process(format!(
@@ -217,18 +216,13 @@ impl LambdaHandler for ProcessHandler {
                         })?;
                     }
                 }
-                "deny" => {
-                    let status = verdict.status_code.unwrap_or(403);
-                    let body = verdict
-                        .body
-                        .unwrap_or_else(|| r#"{"error":"rejected by guard"}"#.to_string());
+                GuardDecision::Deny { status_code, body } => {
                     return Ok(crate::runtime::response::text_response(
-                        status,
+                        status_code,
                         "application/json",
                         body,
                     ));
                 }
-                _ => unreachable!("run_guard only passes allow/deny through"),
             }
         }
         Ok(resp)

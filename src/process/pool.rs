@@ -34,6 +34,16 @@ pub(super) enum HandleTransport {
     RuntimeApi { endpoint: WorkerEndpoint },
 }
 
+/// What `spawn_process` provisions BEFORE the child starts, keyed by
+/// transport. Carrying the endpoint inside the variant (instead of an
+/// `Option` reunited with the transport kind after spawn) lets the type
+/// system prove "a runtime-api worker always has its endpoint" — there is
+/// no absent case left to `expect` away (rule 5: encode the invariant).
+enum ProvisionedTransport {
+    Stdio,
+    RuntimeApi { endpoint: WorkerEndpoint },
+}
+
 /// One pool per FUNCTION (not per route). All routes belonging to a
 /// function share the pool's processes — matches AWS Lambda execution
 /// environments where N routes can target the same Lambda.
@@ -94,31 +104,32 @@ pub(super) async fn spawn_process(
     // RuntimeApi (rust/go): provision a per-worker AWS Lambda Runtime API
     // endpoint and expose it to the unmodified official runtime client via the
     // standard AWS env vars. The event is delivered over HTTP, not stdin.
-    let api_endpoint = if transport_kind == WorkerTransport::RuntimeApi {
-        let ep = WorkerEndpoint::start().await?;
-        cmd.env("AWS_LAMBDA_RUNTIME_API", ep.addr.to_string())
-            .env("AWS_LAMBDA_FUNCTION_NAME", function_name)
-            .env("AWS_LAMBDA_FUNCTION_VERSION", "$LATEST")
-            .env(
-                "AWS_LAMBDA_FUNCTION_MEMORY_SIZE",
-                cfg.memory_mb
-                    .map(|m| m.to_string())
-                    .unwrap_or_else(|| "128".into()),
-            )
-            .env("_HANDLER", cfg.handler.to_string_lossy().to_string());
-        Some(ep)
-    } else {
-        None
+    let provisioned = match transport_kind {
+        WorkerTransport::Stdio => ProvisionedTransport::Stdio,
+        WorkerTransport::RuntimeApi => {
+            let endpoint = WorkerEndpoint::start().await?;
+            cmd.env("AWS_LAMBDA_RUNTIME_API", endpoint.addr.to_string())
+                .env("AWS_LAMBDA_FUNCTION_NAME", function_name)
+                .env("AWS_LAMBDA_FUNCTION_VERSION", "$LATEST")
+                .env(
+                    "AWS_LAMBDA_FUNCTION_MEMORY_SIZE",
+                    cfg.memory_mb
+                        .map(|m| m.to_string())
+                        .unwrap_or_else(|| "128".into()),
+                )
+                .env("_HANDLER", cfg.handler.to_string_lossy().to_string());
+            ProvisionedTransport::RuntimeApi { endpoint }
+        }
     };
 
     // stdio: stdin+stdout are the event channel. runtime-api: stdin is unused
     // (events arrive over HTTP) and stdout is captured as logs.
-    match transport_kind {
-        WorkerTransport::Stdio => {
+    match &provisioned {
+        ProvisionedTransport::Stdio => {
             cmd.stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped());
         }
-        WorkerTransport::RuntimeApi => {
+        ProvisionedTransport::RuntimeApi { .. } => {
             cmd.stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::piped());
         }
@@ -177,21 +188,15 @@ pub(super) async fn spawn_process(
         tail_to_logs(stderr, tag.clone(), "stderr", log_tx.clone());
     }
 
-    let transport = match transport_kind {
-        WorkerTransport::Stdio => {
-            let stdin = child.stdin.take().expect("stdin piped");
-            let stdout = BufReader::new(child.stdout.take().expect("stdout piped"));
-            HandleTransport::Stdio { stdin, stdout }
-        }
-        WorkerTransport::RuntimeApi => {
+    let transport = match provisioned {
+        ProvisionedTransport::Stdio => wire_stdio_transport(&mut child)?,
+        ProvisionedTransport::RuntimeApi { endpoint } => {
             // The runtime-api child uses HTTP for events; its stdout is just
             // handler logs (e.g. println!/fmt.Println) — tail it like stderr.
             if let Some(stdout) = child.stdout.take() {
                 tail_to_logs(stdout, tag, "stdout", log_tx.clone());
             }
-            HandleTransport::RuntimeApi {
-                endpoint: api_endpoint.expect("runtime-api endpoint provisioned above"),
-            }
+            HandleTransport::RuntimeApi { endpoint }
         }
     };
 
@@ -203,25 +208,108 @@ pub(super) async fn spawn_process(
     })
 }
 
+/// Take the child's piped stdin/stdout as the stdio event channel.
+///
+/// The `Command` was configured with both pipes a few lines above, so
+/// `take()` returning `None` means the pipe wiring failed. A worker without
+/// its event channel is a FAILED SPAWN — surfaced as `Err` into the caller's
+/// existing spawn-error path (unhealthy accounting, 503s), never a panic
+/// (rule 7). The caller drops the `Child` on error; `kill_on_drop(true)`
+/// reaps it.
+fn wire_stdio_transport(child: &mut Child) -> anyhow::Result<HandleTransport> {
+    let stdin = child
+        .stdin
+        .take()
+        .context("stdio worker spawned without a piped stdin — pipe wiring failed")?;
+    let stdout = child
+        .stdout
+        .take()
+        .context("stdio worker spawned without a piped stdout — pipe wiring failed")?;
+    Ok(HandleTransport::Stdio {
+        stdin,
+        stdout: BufReader::new(stdout),
+    })
+}
+
+/// Cap on one buffered log line from a worker stream (rule 3: a worker
+/// spewing an endless line with no newline must not balloon host memory).
+/// Longer lines are forwarded truncated at the cap, marked, and the rest of
+/// the line up to the next newline is discarded.
+const MAX_LOG_LINE_BYTES: usize = 8 * 1024;
+
 /// Tail a child stream (stdout/stderr) into the log channel, line by line.
+///
+/// Per-line memory is capped at [`MAX_LOG_LINE_BYTES`]; work per loop
+/// iteration is bounded by the `BufReader`'s internal buffer (rule 2). The
+/// task exits when the stream reaches EOF or errors — i.e. when the worker
+/// dies — so its lifetime is tied to the child's.
 fn tail_to_logs<R>(stream: R, tag: String, which: &'static str, tx: mpsc::Sender<LogEntry>)
 where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
 {
     tokio::spawn(async move {
-        let mut lines = BufReader::new(stream).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            if line.trim().is_empty() {
-                continue;
+        let mut reader = BufReader::new(stream);
+        let mut line: Vec<u8> = Vec::new();
+        let mut truncated = false;
+        loop {
+            // fill_buf exposes the reader's internal buffer without copying;
+            // consume() advances past the bytes we scanned.
+            let (advance, saw_newline) = {
+                let chunk = match reader.fill_buf().await {
+                    Ok([]) => break, // EOF — the worker closed the stream
+                    Ok(chunk) => chunk,
+                    Err(_) => break, // stream error — worker died; stop tailing
+                };
+                let newline_at = chunk.iter().position(|&b| b == b'\n');
+                let upto = newline_at.unwrap_or(chunk.len());
+                let room = MAX_LOG_LINE_BYTES.saturating_sub(line.len());
+                let take = upto.min(room);
+                if let Some(head) = chunk.get(..take) {
+                    line.extend_from_slice(head);
+                }
+                if take < upto {
+                    truncated = true; // over the cap — drop the line's excess
+                }
+                (
+                    newline_at.map_or(chunk.len(), |i| i.saturating_add(1)),
+                    newline_at.is_some(),
+                )
+            };
+            reader.consume(advance);
+            if saw_newline {
+                emit_log_line(&mut line, &mut truncated, &tag, which, &tx);
             }
-            let _ = tx.try_send(LogEntry {
-                timestamp: std::time::SystemTime::now(),
-                level: "WARN".into(),
-                message: format!("{which}: {line}"),
-                route_key: Some(tag.clone()),
-            });
         }
+        // Trailing partial line (worker exited without a final newline).
+        emit_log_line(&mut line, &mut truncated, &tag, which, &tx);
     });
+}
+
+/// Send one buffered line (if non-blank) to the log channel, then reset the
+/// buffer and truncation flag for the next line.
+fn emit_log_line(
+    line: &mut Vec<u8>,
+    truncated: &mut bool,
+    tag: &str,
+    which: &'static str,
+    tx: &mpsc::Sender<LogEntry>,
+) {
+    let text = String::from_utf8_lossy(line);
+    let text = text.trim();
+    if !text.is_empty() {
+        let marker = if *truncated { " …[truncated]" } else { "" };
+        // Full channel = the log consumer is behind. Dropping the line IS the
+        // backpressure policy (bounded channel, rule 3) — logs are lossy
+        // telemetry, never worth stalling the tail task over.
+        let _ = tx.try_send(LogEntry {
+            timestamp: std::time::SystemTime::now(),
+            level: "WARN".into(),
+            message: format!("{which}: {text}{marker}"),
+            route_key: Some(tag.to_string()),
+        });
+    }
+    line.clear();
+    *truncated = false;
 }
 
 #[cfg(unix)]
@@ -230,6 +318,11 @@ pub fn kill_process_group(pid: u32) {
     if pid == 0 {
         return;
     }
+    // Result explicitly discarded (rule 7): ESRCH — the group is already
+    // gone — is the expected benign failure on every double-kill path
+    // (drop guard after an explicit kill, respawn racing the liveness
+    // watcher). There is nothing to recover; the caller's respawn logic
+    // does not depend on this signal landing.
     let _ = nix::sys::signal::killpg(
         nix::unistd::Pid::from_raw(pid as i32),
         nix::sys::signal::Signal::SIGKILL,
@@ -239,3 +332,95 @@ pub fn kill_process_group(pid: u32) {
 #[cfg(not(unix))]
 #[tracing::instrument(fields(pid))]
 pub fn kill_process_group(_pid: u32) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A stdio child spawned WITHOUT piped stdin must surface as a spawn
+    /// error (failed pipe wiring), not a panic — the supervisor treats it
+    /// exactly like any other failed spawn.
+    #[tokio::test]
+    async fn wire_stdio_transport_without_pipes_is_an_error_not_a_panic() {
+        let mut child = tokio::process::Command::new("true")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("spawn `true`");
+        let err = match wire_stdio_transport(&mut child) {
+            Err(e) => e,
+            Ok(_) => panic!("un-piped child must not wire a stdio transport"),
+        };
+        assert!(
+            err.to_string().contains("pipe wiring failed"),
+            "error must name the failure: {err}"
+        );
+        // Result explicitly discarded: the child is `true` and exits on its
+        // own; wait() just reaps it so the test leaves no process behind.
+        let _ = child.wait().await;
+    }
+
+    /// Happy path: piped stdin/stdout wire into a Stdio transport.
+    #[tokio::test]
+    async fn wire_stdio_transport_with_pipes_succeeds() {
+        let mut child = tokio::process::Command::new("true")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("spawn `true`");
+        let transport = wire_stdio_transport(&mut child).expect("pipes are wired");
+        assert!(matches!(transport, HandleTransport::Stdio { .. }));
+        let _ = child.wait().await;
+    }
+
+    /// Rule 3: a worker emitting one endless line (no newline) must not grow
+    /// host memory past the cap — the line arrives truncated and marked.
+    #[tokio::test]
+    async fn tail_to_logs_caps_runaway_lines() {
+        let (tx, mut rx) = mpsc::channel::<crate::state::LogEntry>(16);
+        let giant = vec![b'a'; MAX_LOG_LINE_BYTES * 4]; // 32 KiB, no newline
+        tail_to_logs(std::io::Cursor::new(giant), "t".into(), "stdout", tx);
+        let entry = rx.recv().await.expect("one truncated line at EOF");
+        assert!(
+            entry.message.contains("[truncated]"),
+            "over-cap line must be marked truncated"
+        );
+        assert!(
+            entry.message.len() < MAX_LOG_LINE_BYTES + 64,
+            "buffered line must be capped near MAX_LOG_LINE_BYTES, got {}",
+            entry.message.len()
+        );
+        assert!(rx.recv().await.is_none(), "exactly one line is emitted");
+    }
+
+    /// Normal multi-line output passes through unmodified, one entry per
+    /// line, blanks skipped — the pre-cap behavior.
+    #[tokio::test]
+    async fn tail_to_logs_passes_normal_lines_through() {
+        let (tx, mut rx) = mpsc::channel::<crate::state::LogEntry>(16);
+        let stream = b"hello\n\n  \nworld\n".to_vec();
+        tail_to_logs(std::io::Cursor::new(stream), "t".into(), "stderr", tx);
+        let first = rx.recv().await.expect("first line");
+        assert_eq!(first.message, "stderr: hello");
+        let second = rx.recv().await.expect("second line (blanks skipped)");
+        assert_eq!(second.message, "stderr: world");
+        assert!(rx.recv().await.is_none());
+    }
+
+    /// A trailing line without a final newline (worker died mid-line) is
+    /// still delivered.
+    #[tokio::test]
+    async fn tail_to_logs_flushes_partial_line_at_eof() {
+        let (tx, mut rx) = mpsc::channel::<crate::state::LogEntry>(16);
+        tail_to_logs(
+            std::io::Cursor::new(b"partial".to_vec()),
+            "t".into(),
+            "stdout",
+            tx,
+        );
+        let entry = rx.recv().await.expect("partial line at EOF");
+        assert_eq!(entry.message, "stdout: partial");
+    }
+}

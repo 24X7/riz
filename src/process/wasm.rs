@@ -112,77 +112,112 @@ struct HostCtx {
     stash: Vec<u8>,
 }
 
+/// Parsed `riz __wasm-host` argv (everything after the subcommand).
+struct HostArgs {
+    module_path: String,
+    dirs: Vec<String>,
+    envs: Vec<(String, String)>,
+    broker_grants_json: Option<String>,
+}
+
+/// Parse `<module.wasm> [--dir PATH] [--env K=V] [--broker-grants JSON]`.
+/// Iterator-driven — no index arithmetic to slip out of bounds (rule 9);
+/// every malformed shape is a startup error, never a panic.
+fn parse_host_args(args: &[String]) -> wasmtime::Result<HostArgs> {
+    use wasmtime::bail;
+
+    let mut it = args.iter();
+    let Some(module_path) = it.next() else {
+        bail!("__wasm-host: missing <module.wasm> argument");
+    };
+    let mut dirs: Vec<String> = Vec::new();
+    let mut envs: Vec<(String, String)> = Vec::new();
+    let mut broker_grants_json: Option<String> = None;
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--dir" => {
+                let Some(p) = it.next() else {
+                    bail!("__wasm-host: --dir requires a path argument");
+                };
+                dirs.push(p.clone());
+            }
+            "--env" => {
+                let Some(kv) = it.next() else {
+                    bail!("__wasm-host: --env requires a KEY=VALUE argument");
+                };
+                if let Some((k, v)) = kv.split_once('=') {
+                    envs.push((k.to_string(), v.to_string()));
+                }
+            }
+            "--broker-grants" => {
+                let Some(json) = it.next() else {
+                    bail!("__wasm-host: --broker-grants requires a JSON argument");
+                };
+                broker_grants_json = Some(json.clone());
+            }
+            other => bail!("__wasm-host: unexpected argument {other:?}"),
+        }
+    }
+    Ok(HostArgs {
+        module_path: module_path.clone(),
+        dirs,
+        envs,
+        broker_grants_json,
+    })
+}
+
+/// A broker armed with the current-thread runtime that drives its async I/O
+/// (both `None` when the function has no capability grants).
+type ArmedBroker = (
+    Option<std::sync::Arc<crate::broker::Broker>>,
+    Option<std::sync::Arc<tokio::runtime::Runtime>>,
+);
+
+/// Arm the resource broker from `--broker-grants` + `RIZ_BROKER_RESOURCES`.
+///
+/// Grants arrive in argv (limit config only); `[resources]` definitions ride
+/// RIZ_BROKER_RESOURCES in the inherited env; DSNs resolve from the env
+/// vars the resources name. Failures here are startup errors — a granted
+/// function that can't arm its broker must not come up half-armed.
+fn arm_broker(broker_grants_json: Option<String>) -> wasmtime::Result<ArmedBroker> {
+    use wasmtime::error::Context as _;
+
+    let Some(json) = broker_grants_json else {
+        return Ok((None, None));
+    };
+    let grants: indexmap::IndexMap<String, crate::config::CapabilityGrant> =
+        serde_json::from_str(&json).context("--broker-grants is not valid JSON")?;
+    let resources_json = std::env::var("RIZ_BROKER_RESOURCES")
+        .context("--broker-grants given but RIZ_BROKER_RESOURCES is not set")?;
+    let resources: crate::config::ResourcesConfig =
+        serde_json::from_str(&resources_json).context("RIZ_BROKER_RESOURCES is not valid JSON")?;
+    let backends = crate::broker::pg::backends_for_function(&grants, &resources)
+        .map_err(|e| wasmtime::format_err!("broker backend setup failed: {e}"))?;
+    let broker = std::sync::Arc::new(crate::broker::Broker::new(&grants, backends));
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("failed to build broker runtime")?;
+    Ok((Some(broker), Some(std::sync::Arc::new(rt))))
+}
+
 fn run_host_inner(args: &[String]) -> wasmtime::Result<()> {
     use wasmtime::error::Context as _;
     use wasmtime::{bail, Engine, Linker, Module, Store};
     use wasmtime_wasi::p1;
     use wasmtime_wasi::{DirPerms, FilePerms, I32Exit, WasiCtxBuilder};
 
-    let Some(module_path) = args.first() else {
-        bail!("__wasm-host: missing <module.wasm> argument");
-    };
+    let HostArgs {
+        module_path,
+        dirs,
+        envs,
+        broker_grants_json,
+    } = parse_host_args(args)?;
 
-    let mut dirs: Vec<String> = Vec::new();
-    let mut envs: Vec<(String, String)> = Vec::new();
-    let mut broker_grants_json: Option<String> = None;
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--dir" => {
-                let Some(p) = args.get(i + 1) else {
-                    bail!("__wasm-host: --dir requires a path argument");
-                };
-                dirs.push(p.clone());
-                i += 2;
-            }
-            "--env" => {
-                let Some(kv) = args.get(i + 1) else {
-                    bail!("__wasm-host: --env requires a KEY=VALUE argument");
-                };
-                if let Some((k, v)) = kv.split_once('=') {
-                    envs.push((k.to_string(), v.to_string()));
-                }
-                i += 2;
-            }
-            "--broker-grants" => {
-                let Some(json) = args.get(i + 1) else {
-                    bail!("__wasm-host: --broker-grants requires a JSON argument");
-                };
-                broker_grants_json = Some(json.clone());
-                i += 2;
-            }
-            other => bail!("__wasm-host: unexpected argument {other:?}"),
-        }
-    }
-
-    // ── Resource broker (capability grants) ─────────────────────────────
-    // Grants arrive in argv (limit config only); [resources] definitions ride
-    // RIZ_BROKER_RESOURCES in the inherited env; DSNs resolve from the env
-    // vars the resources name. Failures here are startup errors — a granted
-    // function that can't arm its broker must not come up half-armed.
-    let (broker, rt) = match broker_grants_json {
-        None => (None, None),
-        Some(json) => {
-            let grants: indexmap::IndexMap<String, crate::config::CapabilityGrant> =
-                serde_json::from_str(&json).context("--broker-grants is not valid JSON")?;
-            let resources_json = std::env::var("RIZ_BROKER_RESOURCES")
-                .context("--broker-grants given but RIZ_BROKER_RESOURCES is not set")?;
-            let resources: crate::config::ResourcesConfig =
-                serde_json::from_str(&resources_json)
-                    .context("RIZ_BROKER_RESOURCES is not valid JSON")?;
-            let backends = crate::broker::pg::backends_for_function(&grants, &resources)
-                .map_err(|e| wasmtime::format_err!("broker backend setup failed: {e}"))?;
-            let broker = std::sync::Arc::new(crate::broker::Broker::new(&grants, backends));
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .context("failed to build broker runtime")?;
-            (Some(broker), Some(std::sync::Arc::new(rt)))
-        }
-    };
+    let (broker, rt) = arm_broker(broker_grants_json)?;
 
     let engine = Engine::default();
-    let module = Module::from_file(&engine, module_path)
+    let module = Module::from_file(&engine, &module_path)
         .with_context(|| format!("failed to load wasm module {module_path}"))?;
 
     let mut linker: Linker<HostCtx> = Linker::new(&engine);
@@ -234,6 +269,20 @@ fn run_host_inner(args: &[String]) -> wasmtime::Result<()> {
     }
 }
 
+/// Validate a guest-supplied `(ptr, len)` pair against the guest's linear
+/// memory size BEFORE any host-side allocation. A hostile guest passing
+/// `len = i32::MAX` must fault the ABI call (−1), not make the host allocate
+/// gigabytes (rule 3: no unbounded growth from guest input). Returns the
+/// in-bounds pair as `usize`s.
+fn guest_range(ptr: i32, len: i32, mem_size: usize) -> Option<(usize, usize)> {
+    let ptr = usize::try_from(ptr).ok()?; // negative → fault
+    let len = usize::try_from(len).ok()?; // negative → fault
+    if ptr.checked_add(len)? > mem_size {
+        return None;
+    }
+    Some((ptr, len))
+}
+
 /// The guest-facing broker ABI (import module `riz_broker`), v1:
 ///
 /// - `pg_query(grant_ptr, grant_len, req_ptr, req_len) -> i32`
@@ -259,14 +308,20 @@ fn add_broker_imports(linker: &mut wasmtime::Linker<HostCtx>) -> wasmtime::Resul
             let Some(wasmtime::Extern::Memory(memory)) = caller.get_export("memory") else {
                 return -1;
             };
-            let mut grant_buf = vec![0u8; grant_len.max(0) as usize];
-            let mut req_buf = vec![0u8; req_len.max(0) as usize];
-            if memory
-                .read(&caller, grant_ptr as usize, &mut grant_buf)
-                .is_err()
-                || memory
-                    .read(&caller, req_ptr as usize, &mut req_buf)
-                    .is_err()
+            // Bounds-check both ranges against the guest's own memory size
+            // before allocating host buffers — the allocation is thereby
+            // proportional to memory the guest itself already paid for.
+            let mem_size = memory.data_size(&caller);
+            let Some((grant_ptr, grant_len)) = guest_range(grant_ptr, grant_len, mem_size) else {
+                return -1;
+            };
+            let Some((req_ptr, req_len)) = guest_range(req_ptr, req_len, mem_size) else {
+                return -1;
+            };
+            let mut grant_buf = vec![0u8; grant_len];
+            let mut req_buf = vec![0u8; req_len];
+            if memory.read(&caller, grant_ptr, &mut grant_buf).is_err()
+                || memory.read(&caller, req_ptr, &mut req_buf).is_err()
             {
                 return -1;
             }
@@ -315,4 +370,67 @@ fn add_broker_imports(linker: &mut wasmtime::Linker<HostCtx>) -> wasmtime::Resul
         },
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn s(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn parse_host_args_full_shape() {
+        let args = s(&[
+            "mod.wasm",
+            "--dir",
+            "/data",
+            "--env",
+            "K=V",
+            "--broker-grants",
+            "{}",
+        ]);
+        let parsed = parse_host_args(&args).expect("valid argv parses");
+        assert_eq!(parsed.module_path, "mod.wasm");
+        assert_eq!(parsed.dirs, vec!["/data".to_string()]);
+        assert_eq!(parsed.envs, vec![("K".to_string(), "V".to_string())]);
+        assert_eq!(parsed.broker_grants_json.as_deref(), Some("{}"));
+    }
+
+    #[test]
+    fn parse_host_args_rejects_malformed_shapes() {
+        assert!(parse_host_args(&[]).is_err(), "missing module");
+        assert!(
+            parse_host_args(&s(&["m.wasm", "--dir"])).is_err(),
+            "dangling --dir"
+        );
+        assert!(
+            parse_host_args(&s(&["m.wasm", "--env"])).is_err(),
+            "dangling --env"
+        );
+        assert!(
+            parse_host_args(&s(&["m.wasm", "--broker-grants"])).is_err(),
+            "dangling --broker-grants"
+        );
+        assert!(
+            parse_host_args(&s(&["m.wasm", "--bogus"])).is_err(),
+            "unknown flag"
+        );
+    }
+
+    /// Rule 3: a hostile (ptr, len) from the guest must fault WITHOUT any
+    /// host-side allocation — including `len = i32::MAX` and negative values.
+    #[test]
+    fn guest_range_rejects_hostile_pairs_before_allocating() {
+        let mem = 64 * 1024; // one wasm page
+        assert_eq!(guest_range(0, 16, mem), Some((0, 16)));
+        assert_eq!(guest_range(0, 0, mem), Some((0, 0)));
+        assert_eq!(guest_range(mem as i32 - 4, 4, mem), Some((mem - 4, 4)));
+        assert_eq!(guest_range(mem as i32 - 4, 5, mem), None, "spills past end");
+        assert_eq!(guest_range(0, i32::MAX, mem), None, "giant len faults");
+        assert_eq!(guest_range(i32::MAX, i32::MAX, mem), None, "no usize wrap");
+        assert_eq!(guest_range(-1, 4, mem), None, "negative ptr faults");
+        assert_eq!(guest_range(0, -1, mem), None, "negative len faults");
+    }
 }

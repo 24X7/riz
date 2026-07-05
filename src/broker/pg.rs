@@ -114,7 +114,12 @@ impl PgBackend for TokioPgBackend {
         if guard.is_none() {
             *guard = Some(self.connect().await?);
         }
-        let client = guard.as_mut().expect("just ensured");
+        let Some(client) = guard.as_mut() else {
+            // Unreachable by the two lines above — but a broker must fail
+            // CLOSED, never panic: a panicking broker kills the whole wasm
+            // host, so an impossible state denies this one call instead.
+            return Err("pg backend: no client after connect".to_string());
+        };
 
         let result = run_query(client, sql, params, read_only).await;
         match result {
@@ -206,6 +211,10 @@ fn column_to_json(
     ty: &Type,
 ) -> Result<serde_json::Value, String> {
     use serde_json::Value;
+    // Resolved via .get() (rule 9): `i` comes from enumerating this row's
+    // own columns, but the error paths below must never panic the broker —
+    // "?" only ever shows if a caller passes a foreign index.
+    let col_name = row.columns().get(i).map_or("?", |c| c.name());
     let v = match *ty {
         Type::BOOL => row
             .try_get::<_, Option<bool>>(i)
@@ -241,16 +250,14 @@ fn column_to_json(
         }),
         ref other => {
             return Err(format!(
-                "column '{}' has unsupported type '{}' — cast it in SQL (e.g. \
-                 \"{}::text\") to broker it",
-                row.columns()[i].name(),
+                "column '{col_name}' has unsupported type '{}' — cast it in SQL \
+                 (e.g. \"{col_name}::text\") to broker it",
                 other.name(),
-                row.columns()[i].name(),
             ))
         }
     };
     v.map(|opt| opt.unwrap_or(Value::Null))
-        .map_err(|e| format!("decode column '{}': {e}", row.columns()[i].name()))
+        .map_err(|e| format!("decode column '{col_name}': {e}"))
 }
 
 /// Build the grant-name → backend map for one function from validated
