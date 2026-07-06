@@ -15,7 +15,7 @@ The core. Exact `aws_lambda_events` wire types, `{id}`/`{proxy+}`/`$default` rou
 **Gaps to enterprise:** single-host, single-process architecture — no HA, no horizontal scaling, no clustering story at all. No TLS (deliberately out of scope; you must front it). No Windows. The stdin/stdout line-protocol bridge is a known throughput bound the project itself acknowledges. No Lambda Layers/Extensions. An enterprise runs this behind a load balancer and accepts that one box = one blast radius.
 
 ### 1.2 Process isolation & sandboxing — **B**
-Honest, careful work: always-on per-child rlimits (CORE=0, NOFILE, FSIZE; Linux NPROC), `PR_SET_PDEATHSIG`, `PR_SET_NO_NEW_PRIVS`, process-group kill, opt-in `RLIMIT_AS`/`RLIMIT_CPU`/Landlock allowlists. `safety.rs` shows real understanding of async-signal-safety in `pre_exec` and macOS/Linux semantic differences. The WASM/WASI runtime (wasmtime 45, deny-by-default fs/net, runs in a separate `riz __wasm-host` subprocess) is a defensible "category of one" claim among Lambda emulators.
+Careful work: always-on per-child rlimits (CORE=0, NOFILE, FSIZE; Linux NPROC), `PR_SET_PDEATHSIG`, `PR_SET_NO_NEW_PRIVS`, process-group kill, opt-in `RLIMIT_AS`/`RLIMIT_CPU`/Landlock allowlists. `safety.rs` shows real understanding of async-signal-safety in `pre_exec` and macOS/Linux semantic differences. The WASM/WASI runtime (wasmtime 45, deny-by-default fs/net, runs in a separate `riz __wasm-host` subprocess) is a defensible "category of one" claim among Lambda emulators.
 **Gaps to enterprise:** no cgroups (RLIMIT_AS is a blunt instrument vs memory cgroups), no seccomp filter, no user namespaces, no network egress control for non-WASM runtimes (a Bun handler can call anywhere). macOS enforcement is materially weaker than Linux (no Landlock, no NPROC, no pdeathsig). The README's own "sandboxing is real but young" is the right calibration. No third-party security review.
 
 ### 1.3 MCP server — **B−**
@@ -43,11 +43,11 @@ Lambda authorizers (REQUEST + JWT), JWKS RS256/ES256 with TTL cache, WorkOS/Cler
 **Gap:** the install path is aspirational — `curl riz.dev/install | sh` 404s until a release is tagged (the script says so itself), no crates.io/npm/Homebrew yet. Also the install script header says "License: MIT (same as riz)" — riz is Apache-2.0; trivial but it's a truth-discipline project, so it counts.
 
 ### 1.9 Testing & claims discipline — **A−**
-~540 test functions across src+tests by grep (the "800+ tests / 827 by nextest list" claim is plausible given macro/parametrized expansion; the registry honestly documents it as a floor). The standout artifact is `tests/claims/registry.toml`: every landing-page claim mapped to `proven`/`benchmark`/`coming-soon`/`copy-only` with a named proving test and drift-guarded page text, enforced by `claims_truth.rs` and `landing_page_contract.rs`. I have not seen this pattern executed this thoroughly in an OSS project of this size. It is the project's most differentiated *process* asset.
+~540 test functions across src+tests by grep (the "800+ tests / 827 by nextest list" claim is plausible given macro/parametrized expansion; the registry documents it as a floor). The standout artifact is `tests/claims/registry.toml`: every landing-page claim mapped to `proven`/`benchmark`/`coming-soon`/`copy-only` with a named proving test and drift-guarded page text, enforced by `claims_truth.rs` and `landing_page_contract.rs`. I have not seen this pattern executed this thoroughly in an OSS project of this size. It is the project's most differentiated *process* asset.
 **Gaps:** CI runs `cargo test`, not the project's own mandated `cargo nextest run` (so the "0 leaky" hygiene goal isn't CI-visible); the 91k req/s headline is not CI-gated (acknowledged, P0 #1); nextest reports leaky tests today (acknowledged, P0 #2).
 
 ### Aggregate: **B** (excellent v0.1; not yet enterprise)
-For a pre-launch solo project this is top-decile engineering with rare honesty discipline. Against an enterprise bar it is missing the boring pillars: HA/multi-node, TLS, persistent state (budgets, usage), validated observability pipelines, security review, signed published releases, and any operational track record (zero users, zero releases). "Production-grade for free" is fair for the *function lifecycle*; it is not yet fair for the *deployment* as a whole.
+For a pre-launch solo project this is top-decile engineering with rare claims discipline. Against an enterprise bar it is missing the boring pillars: HA/multi-node, TLS, persistent state (budgets, usage), validated observability pipelines, security review, signed published releases, and any operational track record (zero users, zero releases). "Production-grade for free" is fair for the *function lifecycle*; it is not yet fair for the *deployment* as a whole.
 
 ---
 
@@ -80,13 +80,13 @@ Three documents constitute the plan: the v1 roadmap (2026-06-08), the harden bac
 **How it presents:** "Runtime harness, not a framework — write a function, get an agent-ready API." Three products in one binary (Lambda runtime, MCP server, LLM gateway), with the combination as the moat. Aggressively scoped negatives ("What riz is *not*": no SQS/SNS/IAM/edge/Windows). A claims registry that legally-brief-style maps every marketing sentence to a proving test. An author section with a Meta/Google/Microsoft/Oracle leadership résumé.
 
 **Strengths of the posture:**
-- The honesty architecture is a genuine trust differentiator. "Skip riz when…" sections, benchmark caveats that downgrade their own headline number, and `copy-only` classifications for subjective claims are rare and will land extremely well with the HN/Lobsters audience the GTM plan targets.
+- The claims architecture is a genuine trust differentiator. "Skip riz when…" sections, benchmark caveats that downgrade their own headline number, and `copy-only` classifications for subjective claims are rare and will land extremely well with the HN/Lobsters audience the GTM plan targets.
 - The scope discipline (HTTP/WS only, by design) is the right strategic call — it converts "incomplete emulator" into "sharp tool."
 - "Every function is an MCP tool, zero glue" is a five-word value prop that survives contact with a skeptic. It's the best hook in the deck.
 
 **Risks of the posture:**
 - **The hero carousel undercuts the truth discipline.** Scenes 2 and 3 are tagged "live · v0.1" but depict unshipped capabilities: `guard.in.wasm`/`guard.out.wasm` verdicts (roadmap #3/#4, registry says `coming-soon`), "semantic cache 47% hit" (deferred to v2), a Bedrock provider chip (coming-soon), and `ctx.invokeModel(...)` (an SDK call that does not exist — handlers must hit the HTTP gateway; the only reference in src is a doc comment). The claims registry's substring drift-guard doesn't reach these vignettes. For a project whose brand is "every claim proven," this is the single most damaging inconsistency I found — one HN commenter screenshotting Scene 2 next to the roadmap erases the credibility premium.
-- "v0.1 · in production" as the Features column label, with zero users and zero releases, is a stretch the rest of the site is too honest for.
+- "v0.1 · in production" as the Features column label, with zero users and zero releases, is a stretch the rest of the site never makes.
 - Positioning as three things invites "jack of all trades" dismissal; the comparison table mitigates this well, but every public artifact must lead with ONE wedge (the MCP auto-exposure) or the message diffuses.
 - Self-hosting *production* AWS-shaped workloads without AWS is a small (if real) audience; the larger audiences are dev/CI loops and agent-tool exposure, and the copy has been converging there (recent hero rewrite commits show the right instinct).
 
@@ -98,7 +98,7 @@ Three documents constitute the plan: the v1 roadmap (2026-06-08), the harden bac
 - The demo is genuinely GIF-able: `riz init` → `riz run` → `claude mcp add` → agent calls your function. Sub-60-seconds, no Docker, no cloud account. This is the strongest single asset.
 - MCP is at peak attention; "make my existing API an agent tool with zero code" matches a question thousands of teams are asking this quarter.
 - Single ~10 MB Rust binary + self-hosted + Apache-2.0 + no telemetry hits the r/selfhosted and r/rust id precisely.
-- The honesty posture (claims registry, benchmark caveats) is itself shareable — "this project tests its marketing page" is a Lobsters-bait story.
+- The claims posture (registry, benchmark caveats) is itself shareable — "this project tests its marketing page" is a Lobsters-bait story.
 - 91k req/s with a transparent methodology is a defensible flex.
 
 **Mechanics against:**
@@ -119,7 +119,7 @@ Three documents constitute the plan: the v1 roadmap (2026-06-08), the harden bac
 2. **Buy Me a Coffee** (`buymeacoffee.com/24X7`) — one-off tips.
 3. **Crypto** (ETH/BTC/SOL) — **the addresses are literal placeholders** (`0xYOUR_ETH_ADDRESS_HERE`, `bc1YOUR_BTC_ADDRESS_HERE`, `YOUR_SOL_ADDRESS_HERE`). This channel cannot receive funds today and, shipped as-is, would be an embarrassing screenshot. Fix or remove before launch.
 
-**Realistic donation forecast:** Dev-infra OSS donations are notoriously thin; even multi-thousand-star tools commonly clear under $100/month on sponsors without corporate matching. With a successful launch year one: **$0–$50/month typical case, low hundreds/month optimistic case, ~$0 until releases exist.** Donations will not fund development; they are a signal, not a revenue line. The pitch ("sponsorships keep development independent") is honest about this framing.
+**Realistic donation forecast:** Dev-infra OSS donations are notoriously thin; even multi-thousand-star tools commonly clear under $100/month on sponsors without corporate matching. With a successful launch year one: **$0–$50/month typical case, low hundreds/month optimistic case, ~$0 until releases exist.** Donations will not fund development; they are a signal, not a revenue line. The pitch ("sponsorships keep development independent") is explicit about this framing.
 
 **Commercial opportunities (viability-ranked) and target audiences (ranked):**
 
@@ -141,4 +141,4 @@ Three documents constitute the plan: the v1 roadmap (2026-06-08), the harden bac
 
 ## Synthesis
 
-A top-decile-engineered, unusually honest v0.1 with one genuinely novel idea (zero-glue MCP exposure of Lambda-shaped functions) and credible plans — but its enterprise grade is aspiration not fact, its distribution funnel is not yet live, its hero carousel quietly breaks its own truth discipline, and its funding channels (one with placeholder crypto addresses) will round to zero; bet on it for dev loops and agent prototyping today, for an SLA only after HA, releases, and a security review exist.
+A top-decile-engineered v0.1 with one genuinely novel idea (zero-glue MCP exposure of Lambda-shaped functions) and credible plans — but its enterprise grade is aspiration not fact, its distribution funnel is not yet live, its hero carousel quietly breaks its own truth discipline, and its funding channels (one with placeholder crypto addresses) will round to zero; bet on it for dev loops and agent prototyping today, for an SLA only after HA, releases, and a security review exist.

@@ -103,7 +103,7 @@ cargo nextest run
 cargo nextest run --test cli_doctor
 cargo nextest run --test scaffold_e2e
 cargo nextest run --test landing_page_contract
-cargo nextest run --test docs_commands_runnable   # the guard that keeps THIS doc honest
+cargo nextest run --test docs_commands_runnable   # the guard that keeps THIS doc runnable
 
 # Focused by name substring (matches binary name OR test name)
 cargo nextest run mcp           # all MCP-related tests
@@ -218,7 +218,7 @@ cargo build --release
 wrk -t4 -c20 -d20s --latency http://127.0.0.1:3000/ping
 ```
 
-Methodology and the honest headline number (91,419 req/s · p99 845 µs — Bun ping handler, localhost, concurrency = 20, M-series Mac) live in [`benches/README.md`](benches/README.md). `benches/run-bench.sh` is the older hardcoded variant; prefer `scripts/bench.sh`.
+Methodology and the measured headline number (91,419 req/s · p99 845 µs — Bun ping handler, localhost, concurrency = 20, M-series Mac) live in [`benches/README.md`](benches/README.md). `benches/run-bench.sh` is the older hardcoded variant; prefer `scripts/bench.sh`.
 
 ## Where the code lives
 
@@ -271,7 +271,7 @@ scripts/
 benches/
   run-bench.sh         # older hardcoded `wrk` variant (prefer scripts/bench.sh)
   bench-config.toml    # ping handler at concurrency=20
-  README.md            # benchmark methodology + honest headline number
+  README.md            # benchmark methodology + measured headline number
 
 docs/
   mcp/                 # MCP integration + protocol-support docs

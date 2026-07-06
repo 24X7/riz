@@ -1,4 +1,4 @@
-# Riz v0.1 — Honest Ship Roadmap
+# Riz v0.1 — Ship Roadmap
 
 > Status: superseded — all waves shipped; active roadmap is docs/plans/v1-roadmap.md.
 
@@ -16,7 +16,7 @@
 
 ## Out of scope for v0.1 (explicit non-goals)
 
-These are real AWS Lambda + API Gateway features. They are NOT in v0.1. The honest-status section of the landing page must say so.
+These are real AWS Lambda + API Gateway features. They are NOT in v0.1. The status section of the landing page must say so.
 
 | Out of scope | Reason |
 |---|---|
@@ -143,7 +143,7 @@ git commit -m "chore: drop Start subcommand alias — Run is the only public nam
 5. Make `RuntimeRegistry::get` return `&self.python` for `RuntimeKind::Python` instead of panicking.
 6. Add `module_and_export` Python-extension handling (already works for `.py`).
 7. Write an integration test in `tests/python_integration.rs` (gated on `python3` PATH check).
-8. Update `web/index.html` honest-status: move "Python" from coming → working; restore the `python` pill.
+8. Update `web/index.html` status section: move "Python" from coming → working; restore the `python` pill.
 9. Add `examples/lambdas/echo-python/main.py`.
 10. Update README + `web/llms.txt`.
 
@@ -383,7 +383,7 @@ Currently no README at the repo root. Write one covering:
 - 30-second install + first function
 - Mental model: function = process pool = N routes
 - The MCP differentiator (lead with this)
-- Honest status table (copy from landing page)
+- Status table (copy from landing page)
 - Comparison table vs LocalStack / AWS SAM Local / Cloudflare Workers
 - Architecture diagram (single SVG)
 
@@ -503,7 +503,7 @@ Subagent parallelism can compress 2–6 + 4.5 + 7 into ~3 calendar days if multi
 - Viral hooks from the viral audit:
   - Replace static TUI with asciinema → Wave 9.1 ✓
   - Lead with MCP → DONE on landing page; reinforced in Wave 9.2 README
-  - Honest Status section → DONE on landing page
+  - Status section → DONE on landing page
   - Drop "Python · Rust" pills until shipped → DONE
   - Comparison anchors → Wave 9.2 README
   - Hero microcopy that doesn't overclaim → Wave 9.4

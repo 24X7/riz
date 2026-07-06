@@ -59,4 +59,4 @@ Match `wrk -c<N>` to your `concurrency` setting in `bench-config.toml`. Over-sat
 
 - Loopback latency on real metal will look worse than localhost. Real-world p99 is dominated by network + handler work; the dispatch tax stays near constant.
 - These are single-host numbers. Riz is single-tenant single-node by design in v0.1; horizontal scale is a reverse-proxy-in-front concern.
-- wrk's "Socket errors: read N" lines are typical keep-alive recycling, not handler failures. The "Requests/sec" line is the honest throughput.
+- wrk's "Socket errors: read N" lines are typical keep-alive recycling, not handler failures. The "Requests/sec" line is the real throughput.

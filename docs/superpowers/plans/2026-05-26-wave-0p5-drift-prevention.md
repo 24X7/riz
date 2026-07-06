@@ -337,7 +337,7 @@ fn coming_matches_truth_slice() {
 
 #[test]
 fn coming_proofs_reference_real_waves() {
-    let roadmap = fs::read_to_string("docs/superpowers/plans/2026-05-26-v01-honest-ship-roadmap.md")
+    let roadmap = fs::read_to_string("docs/superpowers/plans/2026-05-26-v01-ship-roadmap.md")
         .expect("roadmap missing");
     for claim in COMING {
         if claim.proof == "OutOfScope" { continue; }
@@ -365,7 +365,7 @@ The set-equal tests should pass (truth slice was written to match the current HT
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tests/landing_page_contract.rs docs/superpowers/plans/2026-05-26-v01-honest-ship-roadmap.md
+git add tests/landing_page_contract.rs docs/superpowers/plans/2026-05-26-v01-ship-roadmap.md
 git commit -m "test(drift): pin works-now + coming columns and wave-heading references"
 ```
 
@@ -888,12 +888,12 @@ Both clean.
 
 - [ ] **Step 4: Mark Wave 0.5 complete in the roadmap**
 
-Edit `docs/superpowers/plans/2026-05-26-v01-honest-ship-roadmap.md`: add `✅` next to the Wave 0.5 heading.
+Edit `docs/superpowers/plans/2026-05-26-v01-ship-roadmap.md`: add `✅` next to the Wave 0.5 heading.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add docs/superpowers/plans/2026-05-26-v01-honest-ship-roadmap.md
+git add docs/superpowers/plans/2026-05-26-v01-ship-roadmap.md
 git commit -m "docs: mark Wave 0.5 (drift-prevention automation) complete"
 ```
 

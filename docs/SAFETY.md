@@ -8,7 +8,7 @@ gracefully rather than fall over. That is the risk profile NASA/JPL's
 than its feature velocity. This document adapts those ten rules to Rust and
 binds them to this codebase.
 
-Two honest framing notes:
+Two framing notes:
 
 1. **Rust mechanizes several of the rules.** Memory safety (rule 9), checked
    return values (rule 7), and scope minimality (rule 6) are partly or wholly

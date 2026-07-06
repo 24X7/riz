@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>riz — vs AWS Lambda, vs web frameworks. Honestly.</title>
-  <meta name="description" content="Where riz sits against AWS Lambda and against Express/FastAPI/Axum — including the honest rows where the other thing wins. The Lambda programming model self-hosted, run always-on as a container on Cloud Run / ECS Express / Azure Container Apps (no cold start), with the agent layer built in."/>
+  <title>riz — vs AWS Lambda, vs web frameworks. Where each wins.</title>
+  <meta name="description" content="Where riz sits against AWS Lambda and against Express/FastAPI/Axum — including the rows where the other thing wins. The Lambda programming model self-hosted, run always-on as a container on Cloud Run / ECS Express / Azure Container Apps (no cold start), with the agent layer built in."/>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%230A0A0B'/><rect x='28' y='20' width='44' height='60' fill='%23CFFF04'/></svg>"/>
   <link rel="apple-touch-icon" href="apple-touch-icon.png"/>
   <meta property="og:type" content="website"/>
   <meta property="og:site_name" content="riz"/>
-  <meta property="og:title" content="riz — vs AWS Lambda, vs web frameworks. Honestly."/>
-  <meta property="og:description" content="Where riz sits against AWS Lambda and against Express/FastAPI/Axum — including the honest rows where the other thing wins. The Lambda programming model self-hosted, run always-on as a container on Cloud Run / ECS Express / Azure Container Apps (no cold start), with the agent layer built in."/>
+  <meta property="og:title" content="riz — vs AWS Lambda, vs web frameworks. Where each wins."/>
+  <meta property="og:description" content="Where riz sits against AWS Lambda and against Express/FastAPI/Axum — including the rows where the other thing wins. The Lambda programming model self-hosted, run always-on as a container on Cloud Run / ECS Express / Azure Container Apps (no cold start), with the agent layer built in."/>
   <meta name="twitter:card" content="summary_large_image"/>
   <meta property="og:image" content="https://riz.dev/og.png"/>
   <meta property="og:image:width" content="1200"/>
@@ -55,8 +55,8 @@
     <h1>Same handler.<br/><em>Different deal.</em></h1>
     <p class="sub">
       riz is the AWS Lambda programming model, self-hosted, with the agent layer built in.
-      That sentence places it against two incumbents — and an honest table beats a
-      flattering one, so the rows where they win are here too.
+      That sentence places it against two incumbents — and a flattering table is a
+      useless one, so the rows where they win are here too.
     </p>
   </div>
 </header>
@@ -174,7 +174,7 @@
       is just a process; the fleet is your platform's job.
     </p>
     <p class="sec-sub" style="margin-top:1.1rem">
-      <b>WebSockets across replicas — the honest note.</b> WebSocket connections and the
+      <b>WebSockets across replicas.</b> WebSocket connections and the
       <code>@connections</code> push registry live in the memory of the instance that accepted
       the socket. Running more than one replica behind a load balancer therefore <b>requires
       sticky sessions</b> (session affinity) — Cloud Run <code>--session-affinity</code>, ALB
@@ -257,7 +257,7 @@
 <section style="padding-top:1.5rem">
   <div class="wrap">
     <div class="sec-kicker">the position</div>
-    <h2 class="sec">A third thing,<br/>honestly scoped.</h2>
+    <h2 class="sec">A third thing,<br/>scoped on purpose.</h2>
     <div class="duo">
       <div>
         <p class="lead" style="margin-top:1rem">

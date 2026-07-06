@@ -170,7 +170,7 @@ wrapped); guard it so it can't rot.
 - Modify: `CONTRIBUTING.md` (284 lines today — fix/complete commands)
 - Modify/verify: `benches/run-bench.sh`, `benches/README.md` (complete copy-paste wrk flow)
 - Create: `scripts/bench.sh` (one-command `script`-wrapped wrk run: build release → boot riz →
-  warm → `wrk -t4 -c20 -d20s --latency …` → teardown → print the honest req/s + p99)
+  warm → `wrk -t4 -c20 -d20s --latency …` → teardown → print the measured req/s + p99)
 - Create: `tests/docs_commands_runnable.rs` (extracts fenced shell commands tagged for verification
   and runs a safe subset; asserts exit 0)
 
@@ -186,7 +186,7 @@ wrapped); guard it so it can't rot.
    - Install/prereq block (rustup, bun, wrk) — verify each on a clean machine path.
 2. **Complete the test command set:** a single authoritative section — full suite (`cargo nextest
    run`), focused filters, the scaffold/e2e, and the **benchmark** via `scripts/bench.sh` (or the
-   documented raw `wrk` two-terminal flow). Make the wrk numbers reproducible and honest (cite the
+   documented raw `wrk` two-terminal flow). Make the wrk numbers reproducible (cite the
    benches/README method).
 3. **Guard test (`tests/docs_commands_runnable.rs`):** parse fenced ```` ```bash ```` blocks in
    CONTRIBUTING that are marked verifiable (e.g. a `# @verify` marker), execute the fast/safe ones in
