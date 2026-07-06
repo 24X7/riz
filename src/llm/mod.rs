@@ -40,8 +40,6 @@ pub enum ProviderError {
     #[error("provider '{0}' unavailable: {1}")]
     Unavailable(String, String),
     /// Upstream returned an error response — also a fallback candidate.
-    /// Constructed by the real HTTP providers (follow-up commits).
-    #[allow(dead_code)]
     #[error("provider '{0}' returned an error: {1}")]
     Upstream(String, String),
     /// The request itself is invalid (e.g. no messages) — NOT a fallback candidate.
@@ -506,6 +504,58 @@ where
     Box::pin(s)
 }
 
+/// Cap on a buffered provider response body (rule 3: no unbounded growth
+/// from remote input). Generous — large embedding batches are legitimate —
+/// but finite: a misbehaving upstream cannot balloon gateway memory.
+pub(crate) const MAX_RESPONSE_BODY_BYTES: usize = 64 * 1024 * 1024;
+
+/// Cap when reading a non-2xx body: only a ~300-char snippet is ever quoted
+/// back, so anything past this is waste.
+pub(crate) const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
+
+/// Read a provider response body into memory, enforcing `cap`. An over-cap
+/// body — declared via Content-Length or discovered while streaming — is a
+/// clean `Upstream` error, never unbounded accumulation.
+pub(crate) async fn read_body_capped(
+    resp: reqwest::Response,
+    provider: &str,
+    cap: usize,
+) -> Result<bytes::Bytes, ProviderError> {
+    use futures_util::StreamExt;
+    if let Some(len) = resp.content_length() {
+        if len > cap as u64 {
+            return Err(ProviderError::Upstream(
+                provider.to_string(),
+                format!("response body of {len} bytes exceeds the gateway cap ({cap})"),
+            ));
+        }
+    }
+    let mut stream = resp.bytes_stream();
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk =
+            chunk.map_err(|e| ProviderError::Unavailable(provider.to_string(), e.to_string()))?;
+        // Saturating: the guard must hold even at the usize edge.
+        if buf.len().saturating_add(chunk.len()) > cap {
+            return Err(ProviderError::Upstream(
+                provider.to_string(),
+                format!("response body exceeds the gateway cap ({cap} bytes)"),
+            ));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf.into())
+}
+
+/// The truncated snippet of a non-2xx provider body quoted into the error
+/// envelope. Reads through the small cap; unreadable bodies quote as empty.
+pub(crate) async fn error_snippet(resp: reqwest::Response, provider: &str) -> String {
+    match read_body_capped(resp, provider, MAX_ERROR_BODY_BYTES).await {
+        Ok(b) => String::from_utf8_lossy(&b).chars().take(300).collect(),
+        Err(_) => String::new(),
+    }
+}
+
 /// A streaming chat outcome from [`Gateway::chat_stream`].
 pub enum ChatStream {
     /// Native upstream SSE passthrough — already the OpenAI
@@ -811,5 +861,37 @@ kind = "ollama"
         assert_eq!(usage.prompt_tokens, u32::MAX);
         assert_eq!(usage.completion_tokens, 7);
         assert_eq!(usage.total_tokens, 0, "malformed field reads 0, no panic");
+    }
+
+    #[tokio::test]
+    async fn read_body_capped_rejects_oversized_bodies_cleanly() {
+        // /big has a Content-Length (early reject); /chunked streams without
+        // one (the accumulation guard rejects mid-read).
+        let app = axum::Router::new()
+            .route("/big", axum::routing::get(|| async { vec![b'x'; 100_000] }))
+            .route(
+                "/chunked",
+                axum::routing::get(|| async {
+                    let chunks = (0..100)
+                        .map(|_| Ok::<_, std::io::Error>(bytes::Bytes::from(vec![b'y'; 1000])));
+                    axum::body::Body::from_stream(futures_util::stream::iter(chunks))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        for path in ["big", "chunked"] {
+            let resp = reqwest::get(format!("http://{addr}/{path}")).await.unwrap();
+            let err = read_body_capped(resp, "p", 1024).await.unwrap_err();
+            assert!(
+                matches!(err, ProviderError::Upstream(_, _)),
+                "{path}: over-cap must be a clean Upstream error, got {err:?}"
+            );
+        }
+        // Under the cap, the body reads whole.
+        let resp = reqwest::get(format!("http://{addr}/big")).await.unwrap();
+        let body = read_body_capped(resp, "p", 1 << 20).await.unwrap();
+        assert_eq!(body.len(), 100_000);
     }
 }
