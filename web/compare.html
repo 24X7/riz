@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>riz — vs AWS Lambda, vs web frameworks. Where each wins.</title>
-  <meta name="description" content="Where riz sits against AWS Lambda and against Express/FastAPI/Axum — including the rows where the other thing wins. The Lambda programming model self-hosted, run always-on as a container on Cloud Run / ECS Express / Azure Container Apps (no cold start), with the agent layer built in."/>
+  <title>riz — vs AWS Lambda, vs web frameworks. Which one when.</title>
+  <meta name="description" content="Where riz sits against AWS Lambda and against Express/FastAPI/Axum — including when the other thing is the right call. The Lambda programming model self-hosted, run always-on as a container on Cloud Run / ECS Express / Azure Container Apps (no cold start), with the agent layer built in."/>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%230A0A0B'/><rect x='28' y='20' width='44' height='60' fill='%23CFFF04'/></svg>"/>
   <link rel="apple-touch-icon" href="apple-touch-icon.png"/>
   <meta property="og:type" content="website"/>
   <meta property="og:site_name" content="riz"/>
-  <meta property="og:title" content="riz — vs AWS Lambda, vs web frameworks. Where each wins."/>
-  <meta property="og:description" content="Where riz sits against AWS Lambda and against Express/FastAPI/Axum — including the rows where the other thing wins. The Lambda programming model self-hosted, run always-on as a container on Cloud Run / ECS Express / Azure Container Apps (no cold start), with the agent layer built in."/>
+  <meta property="og:title" content="riz — vs AWS Lambda, vs web frameworks. Which one when."/>
+  <meta property="og:description" content="Where riz sits against AWS Lambda and against Express/FastAPI/Axum — including when the other thing is the right call. The Lambda programming model self-hosted, run always-on as a container on Cloud Run / ECS Express / Azure Container Apps (no cold start), with the agent layer built in."/>
   <meta name="twitter:card" content="summary_large_image"/>
   <meta property="og:image" content="https://riz.dev/og.png"/>
   <meta property="og:image:width" content="1200"/>
@@ -51,12 +51,12 @@
 
 <header class="page-hero">
   <div class="wrap">
-    <div class="kicker">comparisons · <b>including the rows where the other thing wins</b></div>
+    <div class="kicker">comparisons · <b>including when to use the other thing</b></div>
     <h1>Same handler.<br/><em>Different deal.</em></h1>
     <p class="sub">
       riz is the AWS Lambda programming model, self-hosted, with the agent layer built in.
       That sentence places it against two incumbents — and a flattering table is a
-      useless one, so the rows where they win are here too.
+      useless one, so the rows that point away from riz are here too.
     </p>
   </div>
 </header>
@@ -119,9 +119,9 @@
             <td class="dim">S3 + CloudFront (another bucket, distribution, and origin) — or CORS between your API and your front end</td>
           </tr>
           <tr>
-            <th style="color:var(--warn)">Where Lambda wins</th>
-            <td class="dim">riz is one process — horizontal scale and HA come from your container platform (see below), not the runtime. No native IAM or AWS event-source (SQS/SNS/S3/EventBridge) integration.</td>
-            <td><span class="y">Per-request autoscaling to thousands of concurrent with zero config</span>, true scale-to-zero, and deep IAM + event-source integration. For spiky, event-driven, planet-scale traffic with zero ops: use Lambda — your handlers move back unchanged.</td>
+            <th style="color:var(--warn)">When Lambda is the right call</th>
+            <td class="dim">riz is one process — horizontal scale and HA come from your container platform (see below), not the runtime. Non-HTTP event sources and IAM are out of scope by decision, and instances are shared rather than per-request.</td>
+            <td><span class="y">The AWS event ecosystem</span> — SQS/SNS/S3/EventBridge triggers, Step Functions, IAM-integrated auth — plus per-request isolation and instant burst absorption (0 → thousands of isolated executions in seconds). Event-driven AWS plumbing rather than an API? Use Lambda — your handlers move back unchanged.</td>
           </tr>
         </tbody>
       </table>
@@ -243,7 +243,7 @@
             <td class="dim">Adapters/rewrites to leave the server model</td>
           </tr>
           <tr>
-            <th style="color:var(--warn)">Where frameworks win</th>
+            <th style="color:var(--warn)">When a framework is the right call</th>
             <td class="dim">No middleware ecosystem to npm-install; HTML templating, sessions, ORMs are not riz's job. In-process speed beats any pool hop.</td>
             <td><span class="y">Decades of ecosystem</span>, in-process everything, fine-grained control of the HTTP layer. Building a monolithic web app with server-rendered views? Use a framework.</td>
           </tr>
