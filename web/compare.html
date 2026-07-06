@@ -166,27 +166,34 @@
         </tbody>
       </table>
     </div>
-    <p class="sec-sub" style="margin-top:1.1rem">
-      Scale-to-zero is offered by all three — but it reintroduces a container cold start on the
-      first request after idle, the exact thing riz exists to avoid. Keep the min-instance floor
-      on the hot path; save scale-to-zero for dev/preview. Want more control? <b>ECS on Fargate</b>,
-      self-managed Kubernetes, Nomad, or a plain VM behind a load balancer all work the same — riz
-      is just a process; the fleet is your platform's job.
-    </p>
-    <p class="sec-sub" style="margin-top:1.1rem">
-      <b>WebSockets across replicas.</b> WebSocket connections and the
-      <code>@connections</code> push registry live in the memory of the instance that accepted
-      the socket. Running more than one replica behind a load balancer therefore <b>requires
-      sticky sessions</b> (session affinity) — Cloud Run <code>--session-affinity</code>, ALB
-      target-group stickiness, nginx <code>ip_hash</code> — so a client's socket and the pushes
-      its own requests trigger land on the same instance. What sticky sessions do <em>not</em>
-      give you is cross-client broadcast across replicas: a handler on instance A can't push to
-      a socket held by instance B (the <code>@connections</code> POST answers <code>410 Gone</code>,
-      exactly as API Gateway does for a stale connection). Fan-out beyond one replica needs a
-      shared backplane — on the roadmap, not in the binary today. Until then: HTTP scales
-      horizontally without ceremony; WebSockets scale vertically per instance, or horizontally
-      with affinity and per-instance rooms.
-    </p>
+    <div class="note-grid">
+      <div class="note">
+        <div class="note-k">scale-to-zero</div>
+        <p>
+          Offered by all three — but it reintroduces a container cold start on the first
+          request after idle, the exact thing riz exists to avoid. Keep the min-instance floor
+          on the hot path; save scale-to-zero for dev/preview. Want more control?
+          <b>ECS on Fargate</b>, self-managed Kubernetes, Nomad, or a plain VM behind a load
+          balancer all work the same — riz is just a process; the fleet is your platform's job.
+        </p>
+      </div>
+      <div class="note">
+        <div class="note-k">websockets across replicas</div>
+        <p>
+          WebSocket connections and the <code>@connections</code> push registry live in the
+          memory of the instance that accepted the socket. Running more than one replica behind
+          a load balancer therefore <b>requires sticky sessions</b> (session affinity) — Cloud
+          Run <code>--session-affinity</code>, ALB target-group stickiness, nginx
+          <code>ip_hash</code> — so a client's socket and the pushes its own requests trigger
+          land on the same instance. Sticky sessions do <em>not</em> give cross-client broadcast
+          across replicas: a handler on instance A can't push to a socket held by instance B
+          (the <code>@connections</code> POST answers <code>410 Gone</code>, exactly as API
+          Gateway does for a stale connection); fan-out beyond one replica needs a shared
+          backplane — on the roadmap. HTTP scales horizontally without ceremony; WebSockets
+          scale vertically per instance, or horizontally with affinity and per-instance rooms.
+        </p>
+      </div>
+    </div>
   </div>
 </section>
 

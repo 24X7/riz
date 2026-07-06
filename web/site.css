@@ -629,3 +629,12 @@ footer{border-top:1px solid var(--line);margin-top:4rem;background:var(--ink-2)}
   /* code wells: let long lines scroll inside, never widen the page */
   .well pre,.scrolly-panel pre{overflow-x:auto}
 }
+
+/* ════════ NOTE GRID — paired full-width notes under tables ════════ */
+.note-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.2rem;margin-top:1.6rem}
+.note{background:var(--ink-2);border:1px solid var(--line-2);border-radius:6px;padding:1.15rem 1.35rem}
+.note .note-k{font-family:var(--mono);font-size:.68rem;letter-spacing:.09em;text-transform:uppercase;color:var(--acid);margin-bottom:.55rem}
+.note p{font-size:.92rem;line-height:1.7;color:var(--t-mid);margin:0;max-width:none}
+.note b{color:var(--t-hi)}
+.note code{font-size:.82em;color:var(--t-hi);background:var(--ink-3);padding:.08rem .3rem;border-radius:3px}
+@media (max-width:880px){.note-grid{grid-template-columns:1fr}}
