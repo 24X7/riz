@@ -686,14 +686,19 @@ impl FunctionConfig {
     ///   and ignored (handler returned verbatim)
     pub fn module_and_export(&self) -> (PathBuf, String) {
         let s = self.handler.to_string_lossy().to_string();
-        if matches!(
-            self.runtime,
-            RuntimeKind::Rust | RuntimeKind::Go | RuntimeKind::Wasm
-        ) {
+        // One match decides both the early return AND the extension used by
+        // every later branch, so no "handled above" invariant needs
+        // re-asserting downstream.
+        let runtime_ext = match self.runtime {
             // Rust/Go handlers are compiled binaries and WASM handlers are
             // `.wasm` modules — the path IS the artifact, no module/export split.
-            return (self.handler.clone(), String::new());
-        }
+            RuntimeKind::Rust | RuntimeKind::Go | RuntimeKind::Wasm => {
+                return (self.handler.clone(), String::new());
+            }
+            RuntimeKind::Bun => "ts",
+            RuntimeKind::Python => "py",
+            RuntimeKind::Node => "mjs",
+        };
         // Explicit Riz-native form: "file:exportName"
         if let Some((file, exp)) = s.rsplit_once(':') {
             // But not on Windows where `C:\path` would split — `:` only when
@@ -713,14 +718,6 @@ impl FunctionConfig {
         }
         // AWS-style: last segment after `.` is the export, the rest is the module path.
         if let Some((module, exp)) = s.rsplit_once('.') {
-            let runtime_ext = match self.runtime {
-                RuntimeKind::Bun => "ts",
-                RuntimeKind::Python => "py",
-                RuntimeKind::Node => "mjs",
-                RuntimeKind::Rust | RuntimeKind::Go | RuntimeKind::Wasm => {
-                    unreachable!("handled above")
-                }
-            };
             return (
                 PathBuf::from(format!("{module}.{runtime_ext}")),
                 exp.to_string(),
@@ -728,14 +725,6 @@ impl FunctionConfig {
         }
         // Fallback: file path with no extension and no dot — treat as bare module,
         // append runtime extension, default export name "handler".
-        let runtime_ext = match self.runtime {
-            RuntimeKind::Bun => "ts",
-            RuntimeKind::Python => "py",
-            RuntimeKind::Node => "mjs",
-            RuntimeKind::Rust | RuntimeKind::Go | RuntimeKind::Wasm => {
-                unreachable!("handled above")
-            }
-        };
         (
             PathBuf::from(format!("{s}.{runtime_ext}")),
             "handler".into(),
@@ -882,40 +871,7 @@ impl Config {
                 );
             }
         }
-        // [agent] rides the gateway — an agent with no model plane is a
-        // misconfiguration, not a silent no-op.
-        if let Some(agent) = &self.agent {
-            if !self.gateway.enabled() {
-                return Err(
-                    "[agent] requires [gateway]: the built-in agent reasons through the LLM \
-                     gateway — add at least one [gateway.providers.*] block"
-                        .into(),
-                );
-            }
-            if agent.max_hops == 0 {
-                return Err("[agent] max_hops must be >= 1".into());
-            }
-            for t in &agent.tools {
-                if !self.functions.contains_key(t) {
-                    return Err(format!(
-                        "[agent] tools allowlist names unknown function '{t}'"
-                    ));
-                }
-            }
-            for (peer, url) in &agent.peers {
-                if url.trim().is_empty() {
-                    return Err(format!("[agent.peers] '{peer}' has an empty URL"));
-                }
-                if !peer
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-                {
-                    return Err(format!(
-                        "[agent.peers] name '{peer}' must be alphanumeric/_/- (it becomes the tool name delegate_to_{peer})"
-                    ));
-                }
-            }
-        }
+        self.validate_agent()?;
         // CORS spec violation (MDN): allow_credentials=true with an empty
         // allow_origins list means no origin will ever be echoed back, so
         // credentials can never flow — almost certainly a misconfiguration.
@@ -929,201 +885,274 @@ impl Config {
             );
         }
         for (name, func) in &self.functions {
-            // Per-function CORS: same credentials + empty origins check.
-            if let Some(fn_cors) = &func.cors {
-                if fn_cors.allow_credentials && fn_cors.allow_origins.is_empty() {
-                    tracing::warn!(
-                        "[function.{name}.cors] allow_credentials = true with an empty \
-                         allow_origins list is a CORS spec violation (MDN)."
-                    );
-                }
-            }
-            if name == "_riz" || name.starts_with("_riz") {
+            self.validate_function_basics(name, func)?;
+            self.validate_function_auth(name, func)?;
+            self.validate_function_mcp(name, func)?;
+            self.validate_capability_grants(name, func)?;
+        }
+        self.validate_gateway()?;
+        self.validate_static()?;
+        Ok(())
+    }
+
+    /// `[agent]` rides the gateway — an agent with no model plane is a
+    /// misconfiguration, not a silent no-op.
+    fn validate_agent(&self) -> Result<(), String> {
+        let Some(agent) = &self.agent else {
+            return Ok(());
+        };
+        if !self.gateway.enabled() {
+            return Err(
+                "[agent] requires [gateway]: the built-in agent reasons through the LLM \
+                 gateway — add at least one [gateway.providers.*] block"
+                    .into(),
+            );
+        }
+        if agent.max_hops == 0 {
+            return Err("[agent] max_hops must be >= 1".into());
+        }
+        for t in &agent.tools {
+            if !self.functions.contains_key(t) {
                 return Err(format!(
-                    "function name '{name}' uses reserved '_riz' prefix"
+                    "[agent] tools allowlist names unknown function '{t}'"
                 ));
             }
-            // concurrency = 0 spawns no worker processes and a 0-permit
-            // semaphore, so every invocation 503s forever with no startup
-            // error explaining why. Reject it up front.
-            if func.concurrency == 0 {
+        }
+        for (peer, url) in &agent.peers {
+            if url.trim().is_empty() {
+                return Err(format!("[agent.peers] '{peer}' has an empty URL"));
+            }
+            if !peer
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            {
                 return Err(format!(
-                    "function '{name}' has concurrency = 0 — must be at least 1"
+                    "[agent.peers] name '{peer}' must be alphanumeric/_/- (it becomes the tool name delegate_to_{peer})"
                 ));
             }
-            // All three runtimes (Bun, Python, Rust) are shipped — no validation
-            // rejection needed. Adapters live in src/process/{bun,python,rust}.rs
-            // and the registry returns the right one per RuntimeKind.
-            if matches!(func.protocol, Protocol::WebSocket) {
-                // Zero-route WS functions get the implicit ANY /<name> default,
-                // which is the upgrade endpoint — that's allowed. Multi-route
-                // WS is not: per-message route_selection_expression (multiple
-                // handler functions per socket) is not yet supported.
-                if func.routes.len() > 1 {
-                    return Err(format!(
-                        "function '{name}' is websocket but declares {} routes; \
+        }
+        Ok(())
+    }
+
+    /// Per-function structural checks: reserved names/routes, concurrency,
+    /// protocol constraints, and the per-function CORS misconfiguration warning.
+    fn validate_function_basics(&self, name: &str, func: &FunctionConfig) -> Result<(), String> {
+        // Per-function CORS: same credentials + empty origins check.
+        if let Some(fn_cors) = &func.cors {
+            if fn_cors.allow_credentials && fn_cors.allow_origins.is_empty() {
+                tracing::warn!(
+                    "[function.{name}.cors] allow_credentials = true with an empty \
+                     allow_origins list is a CORS spec violation (MDN)."
+                );
+            }
+        }
+        if name == "_riz" || name.starts_with("_riz") {
+            return Err(format!(
+                "function name '{name}' uses reserved '_riz' prefix"
+            ));
+        }
+        // concurrency = 0 spawns no worker processes and a 0-permit
+        // semaphore, so every invocation 503s forever with no startup
+        // error explaining why. Reject it up front.
+        if func.concurrency == 0 {
+            return Err(format!(
+                "function '{name}' has concurrency = 0 — must be at least 1"
+            ));
+        }
+        // All three runtimes (Bun, Python, Rust) are shipped — no validation
+        // rejection needed. Adapters live in src/process/{bun,python,rust}.rs
+        // and the registry returns the right one per RuntimeKind.
+        if matches!(func.protocol, Protocol::WebSocket) {
+            // Zero-route WS functions get the implicit ANY /<name> default,
+            // which is the upgrade endpoint — that's allowed. Multi-route
+            // WS is not: per-message route_selection_expression (multiple
+            // handler functions per socket) is not yet supported.
+            if func.routes.len() > 1 {
+                return Err(format!(
+                    "function '{name}' is websocket but declares {} routes; \
                          websocket functions must have at most one route (the upgrade path) — \
                          per-message route_selection_expression is not yet supported",
-                        func.routes.len()
-                    ));
-                }
-            }
-            for r in func.effective_routes(name) {
-                if r.path == "/_riz" || r.path.starts_with("/_riz/") {
-                    return Err(format!(
-                        "function '{name}' has route path '{}' that uses reserved /_riz/* namespace",
-                        r.path
-                    ));
-                }
-            }
-            // Validate authorizer references: a FunctionRef that is not "none"
-            // must name an existing function in this config.
-            if let Some(AuthorizerConfig::FunctionRef(ref auth_name)) = func.authorizer {
-                if auth_name != "none" && !self.functions.contains_key(auth_name.as_str()) {
-                    return Err(format!(
-                        "function '{name}' authorizer = \"{auth_name}\" references a function \
-                         that does not exist in this config"
-                    ));
-                }
-            }
-            // Validate JWT authorizer: type must be "jwt".
-            if let Some(AuthorizerConfig::Jwt(ref jwt_cfg)) = func.authorizer {
-                if jwt_cfg.r#type != "jwt" {
-                    return Err(format!(
-                        "function '{name}' inline authorizer block has type = \"{}\" but only \
-                         type = \"jwt\" is supported",
-                        jwt_cfg.r#type
-                    ));
-                }
-                if jwt_cfg.jwks_uri.is_empty() {
-                    return Err(format!(
-                        "function '{name}' JWT authorizer must have a non-empty jwks_uri"
-                    ));
-                }
-                if jwt_cfg.issuer.is_empty() {
-                    return Err(format!(
-                        "function '{name}' JWT authorizer must have a non-empty issuer"
-                    ));
-                }
-                // `audience` is intentionally OPTIONAL: when empty, `aud`
-                // validation is skipped (required for Clerk's default session
-                // token, which has no `aud`). When set, it is enforced in
-                // src/auth/jwt.rs (WorkOS and most OAuth IdPs).
-            }
-            // [function.X.mcp] — typed tool-schema block. Reject unknown
-            // scalar types and non-object body schemas at startup so a typo
-            // surfaces as a clear config error, not a silently-wrong schema
-            // served to agents.
-            if let Some(mcp) = &func.mcp {
-                for (pname, spec) in &mcp.query {
-                    if !MCP_PARAM_TYPES.contains(&spec.kind.as_str()) {
-                        return Err(format!(
-                            "function '{name}' [function.{name}.mcp.query.{pname}] has \
-                             type = \"{}\" — must be one of {MCP_PARAM_TYPES:?}",
-                            spec.kind
-                        ));
-                    }
-                }
-                if let Some(body) = &mcp.body {
-                    if !body.is_object() {
-                        return Err(format!(
-                            "function '{name}' [function.{name}.mcp] body must be a JSON Schema \
-                             object (e.g. {{ type = \"object\", ... }})"
-                        ));
-                    }
-                }
-            }
-            // [function.X.capabilities.<grant>] — broker grants. Deny-by-
-            // default means an invalid grant must be a loud startup error,
-            // never a silently-ignored block.
-            for (gname, grant) in &func.capabilities {
-                if !matches!(func.runtime, RuntimeKind::Wasm) {
-                    return Err(format!(
-                        "function '{name}' grants capability '{gname}' but runtime is \
-                         '{}' — broker capabilities are WASM-only in v1 (the broker \
-                         rides the __wasm-host sandbox boundary)",
-                        func.runtime.as_str()
-                    ));
-                }
-                if !CAPABILITY_TYPES.contains(&grant.r#type.as_str()) {
-                    return Err(format!(
-                        "function '{name}' capability '{gname}' has type = \"{}\" — \
-                         must be one of {CAPABILITY_TYPES:?}",
-                        grant.r#type
-                    ));
-                }
-                let Some((rtype, rname)) = grant.resource.split_once('.') else {
-                    return Err(format!(
-                        "function '{name}' capability '{gname}' resource = \"{}\" — \
-                         must be \"<type>.<name>\" (e.g. \"pg.main\")",
-                        grant.resource
-                    ));
-                };
-                if rtype != grant.r#type {
-                    return Err(format!(
-                        "function '{name}' capability '{gname}': resource \"{}\" does not \
-                         match type \"{}\"",
-                        grant.resource, grant.r#type
-                    ));
-                }
-                if rtype == "pg" && !self.resources.pg.contains_key(rname) {
-                    return Err(format!(
-                        "function '{name}' capability '{gname}' references resource \
-                         \"{}\" but no [resources.pg.{rname}] block is declared",
-                        grant.resource
-                    ));
-                }
-                if grant.mode != "read-only" && grant.mode != "read-write" {
-                    return Err(format!(
-                        "function '{name}' capability '{gname}' mode = \"{}\" — must be \
-                         \"read-only\" or \"read-write\"",
-                        grant.mode
-                    ));
-                }
-                if grant.max_inflight == 0 {
-                    return Err(format!(
-                        "function '{name}' capability '{gname}' max_inflight = 0 — every \
-                         call would be throttled; must be at least 1"
-                    ));
-                }
-                if grant.call_timeout_ms == 0 || grant.call_timeout_ms > func.timeout_ms {
-                    return Err(format!(
-                        "function '{name}' capability '{gname}' call_timeout_ms = {} — must \
-                         be 1..={} (the function's timeout_ms)",
-                        grant.call_timeout_ms, func.timeout_ms
-                    ));
-                }
+                    func.routes.len()
+                ));
             }
         }
-        // Gateway: validate provider kinds + that default/fallback names exist.
-        if self.gateway.enabled() {
-            const KNOWN_KINDS: [&str; 4] = ["mock", "openai", "anthropic", "ollama"];
-            for (pname, pcfg) in &self.gateway.providers {
-                if !KNOWN_KINDS.contains(&pcfg.kind.as_str()) {
-                    return Err(format!(
-                        "[gateway.providers.{pname}] kind = \"{}\" is not one of {KNOWN_KINDS:?}",
-                        pcfg.kind
-                    ));
-                }
-            }
-            if let Some(def) = &self.gateway.default_provider {
-                if !self.gateway.providers.contains_key(def) {
-                    return Err(format!(
-                        "[gateway] default_provider = \"{def}\" is not a configured provider"
-                    ));
-                }
-            }
-            for fb in &self.gateway.fallback_chain {
-                if !self.gateway.providers.contains_key(fb) {
-                    return Err(format!(
-                        "[gateway] fallback_chain entry \"{fb}\" is not a configured provider"
-                    ));
-                }
+        for r in func.effective_routes(name) {
+            if r.path == "/_riz" || r.path.starts_with("/_riz/") {
+                return Err(format!(
+                    "function '{name}' has route path '{}' that uses reserved /_riz/* namespace",
+                    r.path
+                ));
             }
         }
+        Ok(())
+    }
 
-        // [static] — fail closed at startup so a misconfigured mount never
-        // silently serves nothing (or shadows an API).
+    /// Per-function authorizer checks: function refs must resolve, inline
+    /// JWT blocks must be well-formed.
+    fn validate_function_auth(&self, name: &str, func: &FunctionConfig) -> Result<(), String> {
+        // Validate authorizer references: a FunctionRef that is not "none"
+        // must name an existing function in this config.
+        if let Some(AuthorizerConfig::FunctionRef(ref auth_name)) = func.authorizer {
+            if auth_name != "none" && !self.functions.contains_key(auth_name.as_str()) {
+                return Err(format!(
+                    "function '{name}' authorizer = \"{auth_name}\" references a function \
+                     that does not exist in this config"
+                ));
+            }
+        }
+        // Validate JWT authorizer: type must be "jwt".
+        if let Some(AuthorizerConfig::Jwt(ref jwt_cfg)) = func.authorizer {
+            if jwt_cfg.r#type != "jwt" {
+                return Err(format!(
+                    "function '{name}' inline authorizer block has type = \"{}\" but only \
+                     type = \"jwt\" is supported",
+                    jwt_cfg.r#type
+                ));
+            }
+            if jwt_cfg.jwks_uri.is_empty() {
+                return Err(format!(
+                    "function '{name}' JWT authorizer must have a non-empty jwks_uri"
+                ));
+            }
+            if jwt_cfg.issuer.is_empty() {
+                return Err(format!(
+                    "function '{name}' JWT authorizer must have a non-empty issuer"
+                ));
+            }
+            // `audience` is intentionally OPTIONAL: when empty, `aud`
+            // validation is skipped (required for Clerk's default session
+            // token, which has no `aud`). When set, it is enforced in
+            // src/auth/jwt.rs (WorkOS and most OAuth IdPs).
+        }
+        Ok(())
+    }
+
+    /// `[function.X.mcp]` — typed tool-schema block. Reject unknown scalar
+    /// types and non-object body schemas at startup so a typo surfaces as a
+    /// clear config error, not a silently-wrong schema served to agents.
+    fn validate_function_mcp(&self, name: &str, func: &FunctionConfig) -> Result<(), String> {
+        let Some(mcp) = &func.mcp else {
+            return Ok(());
+        };
+        for (pname, spec) in &mcp.query {
+            if !MCP_PARAM_TYPES.contains(&spec.kind.as_str()) {
+                return Err(format!(
+                    "function '{name}' [function.{name}.mcp.query.{pname}] has \
+                     type = \"{}\" — must be one of {MCP_PARAM_TYPES:?}",
+                    spec.kind
+                ));
+            }
+        }
+        if let Some(body) = &mcp.body {
+            if !body.is_object() {
+                return Err(format!(
+                    "function '{name}' [function.{name}.mcp] body must be a JSON Schema \
+                     object (e.g. {{ type = \"object\", ... }})"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// `[function.X.capabilities.<grant>]` — broker grants. Deny-by-default
+    /// means an invalid grant must be a loud startup error, never a
+    /// silently-ignored block.
+    fn validate_capability_grants(&self, name: &str, func: &FunctionConfig) -> Result<(), String> {
+        for (gname, grant) in &func.capabilities {
+            if !matches!(func.runtime, RuntimeKind::Wasm) {
+                return Err(format!(
+                    "function '{name}' grants capability '{gname}' but runtime is \
+                     '{}' — broker capabilities are WASM-only in v1 (the broker \
+                     rides the __wasm-host sandbox boundary)",
+                    func.runtime.as_str()
+                ));
+            }
+            if !CAPABILITY_TYPES.contains(&grant.r#type.as_str()) {
+                return Err(format!(
+                    "function '{name}' capability '{gname}' has type = \"{}\" — \
+                     must be one of {CAPABILITY_TYPES:?}",
+                    grant.r#type
+                ));
+            }
+            let Some((rtype, rname)) = grant.resource.split_once('.') else {
+                return Err(format!(
+                    "function '{name}' capability '{gname}' resource = \"{}\" — \
+                     must be \"<type>.<name>\" (e.g. \"pg.main\")",
+                    grant.resource
+                ));
+            };
+            if rtype != grant.r#type {
+                return Err(format!(
+                    "function '{name}' capability '{gname}': resource \"{}\" does not \
+                     match type \"{}\"",
+                    grant.resource, grant.r#type
+                ));
+            }
+            if rtype == "pg" && !self.resources.pg.contains_key(rname) {
+                return Err(format!(
+                    "function '{name}' capability '{gname}' references resource \
+                     \"{}\" but no [resources.pg.{rname}] block is declared",
+                    grant.resource
+                ));
+            }
+            if grant.mode != "read-only" && grant.mode != "read-write" {
+                return Err(format!(
+                    "function '{name}' capability '{gname}' mode = \"{}\" — must be \
+                     \"read-only\" or \"read-write\"",
+                    grant.mode
+                ));
+            }
+            if grant.max_inflight == 0 {
+                return Err(format!(
+                    "function '{name}' capability '{gname}' max_inflight = 0 — every \
+                     call would be throttled; must be at least 1"
+                ));
+            }
+            if grant.call_timeout_ms == 0 || grant.call_timeout_ms > func.timeout_ms {
+                return Err(format!(
+                    "function '{name}' capability '{gname}' call_timeout_ms = {} — must \
+                     be 1..={} (the function's timeout_ms)",
+                    grant.call_timeout_ms, func.timeout_ms
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Gateway: validate provider kinds + that default/fallback names exist.
+    fn validate_gateway(&self) -> Result<(), String> {
+        if !self.gateway.enabled() {
+            return Ok(());
+        }
+        const KNOWN_KINDS: [&str; 4] = ["mock", "openai", "anthropic", "ollama"];
+        for (pname, pcfg) in &self.gateway.providers {
+            if !KNOWN_KINDS.contains(&pcfg.kind.as_str()) {
+                return Err(format!(
+                    "[gateway.providers.{pname}] kind = \"{}\" is not one of {KNOWN_KINDS:?}",
+                    pcfg.kind
+                ));
+            }
+        }
+        if let Some(def) = &self.gateway.default_provider {
+            if !self.gateway.providers.contains_key(def) {
+                return Err(format!(
+                    "[gateway] default_provider = \"{def}\" is not a configured provider"
+                ));
+            }
+        }
+        for fb in &self.gateway.fallback_chain {
+            if !self.gateway.providers.contains_key(fb) {
+                return Err(format!(
+                    "[gateway] fallback_chain entry \"{fb}\" is not a configured provider"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// `[static]` — fail closed at startup so a misconfigured mount never
+    /// silently serves nothing (or shadows an API).
+    fn validate_static(&self) -> Result<(), String> {
         if let Some(s) = &self.static_site {
             if !s.dir.is_dir() {
                 return Err(format!(

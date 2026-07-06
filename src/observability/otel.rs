@@ -87,7 +87,11 @@ fn encode_span(ev: &TelemetryEvent) -> Value {
         "attributes": encode_attrs(&ev.attributes),
     });
     if let Some(parent) = &ev.parent_span_id {
-        span["parentSpanId"] = Value::String(parent.clone());
+        // `span` is the object literal built just above; `as_object_mut`
+        // always succeeds — the insert form just avoids IndexMut's panic path.
+        if let Some(obj) = span.as_object_mut() {
+            obj.insert("parentSpanId".into(), Value::String(parent.clone()));
+        }
     }
     span
 }
@@ -189,10 +193,12 @@ pub fn export(
             Err(AttemptError::Permanent(e)) => return Err(e),
             Err(AttemptError::Transient(e)) => {
                 last_err = Some(e);
-                // Don't sleep after the final attempt.
-                if attempt + 1 < EXPORT_MAX_ATTEMPTS {
+                // Don't sleep after the final attempt. Saturating forms:
+                // `attempt < 3` so the add cannot overflow, and a saturated
+                // Duration is a finite (if long) sleep — never a panic.
+                if attempt.saturating_add(1) < EXPORT_MAX_ATTEMPTS {
                     std::thread::sleep(backoff);
-                    backoff *= EXPORT_BACKOFF_FACTOR;
+                    backoff = backoff.saturating_mul(EXPORT_BACKOFF_FACTOR);
                 }
             }
         }

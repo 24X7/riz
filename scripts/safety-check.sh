@@ -26,14 +26,14 @@ cd "$(dirname "$0")/.."
 GATE_LINTS=(
   clippy::panic
   clippy::disallowed_methods  # rule 3 — unbounded channels; reached zero 2026-07-03
+  clippy::unwrap_used         # rule 7 — recoverable paths must return Err; reached zero 2026-07-06
+  clippy::expect_used         # rule 7 — ditto; reached zero 2026-07-06
+  clippy::unreachable         # rule 7 — prove it or return an error; reached zero 2026-07-06
 )
 
 # Violations exist today — burned down by the safety review loop. Keep this
 # list in sync with the "ratchet tier" table in docs/SAFETY.md.
 RATCHET_LINTS=(
-  clippy::unwrap_used            # rule 7 — recoverable paths must return Err
-  clippy::expect_used            # rule 7 — ditto (init-phase allows need a comment)
-  clippy::unreachable            # rule 5 — prove it or return an error
   clippy::exit                   # rule 1 — orderly shutdown, not scattered exits
   clippy::indexing_slicing       # rule 9 — use .get(), avoid panicking access
   clippy::arithmetic_side_effects # rule 5 — checked/saturating arithmetic

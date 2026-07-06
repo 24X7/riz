@@ -78,7 +78,7 @@ method = "GET"
         "session semantics must be named:\n{txt}"
     );
 
-    let json = riz::scaffold::generate_well_known(&cfg);
+    let json = riz::scaffold::generate_well_known(&cfg).expect("riz.json serializes");
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
     let names: Vec<&str> = v["tools"]
         .as_array()
@@ -116,7 +116,7 @@ fn llms_txt_lists_every_function_as_a_tool_with_routes_and_runtime() {
 #[test]
 fn well_known_is_valid_json_with_tools_and_mcp_endpoint() {
     let cfg = sample_config();
-    let json = riz::scaffold::generate_well_known(&cfg);
+    let json = riz::scaffold::generate_well_known(&cfg).expect("riz.json serializes");
     let v: serde_json::Value =
         serde_json::from_str(&json).expect("generated riz.json is valid JSON");
 
@@ -151,7 +151,7 @@ description = "Full-text search over the catalog."
 "#,
     )
     .unwrap();
-    let json = riz::scaffold::generate_well_known(&cfg);
+    let json = riz::scaffold::generate_well_known(&cfg).expect("riz.json serializes");
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(
         v["tools"][0]["description"],

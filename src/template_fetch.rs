@@ -188,41 +188,50 @@ fn merge_ref(src: Source, reference: Option<String>) -> Source {
 }
 
 /// `https://github.com/<o>/<r>/tree/<ref>/<subdir...>` → Git source.
+///
+/// Iterator-driven (no positional indexing): a spec with too few segments
+/// falls out at the first missing `next()` and resolves to `None`, which the
+/// caller turns into the "could not understand template spec" error.
 fn parse_github_tree_url(s: &str) -> Option<Source> {
     let rest = s.strip_prefix("https://github.com/")?;
-    let parts: Vec<&str> = rest.trim_end_matches('/').split('/').collect();
-    // owner / repo / tree / ref / subdir...
-    if parts.len() < 4 || parts[2] != "tree" {
+    // owner / repo / "tree" / ref / subdir...
+    let mut parts = rest.trim_end_matches('/').split('/');
+    let owner = parts.next()?;
+    let repo_name = parts.next()?;
+    if parts.next()? != "tree" {
         return None;
     }
-    let repo = format!("https://github.com/{}/{}", parts[0], parts[1]);
-    let reference = Some(parts[3].to_string());
-    let subdir = if parts.len() > 4 {
-        Some(parts[4..].join("/"))
-    } else {
+    let reference = Some(parts.next()?.to_string());
+    let subdir: Vec<&str> = parts.collect();
+    let subdir = if subdir.is_empty() {
         None
+    } else {
+        Some(subdir.join("/"))
     };
     Some(Source::Git {
-        repo,
+        repo: format!("https://github.com/{owner}/{repo_name}"),
         reference,
         subdir,
     })
 }
 
-/// `owner/repo[/sub/dir]` → GitHub Git source.
+/// `owner/repo[/sub/dir]` → GitHub Git source. Iterator-driven like
+/// [`parse_github_tree_url`]; malformed shorthands resolve to `None`.
 fn parse_shorthand(s: &str) -> Option<Source> {
-    let parts: Vec<&str> = s.split('/').collect();
-    if parts.len() < 2 || parts[0].is_empty() || parts[1].is_empty() {
+    let mut parts = s.split('/');
+    let owner = parts.next()?;
+    let repo_name = parts.next()?;
+    if owner.is_empty() || repo_name.is_empty() {
         return None;
     }
-    let repo = format!("https://github.com/{}/{}", parts[0], parts[1]);
-    let subdir = if parts.len() > 2 {
-        Some(parts[2..].join("/"))
-    } else {
+    let subdir: Vec<&str> = parts.collect();
+    let subdir = if subdir.is_empty() {
         None
+    } else {
+        Some(subdir.join("/"))
     };
     Some(Source::Git {
-        repo,
+        repo: format!("https://github.com/{owner}/{repo_name}"),
         reference: None,
         subdir,
     })
@@ -352,10 +361,30 @@ fn is_skipped(name: &std::ffi::OsStr) -> bool {
         .is_some_and(|n| SKIP_DIRS.contains(&n) || n.ends_with(".tsbuildinfo"))
 }
 
+/// Depth cap for the recursive template copy (rule 1: recursion over an
+/// external directory tree carries an explicit bound). Real templates are a
+/// handful of levels deep; the cap's job is to fail cleanly on pathological
+/// trees — most notably a symlinked directory cycle, which `is_dir()`
+/// follows. Kept below the OS's own symlink-resolution limit (MAXSYMLINKS,
+/// 32 on macOS/Linux) so the actionable message below fires before a raw
+/// ELOOP does.
+const MAX_COPY_DEPTH: usize = 16;
+
 /// Recursively copy `src` into `dst`, skipping VCS/dep/build cruft. Returns
-/// files written.
+/// files written. Depth-capped at [`MAX_COPY_DEPTH`].
 fn copy_dir(src: &Path, dst: &Path) -> anyhow::Result<usize> {
-    let mut count = 0;
+    copy_dir_at(src, dst, 0)
+}
+
+fn copy_dir_at(src: &Path, dst: &Path, depth: usize) -> anyhow::Result<usize> {
+    if depth >= MAX_COPY_DEPTH {
+        anyhow::bail!(
+            "template directory nests deeper than {MAX_COPY_DEPTH} levels at {} — \
+             refusing to copy (is there a symlink cycle in the template?)",
+            src.display()
+        );
+    }
+    let mut count: usize = 0;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
         let name = entry.file_name();
@@ -366,13 +395,16 @@ fn copy_dir(src: &Path, dst: &Path) -> anyhow::Result<usize> {
         let to = dst.join(&name);
         if from.is_dir() {
             std::fs::create_dir_all(&to)?;
-            count += copy_dir(&from, &to)?;
+            // Saturating adds: `count` is bounded by the number of files in
+            // the template tree; saturation cannot realistically be reached
+            // and a clamped count only affects the CLI's summary line.
+            count = count.saturating_add(copy_dir_at(&from, &to, depth.saturating_add(1))?);
         } else {
             if let Some(parent) = to.parent() {
                 std::fs::create_dir_all(parent)?;
             }
             std::fs::copy(&from, &to)?;
-            count += 1;
+            count = count.saturating_add(1);
         }
     }
     Ok(count)
@@ -482,6 +514,66 @@ mod tests {
             Source::Local(dir.path().join("templates/typescript-http"))
         );
         std::env::remove_var("RIZ_TEMPLATE_REPO");
+    }
+
+    /// A symlinked directory cycle in a local template must produce a clean
+    /// error, not unbounded recursion (rule 1). Whether the depth cap or the
+    /// OS's own symlink-resolution limit (ELOOP) fires first depends on how
+    /// many symlinks each path component costs — either way the copy stops
+    /// with an `Err`, never a hang or a panic.
+    #[cfg(unix)]
+    #[test]
+    fn copy_refuses_symlink_cycle_with_clean_error() {
+        let from = tempfile::tempdir().unwrap();
+        std::fs::write(from.path().join("riz.toml"), "x").unwrap();
+        std::os::unix::fs::symlink(from.path(), from.path().join("loop")).unwrap();
+
+        let to = tempfile::tempdir().unwrap();
+        let dest = to.path().join("app");
+        let err = fetch_into(&Source::Local(from.path().to_path_buf()), &dest, false).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("nests deeper") || msg.contains("symbolic links"),
+            "expected the depth-cap or ELOOP error, got: {msg}"
+        );
+    }
+
+    /// The depth cap itself, deterministically: a symlink-free tree nested
+    /// past MAX_COPY_DEPTH gets the actionable depth-cap message.
+    #[test]
+    fn copy_deeper_than_cap_gets_depth_cap_error() {
+        let from = tempfile::tempdir().unwrap();
+        let mut deep = from.path().to_path_buf();
+        for i in 0..=MAX_COPY_DEPTH {
+            deep = deep.join(format!("d{i}"));
+        }
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join("leaf.txt"), "x").unwrap();
+
+        let to = tempfile::tempdir().unwrap();
+        let dest = to.path().join("app");
+        let err = fetch_into(&Source::Local(from.path().to_path_buf()), &dest, false).unwrap_err();
+        assert!(
+            err.to_string().contains("nests deeper"),
+            "expected the depth-cap error, got: {err}"
+        );
+    }
+
+    /// A tree URL with too few segments (no ref) is not a tree source; it
+    /// falls through to the whole-repo git-URL branch, same as before the
+    /// iterator rewrite.
+    #[test]
+    fn truncated_tree_url_falls_back_to_whole_clone() {
+        std::env::remove_var("RIZ_TEMPLATE_REPO");
+        let s = resolve("https://github.com/acme/widgets/tree", None).unwrap();
+        assert_eq!(
+            s,
+            Source::Git {
+                repo: "https://github.com/acme/widgets/tree".to_string(),
+                reference: None,
+                subdir: None,
+            }
+        );
     }
 
     #[test]

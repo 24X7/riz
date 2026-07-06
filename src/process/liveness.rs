@@ -261,9 +261,11 @@ mod tests {
         assert!(should_skip, "liveness watcher must skip when pid == 0");
     }
 
-    /// The consecutive_crashes counter resets to 0 on successful respawn.
-    /// Simulated by storing 0 directly (as `handle_process_failure` does on
-    /// `spawn_with_cold_start_record` success).
+    /// The consecutive_crashes counter resets to 0 when a worker ANSWERS an
+    /// invocation (the success arms in `ProcessManager`) — NOT on a successful
+    /// respawn, which would defeat the breaker on the crash-loop shape (see
+    /// `crash_loop_with_successful_respawns_trips_the_breaker` below).
+    /// Simulated by storing 0 directly, as the invocation-success path does.
     #[test]
     fn consecutive_crashes_resets_on_successful_respawn() {
         let riz_state = Arc::new(RizState::new());

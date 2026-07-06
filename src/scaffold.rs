@@ -142,7 +142,12 @@ pub fn generate_llms_txt(config: &Config) -> String {
 }
 
 /// Render `.well-known/riz.json` — the machine-readable instance card.
-pub fn generate_well_known(config: &Config) -> String {
+///
+/// Serialization of a locally-built `serde_json::Value` cannot fail in
+/// practice (string keys only, no fallible `Serialize` impls), but this is a
+/// user-facing CLI path — a failure must surface as an actionable error, not
+/// a panic.
+pub fn generate_well_known(config: &Config) -> anyhow::Result<String> {
     let tools: Vec<serde_json::Value> = tool_entries(config)
         .into_iter()
         .map(|t| {
@@ -175,9 +180,10 @@ pub fn generate_well_known(config: &Config) -> String {
     });
 
     // Pretty-print with a trailing newline (POSIX text file).
-    let mut s = serde_json::to_string_pretty(&doc).expect("scaffold json is serializable");
+    let mut s = serde_json::to_string_pretty(&doc)
+        .map_err(|e| anyhow::anyhow!("could not serialize .well-known/riz.json: {e}"))?;
     s.push('\n');
-    s
+    Ok(s)
 }
 
 /// What `scaffold_static` produced, for the CLI to report.
@@ -224,7 +230,7 @@ pub fn scaffold_static(
 
     std::fs::create_dir_all(&well_known_dir)?;
     std::fs::write(&llms_path, generate_llms_txt(config))?;
-    std::fs::write(&riz_json_path, generate_well_known(config))?;
+    std::fs::write(&riz_json_path, generate_well_known(config)?)?;
 
     let mut wired = false;
     if opts.wire {
