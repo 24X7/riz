@@ -248,6 +248,44 @@ enum DrainExit {
     ShutdownRequested,
 }
 
+/// Spawn one `riz __telemetry <sink>` child with stdin piped and the export
+/// target conveyed via env.
+fn spawn_telemetry_child(
+    exe: &Path,
+    sink: &Path,
+    target: &ExportTarget,
+    headers_json: &str,
+) -> std::io::Result<tokio::process::Child> {
+    let mut cmd = tokio::process::Command::new(exe);
+    cmd.arg("__telemetry")
+        .arg(sink)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    if let Some(ep) = &target.endpoint {
+        cmd.env(ENV_ENDPOINT, ep);
+        cmd.env(ENV_HEADERS, headers_json);
+    }
+    cmd.spawn()
+}
+
+/// Sleep out the current backoff, doubling it (saturating, capped at
+/// [`RESPAWN_BACKOFF_MAX`]) for the next attempt. Returns `true` if shutdown
+/// was signalled during the wait — the caller must exit its loop.
+async fn backoff_or_shutdown(
+    backoff: &mut Duration,
+    shutdown_rx: &mut oneshot::Receiver<()>,
+) -> bool {
+    let shutdown = tokio::select! {
+        _ = &mut *shutdown_rx => true,
+        _ = tokio::time::sleep(*backoff) => false,
+    };
+    // Saturating: the doubling can never panic under overflow checks; the
+    // `min` keeps the ceiling at RESPAWN_BACKOFF_MAX regardless.
+    *backoff = backoff.saturating_mul(2).min(RESPAWN_BACKOFF_MAX);
+    shutdown
+}
+
 /// The drain + respawn loop. Runs until the channel is closed (all handles
 /// dropped), the child needs respawning, or `shutdown()` is signalled.
 async fn supervise_loop(
@@ -264,27 +302,15 @@ async fn supervise_loop(
 
     loop {
         // Spawn a fresh child.
-        let mut cmd = tokio::process::Command::new(&exe);
-        cmd.arg("__telemetry")
-            .arg(&sink)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
-        if let Some(ep) = &target.endpoint {
-            cmd.env(ENV_ENDPOINT, ep);
-            cmd.env(ENV_HEADERS, &headers_json);
-        }
-        let mut child = match cmd.spawn() {
+        let mut child = match spawn_telemetry_child(&exe, &sink, &target, &headers_json) {
             Ok(c) => c,
             Err(e) => {
                 tracing::warn!(error = %e, "telemetry: spawn failed; backing off");
                 // A shutdown while we're failing to spawn should still terminate
                 // the loop (nothing to flush to — the child never came up).
-                tokio::select! {
-                    _ = &mut shutdown_rx => return,
-                    _ = tokio::time::sleep(backoff) => {}
+                if backoff_or_shutdown(&mut backoff, &mut shutdown_rx).await {
+                    return;
                 }
-                backoff = (backoff * 2).min(RESPAWN_BACKOFF_MAX);
                 continue;
             }
         };
@@ -308,17 +334,10 @@ async fn supervise_loop(
         let exit = drain_to_child(&mut rx, &mut stdin, &mut child, &mut shutdown_rx).await;
 
         match exit {
-            DrainExit::ShutdownRequested => {
-                // Graceful flush: drain already-enqueued events (bounded), then
-                // close stdin so the child flushes its batch on EOF, then wait
-                // (bounded) for it to exit; kill it if it overruns.
-                graceful_flush(&mut rx, stdin, &mut child).await;
-                *pid_slot.lock().await = None;
-                return;
-            }
-            DrainExit::ChannelClosed => {
-                // All senders dropped: nothing left to enqueue. Close stdin so
-                // the child flushes on EOF, then wait (bounded) for it to exit.
+            DrainExit::ShutdownRequested | DrainExit::ChannelClosed => {
+                // Graceful flush (both exits): drain already-enqueued events
+                // (bounded), then close stdin so the child flushes its batch on
+                // EOF, then wait (bounded) for it to exit; kill it on overrun.
                 graceful_flush(&mut rx, stdin, &mut child).await;
                 *pid_slot.lock().await = None;
                 return;
@@ -331,11 +350,9 @@ async fn supervise_loop(
                 // Respawn after backoff — but a shutdown during the backoff ends
                 // the loop instead.
                 tracing::warn!("telemetry: child exited; respawning");
-                tokio::select! {
-                    _ = &mut shutdown_rx => return,
-                    _ = tokio::time::sleep(backoff) => {}
+                if backoff_or_shutdown(&mut backoff, &mut shutdown_rx).await {
+                    return;
                 }
-                backoff = (backoff * 2).min(RESPAWN_BACKOFF_MAX);
             }
         }
     }
