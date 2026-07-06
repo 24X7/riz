@@ -221,9 +221,16 @@ pub fn build_app(state: Arc<AppState>) -> AxumRouter {
                                             .unwrap_or(0);
                                         // SendStreamingMessage answers as SSE
                                         // (spec §7); everything else is a
-                                        // single JSON-RPC response.
-                                        let method =
-                                            body.0["method"].as_str().unwrap_or("").to_string();
+                                        // single JSON-RPC response. `.get()`
+                                        // over `[]`: an absent method reads
+                                        // as "" either way, minus the
+                                        // panicking-access class.
+                                        let method = body
+                                            .0
+                                            .get("method")
+                                            .and_then(|m| m.as_str())
+                                            .unwrap_or("")
+                                            .to_string();
                                         if matches!(
                                             method.as_str(),
                                             "SendStreamingMessage" | "message/stream"
@@ -362,19 +369,33 @@ pub async fn run(state: Arc<AppState>, addr: SocketAddr) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Resolve when a shutdown signal (Ctrl+C / SIGTERM) arrives. If a handler
+/// cannot be installed, that source is disabled with an error log and the
+/// other source still works — degraded shutdown coverage, never a panic
+/// (the process remains killable by SIGKILL regardless).
 async fn shutdown_signal() {
     use tokio::signal;
     let ctrl_c = async {
-        signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
+        if let Err(e) = signal::ctrl_c().await {
+            error!(
+                "failed to install Ctrl+C handler ({e}) — Ctrl+C will not trigger graceful shutdown"
+            );
+            std::future::pending::<()>().await
+        }
     };
     #[cfg(unix)]
     let terminate = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("failed to install SIGTERM handler")
-            .recv()
-            .await;
+        match signal::unix::signal(signal::unix::SignalKind::terminate()) {
+            Ok(mut sig) => {
+                sig.recv().await;
+            }
+            Err(e) => {
+                error!(
+                    "failed to install SIGTERM handler ({e}) — SIGTERM will not trigger graceful shutdown"
+                );
+                std::future::pending::<()>().await
+            }
+        }
     };
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();
