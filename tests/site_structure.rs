@@ -198,9 +198,8 @@ fn compare_contrasts_lambda_and_frameworks() {
         "compare page must contrast against an established web framework"
     );
     assert!(
-        html.contains("When Lambda is the right call")
-            && html.contains("When a framework is the right call"),
-        "compare page must keep the rows that say when to use the other thing"
+        html.contains("What's actually different") && html.contains("The verdict"),
+        "compare page must keep its differences row (vs Lambda) and verdict row (vs frameworks)"
     );
     // riz scales by running as a container on a platform that autoscales it —
     // the compare page must explain that scale story (not imply it can't scale).

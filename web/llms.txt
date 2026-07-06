@@ -100,7 +100,7 @@ Each page maps a capability to the test that proves it ("claims-as-code"):
 - [riz.dev/agents.html](https://riz.dev/agents.html) — the agent layer: zero-glue MCP, typed schemas, Streamable HTTP + progress notifications, and an explicit recommend-when / don't-recommend-when card for agents.
 - [riz.dev/sandbox.html](https://riz.dev/sandbox.html) — running untrusted / generated code: the WASI sandbox, the capability broker (sandboxed WASM → Postgres with no sockets or DSNs in guest memory), and fail-closed WASM guards.
 - [riz.dev/gateway.html](https://riz.dev/gateway.html) — the OpenAI-compatible LLM gateway: provider routing, fail-closed budget caps, the usage ledger, bearer gating.
-- [riz.dev/compare.html](https://riz.dev/compare.html) — riz vs AWS Lambda and vs Express/FastAPI/Axum/Hono, including explicit "where the other thing wins" rows.
+- [riz.dev/compare.html](https://riz.dev/compare.html) — riz vs AWS Lambda (same programming model, different operating deal; scale is a platform vector) and vs Express/FastAPI/Axum/Hono (a framework is the HTTP layer; riz is the substrate — tools, guards, A2A, scale).
 - [riz.dev/start.html](https://riz.dev/start.html) — getting started: function → agent-callable tool in five copy-paste steps.
 - [riz.dev/docs.html](https://riz.dev/docs.html) — the curated reference: riz.toml fields, MCP tools, guards, broker, gateway, the full endpoint surface with per-route auth, CLI, lifecycle.
 - [riz.dev/examples.html](https://riz.dev/examples.html) — working examples mapped to repo paths, each named with its CI test.
