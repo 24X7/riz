@@ -33,7 +33,10 @@ pub struct CacheLayer {
 
 impl CacheLayer {
     pub fn new(config: &CacheConfig) -> Self {
-        let max_bytes = config.max_size_mb * 1024 * 1024;
+        // Saturating: `max_size_mb` is operator config; a pathological value
+        // (> ~17 exabytes) clamps to a huge-but-finite capacity instead of
+        // panicking at startup under overflow checks.
+        let max_bytes = config.max_size_mb.saturating_mul(1024 * 1024);
         let cache = Cache::builder()
             .max_capacity(max_bytes)
             .weigher(|_key: &String, value: &CacheEntry| -> u32 {
@@ -70,10 +73,13 @@ impl CacheLayer {
     }
 
     pub async fn invalidate_keys(&self, keys: &[String]) -> usize {
-        let mut count = 0;
+        let mut count: usize = 0;
         for key in keys {
             if self.inner.remove(key).await.is_some() {
-                count += 1;
+                // Saturating: bounded by keys.len(), so saturation is
+                // unreachable; the explicit form makes the non-panic
+                // recovery visible.
+                count = count.saturating_add(1);
             }
         }
         count
@@ -86,10 +92,11 @@ impl CacheLayer {
             .filter(|(k, _)| k.starts_with(prefix))
             .map(|(k, _)| k.as_ref().clone())
             .collect();
-        let mut count = 0;
+        let mut count: usize = 0;
         for key in &keys {
             if self.inner.remove(key).await.is_some() {
-                count += 1;
+                // Saturating: bounded by the collected key count (see above).
+                count = count.saturating_add(1);
             }
         }
         count

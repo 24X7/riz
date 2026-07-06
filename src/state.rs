@@ -132,10 +132,13 @@ impl LatencyWindow {
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let n = sorted.len();
         let q = |p: f64| -> f64 {
+            // `n > 0` (empty-window early return above); `idx <= n - 1` by the
+            // `min`, so `get` always hits — the 0.0 fallback just keeps the
+            // bound local instead of panicking on a future refactor slip.
             let idx = ((p * n as f64).ceil() as usize)
                 .saturating_sub(1)
-                .min(n - 1);
-            sorted[idx]
+                .min(n.saturating_sub(1));
+            sorted.get(idx).copied().unwrap_or(0.0)
         };
         (q(0.50), q(0.75), q(0.90), q(0.95), q(0.99))
     }
@@ -328,7 +331,9 @@ pub struct FunctionStateSnapshot {
 
 impl FunctionStateSnapshot {
     pub fn hit_rate_pct(&self) -> f64 {
-        let total = self.cache_hits + self.cache_misses;
+        // Saturating: u64 request counters; a saturated sum keeps the stat
+        // finite instead of panicking a render under overflow checks.
+        let total = self.cache_hits.saturating_add(self.cache_misses);
         if total == 0 {
             0.0
         } else {
@@ -414,7 +419,12 @@ impl FunctionState {
     pub fn guard(name: impl Into<String>, stage: impl Into<String>) -> Self {
         let mut s = Self::system(name, vec![], stage);
         s.kind = FunctionKind::Guard;
-        *s.runtime_tag.lock().unwrap() = "wasm-guard".to_string();
+        // The mutex was created two lines up and has never crossed a thread,
+        // so it cannot be poisoned; recover the guard anyway (we overwrite
+        // the value unconditionally) rather than panic on a refactor slip.
+        *s.runtime_tag
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = "wasm-guard".to_string();
         s
     }
 
@@ -558,7 +568,9 @@ pub struct TokenStatsSnapshot {
 
 impl TokenStatsSnapshot {
     pub fn total(&self) -> u64 {
-        self.total_input + self.total_output
+        // Saturating: u64 token counters; a saturated sum keeps the stat
+        // finite instead of panicking a render under overflow checks.
+        self.total_input.saturating_add(self.total_output)
     }
 }
 
