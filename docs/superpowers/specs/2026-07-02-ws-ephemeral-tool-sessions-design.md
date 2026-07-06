@@ -7,7 +7,7 @@
 WebSocket functions mount as upgrade routes with a `$connect` / `$default` /
 `$disconnect` lifecycle — there is no HTTP route for `tools/call` to dispatch
 to, so PR #15 removed them from the MCP tool surface entirely. That made the
-surface honest but left half the protocol surface invisible to agents.
+surface accurate but left half the protocol surface invisible to agents.
 
 ## Design
 

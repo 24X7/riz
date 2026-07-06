@@ -16,7 +16,7 @@
 ## P0 — Trust & correctness floor (do first)
 
 ### 1. Perf-claim CI gating
-- **Why**: the homepage's `91k req/s · p99<1ms` is honestly classed `benchmark` (registry `perf-throughput`), not CI-gated. A regression in the dispatch path could silently erode it.
+- **Why**: the homepage's `91k req/s · p99<1ms` is classed `benchmark` (registry `perf-throughput`), not CI-gated. A regression in the dispatch path could silently erode it.
 - **Do**: add a CI job that runs `scripts/bench.sh` against a fixed profile and gates a **conservative floor** (e.g. ≥ 40k req/s, p99 < 3ms on the CI runner) — not the headline number, which is hardware-specific. Keep the headline as a reproducible recipe in `benches/README.md`.
 - **Proof**: a `bench-floor` CI gate + a documented runner profile; registry `perf-throughput` upgraded from `benchmark` to gated.
 

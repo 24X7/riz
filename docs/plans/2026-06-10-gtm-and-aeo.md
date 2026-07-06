@@ -200,7 +200,7 @@ Secondary to agent-discovery but **seeds the corpus** that answer engines learn 
 | **Reddit r/LocalLLaMA** | Lead with zero-glue MCP + OpenAI-compatible gateway + local Ollama support. "Your local API is now an MCP tool your agent can call." | Same week |
 | **Reddit r/mcp** | Direct: "riz auto-registers every function as an MCP tool — zero SDK code. Self-hosted, Rust binary." | Same week |
 | **dev.to / Hashnode** | Longer decision-oriented posts (see §2 AEO gaps). These get indexed by AI crawlers fast (high DA). Titles should mirror agent query intent verbatim. | Ongoing, 1–2/month |
-| **Lobsters** | "Show: Riz — Lambda runtime harness + MCP server in one Rust binary". Lobsters tags: `rust`, `serverless`, `tools`. Technical community; code quality + honesty about scope land well. | After HN |
+| **Lobsters** | "Show: Riz — Lambda runtime harness + MCP server in one Rust binary". Lobsters tags: `rust`, `serverless`, `tools`. Technical community; code quality + explicit scope boundaries land well. | After HN |
 | **Demo video / GIF** | A 60-second screen recording: `riz init` → `riz run` → `curl` → `claude mcp add` → agent calling the tool. Embed in README, riz.dev, and every post. | Before HN launch |
 
 ---

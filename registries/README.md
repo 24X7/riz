@@ -14,7 +14,7 @@ function declared in the user's `riz.toml` is auto-exposed as one MCP tool** at 
 Streamable-HTTP endpoint `/_riz/mcp`. Its tool set is therefore **dynamic and
 user-defined** — there is no fixed list of tools that riz "ships."
 
-Every registry listing must describe riz honestly on these terms: a local runtime
+Every registry listing must describe riz on exactly these terms: a local runtime
 you run that turns your own HTTP/Lambda handlers into MCP tools.
 
 | Fact | Value |
@@ -58,8 +58,8 @@ below for the reason.
   and user-defined, with the install and connect commands.
 - **Why not a `packages` entry:** `packages` registry types are `npm`, `pypi`,
   `cargo`, `nuget`, `oci`, `mcpb`. riz is distributed today as prebuilt binaries via
-  a `curl | sh` installer and GitHub Releases — none of those package types is an
-  honest fit yet. (If/when riz ships to `crates.io` or as an `mcpb` bundle — both are
+  a `curl | sh` installer and GitHub Releases — none of those package types actually
+  fits yet. (If/when riz ships to `crates.io` or as an `mcpb` bundle — both are
   on the GTM roadmap — add a corresponding `packages` entry then.)
 - **Submission action (CLI publish):**
   1. Install the publisher: `brew install mcp-publisher` (or download from
@@ -85,7 +85,7 @@ below for the reason.
   - publish via the CLI against the running endpoint:
     `smithery mcp publish "http://localhost:3000/_riz/mcp" -n 24X7/riz`, or
   - submit the server URL through the web form at `https://smithery.ai/new`.
-  In both cases the listing must carry the same honest framing: a self-hosted runtime
+  In both cases the listing must carry the same framing: a self-hosted runtime
   whose tools are dynamic and user-defined.
 - **What's needed:** a Smithery account.
 
@@ -117,7 +117,7 @@ GTM plan.
   `https://smithery.ai/docs/build/publish.md`, and the `smithery.yaml` reference under
   `smithery.ai/docs/build/project-config`.
 
-## Honesty bar
+## Listing rules
 
 Only shipped capabilities are described. No fixed tool list is fabricated (riz's tools
 are user-defined at runtime). No schema field is invented — every field in

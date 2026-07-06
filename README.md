@@ -101,7 +101,7 @@ binary today. Details on [riz.dev/compare.html](https://riz.dev/compare.html).
 
 ## What riz is *not*
 
-Honest scope beats a leaky promise:
+Out of scope by decision, not omission:
 
 - **Not a full AWS emulator** — HTTP/WS Lambda only. No SQS/SNS/S3/EventBridge/
   DynamoDB-stream triggers, no Step Functions. Use real AWS or LocalStack.

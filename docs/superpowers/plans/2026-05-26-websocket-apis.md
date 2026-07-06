@@ -11,7 +11,7 @@
 **Tech stack:** Rust 1.83+, axum 0.7 (`extract::ws`), tokio-tungstenite (transitively via axum), `aws_lambda_events::apigw::{ApiGatewayWebsocketProxyRequest, ApiGatewayProxyResponse}`, dashmap for the connection store, existing `ProcessManager` + `RuntimeRegistry`.
 
 **Prerequisite (must complete before Task 1):**
-- Pre-flight task PF-1 from `2026-05-26-v01-honest-ship-roadmap.md` (drop the `Start` BC alias) must land first. Verify with `cargo test 2>&1 | grep "test result"` — 300 tests pass at HEAD.
+- Pre-flight task PF-1 from `2026-05-26-v01-ship-roadmap.md` (drop the `Start` BC alias) must land first. Verify with `cargo test 2>&1 | grep "test result"` — 300 tests pass at HEAD.
 
 ---
 
@@ -1733,7 +1733,7 @@ git commit -m "test(ws): end-to-end echo roundtrip (gated on bun on PATH)"
 - Modify: `web/index.html`
 - Modify: `web/llms.txt`
 
-- [ ] **Step 1: Move WebSocket from "Coming" to "Works now" in the Honest Status section**
+- [ ] **Step 1: Move WebSocket from "Coming" to "Works now" in the status section**
 
 In `web/index.html`, in the `<section class="status">` block, the right column (`🚧 Coming`) has `<li>WebSocket APIs ...</li>`. Move that `<li>` to the left column (`✓ Works now`):
 

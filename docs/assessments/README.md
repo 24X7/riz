@@ -35,7 +35,7 @@ its own taxonomy; see the linked docs for each grader's exact scope notes).
 
 | Finding | Found in | Status |
 |---|---|---|
-| Hero carousel showed unshipped features as "live · v0.1" (guards, semantic cache, `ctx.invokeModel`, Bedrock) | Run 1, re-confirmed run 2 | **Fixed** (1e11700) — and guards subsequently SHIPPED, so the guard pipeline scene returned honestly (b120771) |
+| Hero carousel showed unshipped features as "live · v0.1" (guards, semantic cache, `ctx.invokeModel`, Bedrock) | Run 1, re-confirmed run 2 | **Fixed** (1e11700) — and guards subsequently SHIPPED, so the guard pipeline scene returned as shipped fact (b120771) |
 | `web/install` claimed MIT; riz is Apache-2.0 | Run 1/2 | **Fixed** (1e11700) |
 | CI ran `cargo test` (vs the nextest-only rule) | Run 1/2 | **Fixed** (1e11700) |
 | Unknown LLM models priced at $0 — budget cap silently bypassed | Run 2 | **Fixed** fail-closed (1e11700) |

@@ -14,7 +14,7 @@ Repo vitals first, because they frame every grade: **~17.7k lines of Rust in `sr
 
 The strongest surface. The wire contract uses `aws_lambda_events` types directly; the parity matrix (`tests/runtime_parity_*.rs`: echo, errors, response, verbs, context, request_shape, binary) genuinely tests the same capability across Bun, Node, Python, Rust, and WASM. Process pools with semaphore-bounded concurrency, liveness watcher with fault-injection respawn tests, two-phase graceful drain, hot-reload (config + handler source, e2e-tested), S3 hot-swap with health-check rollback. The WS surface includes the full `$connect`/`$default`/`$disconnect` lifecycle plus the `@connections` management API, tested e2e.
 
-**Gaps to enterprise:** single-node only — no clustering, no HA, no horizontal story whatsoever; an SLA on riz is an SLA on one box. No TLS termination (declared out of scope, which is honest but means a mandatory reverse-proxy layer the docs barely address). No Windows. The 30s drain and rollback behaviors are tested but have never seen a real production deploy.
+**Gaps to enterprise:** single-node only — no clustering, no HA, no horizontal story whatsoever; an SLA on riz is an SLA on one box. No TLS termination (declared out of scope, which means a mandatory reverse-proxy layer the docs barely address). No Windows. The 30s drain and rollback behaviors are tested but have never seen a real production deploy.
 
 ### 1b. MCP server — **A- (best-in-class for v0.1; the marquee claim holds)**
 
@@ -25,7 +25,7 @@ I checked this hard, because it's the differentiator. It holds up:
 - **Bearer auth** is enforced inside the MCP handler when a token is configured (`validate_bearer`, constant-time via `subtle`), and `examples/riz.prod.toml` documents gating `/_riz/mcp` behind it.
 - **Examples exercise it for real**: `examples/riz.agent.toml` defines three functions with MCP descriptions and a typed body schema; `tests/examples_agent.rs` boots the actual `riz` binary against that exact config and drives `tools/list` + `tools/call` over the wire; `examples/agent-sdk/` and `agent-loop/` drive it from the Claude Agent SDK. Spec negotiation covers 2024-11-05 through 2025-11-25.
 
-**Gaps to enterprise:** GET on `/_riz/mcp` returns 405 — no server-initiated SSE, so no streaming tool results or `notifications/progress` (roadmap #11/#12, honestly deferred). Auth is a *single shared* bearer token — no OAuth 2.1, no per-client identity, no per-tool authorization; any agent with the token can call every function. `listChanged: false`, so hot-reloaded functions don't notify connected clients. Fine for v0.1, disqualifying for multi-tenant enterprise exposure today.
+**Gaps to enterprise:** GET on `/_riz/mcp` returns 405 — no server-initiated SSE, so no streaming tool results or `notifications/progress` (roadmap #11/#12, deferred by decision). Auth is a *single shared* bearer token — no OAuth 2.1, no per-client identity, no per-tool authorization; any agent with the token can call every function. `listChanged: false`, so hot-reloaded functions don't notify connected clients. Fine for v0.1, disqualifying for multi-tenant enterprise exposure today.
 
 ### 1c. LLM gateway — **B**
 
@@ -51,7 +51,7 @@ The architecture is thoughtful: an isolated telemetry child process so a stalled
 
 ### 1g. Testing & claims discipline — **A** (with an asterisk)
 
-This is the most unusual asset in the repo. `tests/claims/registry.toml` maps every landing-page claim to a proving test, an honest "benchmark," "coming-soon," or a justified "copy-only" status, and `claims_truth.rs` enforces the mapping with drift guards. `trust_audit.rs` bans tautological assertions and bare `#[ignore]`s. `docs_commands_runnable.rs`, `repo_cleanliness.rs`, `examples_configs_valid.rs` close the gaps most projects leave open. I have never seen a four-week-old project with this level of claims hygiene.
+This is the most unusual asset in the repo. `tests/claims/registry.toml` maps every landing-page claim to a proving test, a "benchmark," "coming-soon," or a justified "copy-only" status, and `claims_truth.rs` enforces the mapping with drift guards. `trust_audit.rs` bans tautological assertions and bare `#[ignore]`s. `docs_commands_runnable.rs`, `repo_cleanliness.rs`, `examples_configs_valid.rs` close the gaps most projects leave open. I have never seen a four-week-old project with this level of claims hygiene.
 
 **The asterisk — where claims still outrun proof despite the registry:**
 
@@ -59,7 +59,7 @@ This is the most unusual asset in the repo. `tests/claims/registry.toml` maps ev
 2. **The LLM-gateway hero scene (also "live · v0.1") shows `ctx.invokeModel("claude-sonnet-4-6", prompt)`** — a handler-context SDK API that exists nowhere in the adapters, runtime crates, or examples. What shipped is the HTTP endpoint. The visual sells an API surface that doesn't exist.
 3. **CI runs `cargo test`, not `cargo nextest`** (`.github/workflows/ci.yml`), contradicting the project's own hard rule — and backlog item #2's leak-detection rationale depends on nextest's leak signal, which CI therefore never sees.
 4. Small but telling: `web/install` claims "License: MIT (same as riz)" — riz is Apache-2.0.
-5. The 91k req/s headline is honestly classed as a non-gated benchmark (registry concedes this), and the README's "778 tests" vs the registry's "827" vs my ~560-in-tree count shows the number is a moving marketing figure, though the "800+" floor framing is defensible.
+5. The 91k req/s headline is classed as a non-gated benchmark (registry concedes this), and the README's "778 tests" vs the registry's "827" vs my ~560-in-tree count shows the number is a moving marketing figure, though the "800+" floor framing is defensible.
 
 Items 1–2 are exactly the failure mode the claims registry was built to prevent, slipping through because the registry matches *text*, not the animated scenes. A claims-truth system with a hole in it is still better than none — but the hole is in the most-viewed pixels on the page.
 
@@ -72,13 +72,13 @@ The delta is not code quality — it's single-node architecture, single-maintain
 
 Three documents, and they are unusually coherent with each other:
 
-**v1 roadmap** (plan of record, 2026-06-08): 13 items; #2 WASM runtime, #5 Node, #8/#9/#10 gateway, and #13 per-route MCP schemas are shipped and verifiably so. Remaining: #1 event reporting (structured business events, multi-sink), #3/#4 WASM pre/post guards, #6 Go runtime, #7 OTel infra spans (partially superseded by the shipped hand-rolled OTLP path), #11/#12 MCP SSE + progress notifications. #14 (auto-derived schemas from handler types) honestly deferred to v2 with a stated reason. The "two rules" (APIs-only scope, atomic shipments) are real discipline and the deferral table is the best part of the doc — it names what's *not* being built and why.
+**v1 roadmap** (plan of record, 2026-06-08): 13 items; #2 WASM runtime, #5 Node, #8/#9/#10 gateway, and #13 per-route MCP schemas are shipped and verifiably so. Remaining: #1 event reporting (structured business events, multi-sink), #3/#4 WASM pre/post guards, #6 Go runtime, #7 OTel infra spans (partially superseded by the shipped hand-rolled OTLP path), #11/#12 MCP SSE + progress notifications. #14 (auto-derived schemas from handler types) deferred to v2 with a stated reason. The "two rules" (APIs-only scope, atomic shipments) are real discipline and the deferral table is the best part of the doc — it names what's *not* being built and why.
 
-**Harden backlog** (2026-06-10): P0 = perf-claim CI gating, nextest leak hygiene, telemetry shutdown flush + export retry. P1 = WASM resource broker (Postgres-wire), multi-hop agent token-attribution examples, X-Ray mapping validation. This is the right P0 list — it's the project grading its own homework honestly.
+**Harden backlog** (2026-06-10): P0 = perf-claim CI gating, nextest leak hygiene, telemetry shutdown flush + export retry. P1 = WASM resource broker (Postgres-wire), multi-hop agent token-attribution examples, X-Ray mapping validation. This is the right P0 list — it's the project grading its own homework without a curve.
 
 **GTM/AEO plan** (2026-06-10): the north star is *agents discovering and recommending riz* — llms.txt, `.well-known/riz.json`, JSON-LD (shipped), MCP registry submissions (manifests drafted in `registries/`), crates.io/npm/Homebrew distribution, then HN/Reddit launch gated on the install story being clean. Concrete 30/60/90 metrics (200 stars, 3→7 registry listings, citation tracking).
 
-**Assessment of value and sequencing:** the sequencing is correct and unusually self-aware. MCP SSE/progress (#11/#12) before launch is right — "streaming tool results" is currently a 405. Guards (#3/#4) are the highest-value remaining build: they're the viral demo ("redact an SSN from any handler with one .wasm"), they're already *depicted on the homepage*, and shipping them retroactively makes the hero scene honest. Distribution-before-launch gating is wise.
+**Assessment of value and sequencing:** the sequencing is correct and unusually self-aware. MCP SSE/progress (#11/#12) before launch is right — "streaming tool results" is currently a 405. Guards (#3/#4) are the highest-value remaining build: they're the viral demo ("redact an SSN from any handler with one .wasm"), they're already *depicted on the homepage*, and shipping them retroactively makes the hero scene true. Distribution-before-launch gating is wise.
 
 **Risks:** (1) **Breadth vs. one maintainer** — three products (runtime, MCP server, AI gateway) plus a GTM machine is a multi-team roadmap being executed solo; the P0 hardening items compete with the P1 GTM items for the same single brain. (2) **The WASM resource broker (P1 #4) is scope creep risk** — a Postgres-wire capability broker is a fourth product. (3) **GTM targets assume launch executes**; today there is no release, no crates.io listing, and the flywheel's first bearing (install in one command) is not yet mounted. (4) Event reporting (#1) overlaps confusingly with the shipped telemetry path; the roadmap distinguishes them but the buyer won't.
 
@@ -89,12 +89,12 @@ Three documents, and they are unusually coherent with each other:
 riz presents as: **"runtime harness, not a framework"** — write a plain Lambda-shaped function, get production substrate plus a typed MCP tool plus an LLM gateway, in one ~10 MB Apache-2.0 Rust binary with no telemetry, no cloud account, no upsell. The README leads with an agent-addressed "Why an agent or team would choose riz" section and a blunt "What riz is *not*" list.
 
 **Strengths of the posture:**
-- The *honest-scope* framing ("HTTP/WS Lambda only, by design; use LocalStack for the rest") is rare and disarming. The claims registry makes the honesty partially machine-enforced, which is a genuinely novel trust artifact worth marketing in itself.
+- The *scope-by-decision* framing ("HTTP/WS Lambda only, by design; use LocalStack for the rest") is rare and disarming. The claims registry makes that discipline partially machine-enforced, which is a genuinely novel trust artifact worth marketing in itself.
 - The three-way combination is a real category-of-one: no Lambda emulator ships an MCP server; no AI gateway runs your handler code. The comparison table vs LocalStack/SAM/LiteLLM/Workers is fair.
 - "Agent-first discoverability" (llms.txt, machine-readable capability cards, registry manifests written for `when_to_use` parsing) is ahead of the market.
 
 **Risks of the posture:**
-- **The hero scenes undercut the honesty brand** (§1g items 1–2). A project whose moat is "every claim maps to a test" cannot afford a "live · v0.1" tag on unshipped guards and a nonexistent `ctx.invokeModel` API. One sharp HN commenter finds that, and the trust story inverts.
+- **The hero scenes undercut the claims discipline** (§1g items 1–2). A project whose moat is "every claim maps to a test" cannot afford a "live · v0.1" tag on unshipped guards and a nonexistent `ctx.invokeModel` API. One sharp HN commenter finds that, and the trust story inverts.
 - **"Production-grade for free" is doing heavy lifting.** Process supervision and rlimits are production *primitives*; production *grade* implies HA, security posture, and operational history that don't exist yet. The phrase is registered "copy-only" in the registry — the registry knows it's marketing; the visitor doesn't.
 - **Three-products-in-one dilutes the wedge.** Every successful adjacent project (LocalStack, LiteLLM, Ollama) won with one sentence. riz's sentence ("write a function, get an agent-ready API") is good — but the page then sells three.
 - **Anonymous-adjacent identity** (handle "24X7," brand-new domain, single contributor, no social proof) raises the bar for "run my production traffic through it."
@@ -116,7 +116,7 @@ riz presents as: **"runtime harness, not a framework"** — write a plain Lambda
 - Crowded neighbors with deep moats: LocalStack owns "Lambda locally," LiteLLM owns "LLM gateway," mcpo/FastMCP own "wrap my API in MCP" — riz must beat each in its own search results with one maintainer.
 - Pre-launch state: zero stars to date is a cold-start of its own; the flywheel needs an HN seed event that hasn't happened.
 
-**Realistic ceiling:** a well-executed launch (binaries published, guards shipped, hero scenes made honest) plausibly lands a 300–800-point Show HN and 1–4k stars in year one, settling as a respected niche tool. The breakout scenario — 10k+ stars — requires the "agents recommend riz to users" thesis to actually materialize as a channel, which is a bet on market timing, not on this codebase. Without launch execution, the ceiling is zero; everything here is potential energy.
+**Realistic ceiling:** a well-executed launch (binaries published, guards shipped, hero scenes made true) plausibly lands a 300–800-point Show HN and 1–4k stars in year one, settling as a respected niche tool. The breakout scenario — 10k+ stars — requires the "agents recommend riz to users" thesis to actually materialize as a channel, which is a bet on market timing, not on this codebase. Without launch execution, the ceiling is zero; everything here is potential energy.
 
 ---
 
@@ -142,4 +142,4 @@ riz presents as: **"runtime harness, not a framework"** — write a plain Lambda
 
 ## Synthesis
 
-A genuinely well-engineered, honestly-scoped, four-week-old category-of-one with the best claims-discipline I've seen at this stage — whose biggest near-term risks are that its two flashiest homepage scenes depict unshipped software under a "live" tag, that its entire enterprise story rests on one anonymous maintainer and zero production miles, and that its only revenue plan is a tip jar with placeholder crypto addresses: **bet a side project on it today, a team on it after launch + guards ship, and an SLA on it no sooner than v1 + a second maintainer.**
+A genuinely well-engineered, deliberately-scoped, four-week-old category-of-one with the best claims-discipline I've seen at this stage — whose biggest near-term risks are that its two flashiest homepage scenes depict unshipped software under a "live" tag, that its entire enterprise story rests on one anonymous maintainer and zero production miles, and that its only revenue plan is a tip jar with placeholder crypto addresses: **bet a side project on it today, a team on it after launch + guards ship, and an SLA on it no sooner than v1 + a second maintainer.**
