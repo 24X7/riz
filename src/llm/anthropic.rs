@@ -11,12 +11,13 @@
 //! endpoint) and return a clear error.
 
 use serde::Deserialize;
+use serde_json::Value;
 
 use super::types::{
     ChatChoice, ChatMessage, ChatRequest, ChatResponse, EmbeddingsResponse, Tool, ToolCall,
     ToolCallFunction, Usage,
 };
-use super::ProviderError;
+use super::{error_snippet, read_body_capped, ProviderError, MAX_RESPONSE_BODY_BYTES};
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const DEFAULT_MAX_TOKENS: u32 = 4096;
@@ -58,17 +59,21 @@ impl AnthropicProvider {
             "max_tokens": req.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
             "messages": messages,
         });
-        if stream {
-            body["stream"] = serde_json::json!(true);
-        }
-        if !system.is_empty() {
-            body["system"] = serde_json::json!(system);
-        }
-        // `tool_choice: "none"` (wants_tools() == false) omits tools entirely.
-        if req.wants_tools() {
-            body["tools"] = serde_json::json!(map_tools(&req.tools));
-            if let Some(tc) = req.tool_choice.as_ref().and_then(map_tool_choice) {
-                body["tool_choice"] = tc;
+        // `json!({…})` always builds an object; `as_object_mut` states that
+        // without the panicking `body[…] = …` IndexMut route (rule 9).
+        if let Some(obj) = body.as_object_mut() {
+            if stream {
+                obj.insert("stream".into(), serde_json::json!(true));
+            }
+            if !system.is_empty() {
+                obj.insert("system".into(), serde_json::json!(system));
+            }
+            // `tool_choice: "none"` (wants_tools() == false) omits tools entirely.
+            if req.wants_tools() {
+                obj.insert("tools".into(), serde_json::json!(map_tools(&req.tools)));
+                if let Some(tc) = req.tool_choice.as_ref().and_then(map_tool_choice) {
+                    obj.insert("tool_choice".into(), tc);
+                }
             }
         }
         body
@@ -94,13 +99,7 @@ impl AnthropicProvider {
             .map_err(|e| ProviderError::Unavailable(self.name.clone(), e.to_string()))?;
         let status = resp.status();
         if !status.is_success() {
-            let txt: String = resp
-                .text()
-                .await
-                .unwrap_or_default()
-                .chars()
-                .take(300)
-                .collect();
+            let txt = error_snippet(resp, &self.name).await;
             return Err(ProviderError::Upstream(
                 self.name.clone(),
                 format!("HTTP {status}: {txt}"),
@@ -116,7 +115,10 @@ impl AnthropicProvider {
             ));
         }
         let resp = self.send_chat(&self.chat_body(req, false)).await?;
-        let parsed: AnthropicResponse = resp.json().await.map_err(|e| {
+        // Capped read (rule 3): a misbehaving upstream body is a clean
+        // Upstream error, not unbounded gateway memory.
+        let body = read_body_capped(resp, &self.name, MAX_RESPONSE_BODY_BYTES).await?;
+        let parsed: AnthropicResponse = serde_json::from_slice(&body).map_err(|e| {
             ProviderError::Upstream(self.name.clone(), format!("malformed response: {e}"))
         })?;
 
@@ -180,7 +182,12 @@ impl AnthropicProvider {
             usage: Usage {
                 prompt_tokens: parsed.usage.input_tokens,
                 completion_tokens: parsed.usage.output_tokens,
-                total_tokens: parsed.usage.input_tokens + parsed.usage.output_tokens,
+                // Saturating: remote-supplied counts; a saturated total stays
+                // HIGH so budget math over-counts (fails closed).
+                total_tokens: parsed
+                    .usage
+                    .input_tokens
+                    .saturating_add(parsed.usage.output_tokens),
             },
         })
     }
@@ -234,6 +241,14 @@ impl AnthropicProvider {
 /// Cap on the SSE line-reassembly buffer (same rationale as the gateway tee).
 const LINE_BUF_CAP: usize = 1 << 20;
 
+/// A token count read from a remote event: absent or malformed reads 0;
+/// values beyond `u32::MAX` clamp HIGH so metering over-counts (fails
+/// closed) instead of `as`-truncation wrapping them down.
+fn clamped_count(v: Option<&Value>) -> u32 {
+    v.and_then(Value::as_u64)
+        .map_or(0, |n| u32::try_from(n).unwrap_or(u32::MAX))
+}
+
 /// Stateful translator: feed it the JSON payload of each upstream `data:`
 /// line, get back zero or more complete OpenAI SSE frames.
 struct SseTranslator {
@@ -280,62 +295,24 @@ impl SseTranslator {
     }
 
     fn feed(&mut self, data: &str) -> Vec<String> {
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(data) else {
+        let Ok(v) = serde_json::from_str::<Value>(data) else {
             return vec![];
         };
-        match v["type"].as_str().unwrap_or("") {
+        // All field access is `.get()`/`.pointer()` with graceful fallbacks:
+        // these events are REMOTE input — a malformed frame degrades to "no
+        // output" (or approximate usage), never a panicking index (rule 9).
+        match v.get("type").and_then(Value::as_str).unwrap_or("") {
             "message_start" => {
-                self.input_tokens =
-                    v["message"]["usage"]["input_tokens"].as_u64().unwrap_or(0) as u32;
+                self.input_tokens = clamped_count(v.pointer("/message/usage/input_tokens"));
                 vec![self.frame(serde_json::json!({ "role": "assistant" }), None)]
             }
-            "content_block_start" => {
-                let block = &v["content_block"];
-                if block["type"] == "tool_use" {
-                    let idx = self.next_tool_index;
-                    self.next_tool_index += 1;
-                    self.tool_index
-                        .insert(v["index"].as_u64().unwrap_or(0), idx);
-                    vec![self.frame(
-                        serde_json::json!({ "tool_calls": [{
-                            "index": idx,
-                            "id": block["id"],
-                            "type": "function",
-                            "function": { "name": block["name"], "arguments": "" },
-                        }]}),
-                        None,
-                    )]
-                } else {
-                    vec![]
-                }
-            }
-            "content_block_delta" => {
-                let delta = &v["delta"];
-                match delta["type"].as_str().unwrap_or("") {
-                    "text_delta" => {
-                        vec![self.frame(serde_json::json!({ "content": delta["text"] }), None)]
-                    }
-                    "input_json_delta" => {
-                        let Some(&idx) = self.tool_index.get(&v["index"].as_u64().unwrap_or(0))
-                        else {
-                            return vec![];
-                        };
-                        vec![self.frame(
-                            serde_json::json!({ "tool_calls": [{
-                                "index": idx,
-                                "function": { "arguments": delta["partial_json"] },
-                            }]}),
-                            None,
-                        )]
-                    }
-                    _ => vec![], // thinking/signature deltas etc. — not chat content
-                }
-            }
+            "content_block_start" => self.on_block_start(&v),
+            "content_block_delta" => self.on_block_delta(&v),
             "message_delta" => {
-                if let Some(out) = v["usage"]["output_tokens"].as_u64() {
-                    self.output_tokens = out as u32;
+                if let Some(out) = v.pointer("/usage/output_tokens").and_then(Value::as_u64) {
+                    self.output_tokens = u32::try_from(out).unwrap_or(u32::MAX);
                 }
-                self.finish = match v["delta"]["stop_reason"].as_str() {
+                self.finish = match v.pointer("/delta/stop_reason").and_then(Value::as_str) {
                     Some("max_tokens") => "length",
                     Some("tool_use") => "tool_calls",
                     _ => "stop",
@@ -347,6 +324,72 @@ impl SseTranslator {
         }
     }
 
+    /// `content_block_start`: a `tool_use` block opens an OpenAI `tool_calls`
+    /// delta (text blocks don't consume a tool index).
+    fn on_block_start(&mut self, v: &Value) -> Vec<String> {
+        if v.pointer("/content_block/type").and_then(Value::as_str) != Some("tool_use") {
+            return vec![];
+        }
+        let idx = self.next_tool_index;
+        // Saturating: a stream emitting usize::MAX blocks is not a real case;
+        // degrading to a shared tool index beats wrap/panic.
+        self.next_tool_index = self.next_tool_index.saturating_add(1);
+        self.tool_index
+            .insert(v.get("index").and_then(Value::as_u64).unwrap_or(0), idx);
+        // Missing id/name serialize as null — the same thing the old
+        // `block["…"]` reads produced for absent fields.
+        let id = v
+            .pointer("/content_block/id")
+            .cloned()
+            .unwrap_or(Value::Null);
+        let name = v
+            .pointer("/content_block/name")
+            .cloned()
+            .unwrap_or(Value::Null);
+        vec![self.frame(
+            serde_json::json!({ "tool_calls": [{
+                "index": idx,
+                "id": id,
+                "type": "function",
+                "function": { "name": name, "arguments": "" },
+            }]}),
+            None,
+        )]
+    }
+
+    /// `content_block_delta`: text deltas become content chunks, tool-input
+    /// deltas become incremental `arguments` fragments.
+    fn on_block_delta(&mut self, v: &Value) -> Vec<String> {
+        match v
+            .pointer("/delta/type")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+        {
+            "text_delta" => {
+                let text = v.pointer("/delta/text").cloned().unwrap_or(Value::Null);
+                vec![self.frame(serde_json::json!({ "content": text }), None)]
+            }
+            "input_json_delta" => {
+                let block = v.get("index").and_then(Value::as_u64).unwrap_or(0);
+                let Some(&idx) = self.tool_index.get(&block) else {
+                    return vec![]; // delta for a block we never saw open
+                };
+                let partial = v
+                    .pointer("/delta/partial_json")
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                vec![self.frame(
+                    serde_json::json!({ "tool_calls": [{
+                        "index": idx,
+                        "function": { "arguments": partial },
+                    }]}),
+                    None,
+                )]
+            }
+            _ => vec![], // thinking/signature deltas etc. — not chat content
+        }
+    }
+
     /// The terminal frames: finish_reason chunk, exact-usage chunk (the same
     /// shape OpenAI emits with stream_options.include_usage — the gateway's
     /// metering tee reads it), and the [DONE] sentinel.
@@ -355,6 +398,8 @@ impl SseTranslator {
             return vec![];
         }
         self.emitted_done = true;
+        // Saturating: remote-supplied counts; over-count (fail closed), never wrap.
+        let total_tokens = self.input_tokens.saturating_add(self.output_tokens);
         let usage_chunk = serde_json::json!({
             "id": self.id,
             "object": "chat.completion.chunk",
@@ -364,7 +409,7 @@ impl SseTranslator {
             "usage": {
                 "prompt_tokens": self.input_tokens,
                 "completion_tokens": self.output_tokens,
-                "total_tokens": self.input_tokens + self.output_tokens,
+                "total_tokens": total_tokens,
             },
         });
         vec![
@@ -465,13 +510,18 @@ fn map_messages(messages: &[ChatMessage]) -> (String, Vec<serde_json::Value>) {
                 "tool_use_id": m.tool_call_id.clone().unwrap_or_default(),
                 "content": m.text_content(),
             });
-            if let Some(last) = turns.last_mut() {
-                if last["role"] == "user" && last["content"].is_array() {
-                    last["content"].as_array_mut().expect("checked").push(block);
-                    continue;
-                }
+            // Merge into a trailing user turn whose content is already a
+            // block array (i.e. a previous tool_result turn); the chain
+            // replaces the old check-then-expect with one panic-free path.
+            let trailing_blocks = turns
+                .last_mut()
+                .filter(|t| t.get("role").and_then(Value::as_str) == Some("user"))
+                .and_then(|t| t.get_mut("content"))
+                .and_then(Value::as_array_mut);
+            match trailing_blocks {
+                Some(blocks) => blocks.push(block),
+                None => turns.push(serde_json::json!({ "role": "user", "content": [block] })),
             }
-            turns.push(serde_json::json!({ "role": "user", "content": [block] }));
         } else if !m.tool_calls.is_empty() {
             let mut blocks = Vec::new();
             if !m.text_content().is_empty() {
@@ -505,8 +555,9 @@ fn map_tools(tools: &[Tool]) -> Vec<serde_json::Value> {
                 "input_schema": t.function.parameters.clone()
                     .unwrap_or_else(|| serde_json::json!({ "type": "object" })),
             });
-            if let Some(d) = &t.function.description {
-                tool["description"] = serde_json::json!(d);
+            // `json!({…})` is always an object — same rule-9 pattern as chat_body.
+            if let (Some(obj), Some(d)) = (tool.as_object_mut(), &t.function.description) {
+                obj.insert("description".into(), serde_json::json!(d));
             }
             tool
         })
@@ -769,6 +820,63 @@ mod tests {
         let p = AnthropicProvider::new("anthropic".into(), base, None);
         let err = p.chat(&req("anthropic/claude-opus-4-8")).await.unwrap_err();
         assert!(matches!(err, ProviderError::Upstream(_, _)), "got {err:?}");
+    }
+
+    #[test]
+    fn sse_translator_survives_malformed_events() {
+        let mut t = SseTranslator::new("m".into());
+        // Junk / missing / mistyped fields are remote input — every shape
+        // must degrade to "no frames", never panic.
+        assert!(t.feed("{not json").is_empty());
+        assert!(t.feed("{}").is_empty());
+        assert!(t.feed("{\"type\": 42}").is_empty());
+        assert!(t.feed("{\"type\":\"content_block_start\"}").is_empty());
+        assert!(t
+            .feed("{\"type\":\"content_block_start\",\"content_block\":\"not-an-object\"}")
+            .is_empty());
+        // input_json_delta for a block that never opened → dropped.
+        assert!(t
+            .feed(
+                "{\"type\":\"content_block_delta\",\"index\":9,\
+                 \"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\"}}"
+            )
+            .is_empty());
+        // message_delta with mistyped usage keeps the previous count.
+        assert!(t
+            .feed("{\"type\":\"message_delta\",\"usage\":{\"output_tokens\":\"x\"}}")
+            .is_empty());
+        // A hostile token count clamps HIGH instead of wrapping down.
+        assert!(
+            t.feed(
+                "{\"type\":\"message_start\",\"message\":{\"usage\":\
+                 {\"input_tokens\":18446744073709551615}}}"
+            )
+            .len()
+                == 1
+        );
+        assert_eq!(t.input_tokens, u32::MAX);
+        // The stream still closes correctly after all of the above.
+        let frames = t.feed("{\"type\":\"message_stop\"}");
+        assert_eq!(frames.len(), 3, "finish + usage + [DONE]");
+        assert!(frames[2].contains("[DONE]"));
+        // finalize is idempotent — a second stop emits nothing.
+        assert!(t.feed("{\"type\":\"message_stop\"}").is_empty());
+    }
+
+    #[test]
+    fn tool_use_block_with_missing_fields_still_translates() {
+        let mut t = SseTranslator::new("m".into());
+        // tool_use with no id/name/index: frame still emits (nulls), and the
+        // later delta for default index 0 finds the mapping.
+        let start =
+            t.feed("{\"type\":\"content_block_start\",\"content_block\":{\"type\":\"tool_use\"}}");
+        assert_eq!(start.len(), 1);
+        let delta = t.feed(
+            "{\"type\":\"content_block_delta\",\"index\":0,\
+             \"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{}\"}}",
+        );
+        assert_eq!(delta.len(), 1);
+        assert!(delta[0].contains("\"arguments\":\"{}\""));
     }
 
     #[tokio::test]

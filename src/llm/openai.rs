@@ -4,7 +4,9 @@
 //! base URL and auth.
 
 use super::types::{ChatRequest, EmbeddingsResponse};
-use super::{ChatResponse, ProviderError};
+use super::{
+    error_snippet, read_body_capped, ChatResponse, ProviderError, MAX_RESPONSE_BODY_BYTES,
+};
 
 pub struct OpenAiProvider {
     name: String,
@@ -44,21 +46,28 @@ impl OpenAiProvider {
             "messages": req.messages,
             "stream": stream,
         });
-        if stream {
-            body["stream_options"] = serde_json::json!({ "include_usage": true });
-        }
-        if let Some(t) = req.temperature {
-            body["temperature"] = serde_json::json!(t);
-        }
-        if let Some(m) = req.max_tokens {
-            body["max_tokens"] = serde_json::json!(m);
-        }
-        // Tool calling passes through verbatim — same wire format upstream.
-        if !req.tools.is_empty() {
-            body["tools"] = serde_json::json!(req.tools);
-        }
-        if let Some(tc) = &req.tool_choice {
-            body["tool_choice"] = tc.clone();
+        // `json!({…})` always builds an object; `as_object_mut` states that
+        // without the panicking `body[…] = …` IndexMut route (rule 9).
+        if let Some(obj) = body.as_object_mut() {
+            if stream {
+                obj.insert(
+                    "stream_options".into(),
+                    serde_json::json!({ "include_usage": true }),
+                );
+            }
+            if let Some(t) = req.temperature {
+                obj.insert("temperature".into(), serde_json::json!(t));
+            }
+            if let Some(m) = req.max_tokens {
+                obj.insert("max_tokens".into(), serde_json::json!(m));
+            }
+            // Tool calling passes through verbatim — same wire format upstream.
+            if !req.tools.is_empty() {
+                obj.insert("tools".into(), serde_json::json!(req.tools));
+            }
+            if let Some(tc) = &req.tool_choice {
+                obj.insert("tool_choice".into(), tc.clone());
+            }
         }
         body
     }
@@ -79,13 +88,7 @@ impl OpenAiProvider {
             .map_err(|e| ProviderError::Unavailable(self.name.clone(), e.to_string()))?;
         let status = resp.status();
         if !status.is_success() {
-            let txt: String = resp
-                .text()
-                .await
-                .unwrap_or_default()
-                .chars()
-                .take(300)
-                .collect();
+            let txt = error_snippet(resp, &self.name).await;
             return Err(ProviderError::Upstream(
                 self.name.clone(),
                 format!("HTTP {status}: {txt}"),
@@ -101,7 +104,10 @@ impl OpenAiProvider {
             ));
         }
         let resp = self.send_chat(&self.chat_body(req, false)).await?;
-        resp.json::<ChatResponse>().await.map_err(|e| {
+        // Capped read (rule 3): a misbehaving upstream body is a clean
+        // Upstream error, not unbounded gateway memory.
+        let body = read_body_capped(resp, &self.name, MAX_RESPONSE_BODY_BYTES).await?;
+        serde_json::from_slice::<ChatResponse>(&body).map_err(|e| {
             ProviderError::Upstream(self.name.clone(), format!("malformed response: {e}"))
         })
     }
@@ -150,19 +156,15 @@ impl OpenAiProvider {
             .map_err(|e| ProviderError::Unavailable(self.name.clone(), e.to_string()))?;
         let status = resp.status();
         if !status.is_success() {
-            let txt: String = resp
-                .text()
-                .await
-                .unwrap_or_default()
-                .chars()
-                .take(300)
-                .collect();
+            let txt = error_snippet(resp, &self.name).await;
             return Err(ProviderError::Upstream(
                 self.name.clone(),
                 format!("HTTP {status}: {txt}"),
             ));
         }
-        resp.json::<EmbeddingsResponse>().await.map_err(|e| {
+        // Capped read (rule 3) — same rationale as `chat`.
+        let body = read_body_capped(resp, &self.name, MAX_RESPONSE_BODY_BYTES).await?;
+        serde_json::from_slice::<EmbeddingsResponse>(&body).map_err(|e| {
             ProviderError::Upstream(self.name.clone(), format!("malformed response: {e}"))
         })
     }

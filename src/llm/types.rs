@@ -182,7 +182,10 @@ impl ChatResponse {
             usage: Usage {
                 prompt_tokens,
                 completion_tokens,
-                total_tokens: prompt_tokens + completion_tokens,
+                // Saturating: token counts can arrive from a remote provider;
+                // a saturated total stays HIGH so budget math over-counts
+                // (fails closed) rather than wrapping to a small number.
+                total_tokens: prompt_tokens.saturating_add(completion_tokens),
             },
         }
     }
@@ -195,9 +198,13 @@ impl ChatResponse {
         completion_tokens: u32,
     ) -> Self {
         let mut resp = Self::assistant(model, String::new(), prompt_tokens, completion_tokens);
-        resp.choices[0].message.content = None;
-        resp.choices[0].message.tool_calls = tool_calls;
-        resp.choices[0].finish_reason = "tool_calls".into();
+        // `assistant` always builds exactly one choice; `.first_mut()` proves
+        // it to the compiler without a panicking index.
+        if let Some(choice) = resp.choices.first_mut() {
+            choice.message.content = None;
+            choice.message.tool_calls = tool_calls;
+            choice.finish_reason = "tool_calls".into();
+        }
         resp
     }
 }

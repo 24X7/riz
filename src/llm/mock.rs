@@ -43,11 +43,13 @@ impl MockProvider {
 
         // Turn 1 with tools declared: deterministically call one — the forced
         // tool if `tool_choice` pins one, else the first declared.
-        if req.wants_tools() {
+        // `wants_tools()` implies `tools` is non-empty; `.first()` proves it
+        // to the compiler without a panicking index.
+        if let Some(first_tool) = req.tools.first().filter(|_| req.wants_tools()) {
             let name = req
                 .forced_tool()
                 .map(str::to_string)
-                .unwrap_or_else(|| req.tools[0].function.name.clone());
+                .unwrap_or_else(|| first_tool.function.name.clone());
             let call = ToolCall {
                 id: "call_mock0".into(),
                 call_type: "function".into(),
@@ -64,13 +66,19 @@ impl MockProvider {
             ));
         }
 
-        let last_user = req
+        // Structurally unreachable (emptiness is rejected at the top), but a
+        // logic slip here must degrade to a clean 4xx, not a panic.
+        let Some(last_user) = req
             .messages
             .iter()
             .rev()
             .find(|m| m.role == "user")
             .or_else(|| req.messages.last())
-            .expect("non-empty checked above");
+        else {
+            return Err(ProviderError::BadRequest(
+                "chat request has no messages".into(),
+            ));
+        };
         let reply = format!(
             "[mock:{}] You said: {}",
             req.model,
@@ -96,7 +104,9 @@ impl MockProvider {
             .iter()
             .enumerate()
             .map(|(i, text)| {
-                prompt_tokens += approx_tokens(text);
+                // Saturating: over-counting throttles a budget early (fails
+                // closed); wrapping would under-count spend.
+                prompt_tokens = prompt_tokens.saturating_add(approx_tokens(text));
                 EmbeddingData {
                     object: "embedding".into(),
                     embedding: mock_embedding(text, DIMS),
