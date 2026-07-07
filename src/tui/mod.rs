@@ -159,6 +159,9 @@ fn install_tty_restore_signal_handler() {
                     let _ = signal_hook::low_level::emulate_default_handler(sig);
                 }
             })
+            // Rule 7: discard is deliberate — this thread is a best-effort
+            // last line of defense; if it cannot spawn, the panic hook and
+            // TerminalGuard still cover every non-SIGKILL exit path.
             .ok();
     });
 }
