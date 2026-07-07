@@ -15,14 +15,19 @@ pub fn render(frame: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Min(0)])
         .split(frame.area());
+    // Layout::split yields one Rect per constraint; if that contract ever
+    // breaks, skip the frame — a blank tick beats crashing the dev console.
+    let (Some(&tab_bar), Some(&body)) = (chunks.first(), chunks.get(1)) else {
+        return;
+    };
 
-    render_tabs(frame, app, chunks[0]);
+    render_tabs(frame, app, tab_bar);
 
     match app.selected_tab {
-        0 => render_routes(frame, app, chunks[1]),
-        1 => render_processes(frame, app, chunks[1]),
-        2 => render_cache(frame, app, chunks[1]),
-        3 => render_tokens(frame, app, chunks[1]),
+        0 => render_routes(frame, app, body),
+        1 => render_processes(frame, app, body),
+        2 => render_cache(frame, app, body),
+        3 => render_tokens(frame, app, body),
         _ => {}
     }
 }
@@ -48,9 +53,13 @@ fn render_routes(frame: &mut Frame, app: &App, area: Rect) {
         .direction(Direction::Vertical)
         .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
         .split(area);
+    // One Rect per constraint (see render()); skip the frame if violated.
+    let (Some(&table_area), Some(&log_area)) = (split.first(), split.get(1)) else {
+        return;
+    };
 
-    render_routes_table(frame, app, split[0]);
-    render_log_panel(frame, app, split[1]);
+    render_routes_table(frame, app, table_area);
+    render_log_panel(frame, app, log_area);
 }
 
 fn render_routes_table(frame: &mut Frame, app: &App, area: Rect) {
@@ -154,10 +163,13 @@ fn render_log_panel(frame: &mut Frame, app: &App, area: Rect) {
 
     let visible = filter_logs(&app.log_entries, selected_key);
     let max_lines = area.height.saturating_sub(2) as usize;
+    // Tail window without slicing: `start <= len` by construction
+    // (saturating_sub), and `skip` cannot panic even if that drifts.
     let start = visible.len().saturating_sub(max_lines);
 
-    let lines: Vec<Line> = visible[start..]
+    let lines: Vec<Line> = visible
         .iter()
+        .skip(start)
         .map(|entry| {
             let ts = format_timestamp(entry);
             let color = match entry.level.as_str() {
@@ -211,8 +223,12 @@ fn render_processes(frame: &mut Frame, app: &App, area: Rect) {
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(5), Constraint::Min(0)])
         .split(area);
-    render_host_strip(frame, app, chunks[0]);
-    render_processes_table(frame, app, chunks[1]);
+    // One Rect per constraint (see render()); skip the frame if violated.
+    let (Some(&host_area), Some(&table_area)) = (chunks.first(), chunks.get(1)) else {
+        return;
+    };
+    render_host_strip(frame, app, host_area);
+    render_processes_table(frame, app, table_area);
 }
 
 fn render_host_strip(frame: &mut Frame, app: &App, area: Rect) {
@@ -371,6 +387,10 @@ pub fn render_tokens_panel(
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Min(0)])
         .split(area);
+    // One Rect per constraint (see render()); skip the frame if violated.
+    let (Some(&summary_area), Some(&table_area)) = (chunks.first(), chunks.get(1)) else {
+        return;
+    };
 
     // ── Cumulative summary strip ──
     let summary = Line::from(vec![
@@ -403,7 +423,7 @@ pub fn render_tokens_panel(
             .borders(Borders::ALL)
             .title("Tokens — cumulative"),
     );
-    frame.render_widget(summary_panel, chunks[0]);
+    frame.render_widget(summary_panel, summary_area);
 
     // ── Recent chat-completions (newest at the bottom) ──
     let header = Row::new(["Model", "Provider", "In", "Out"]).style(
@@ -438,7 +458,7 @@ pub fn render_tokens_panel(
             .borders(Borders::ALL)
             .title("Recent chat-completions  (model · in→out)"),
     );
-    frame.render_widget(table, chunks[1]);
+    frame.render_widget(table, table_area);
 }
 
 #[cfg(test)]
@@ -548,6 +568,54 @@ mod tests {
         let text = buffer_text(&terminal);
         // Empty read-model still shows the zeroed cumulative strip.
         assert!(text.contains("Tokens"), "panel title missing: {text}");
+    }
+
+    /// Every tab must render on a degenerate (tiny) terminal without
+    /// panicking — the saturating layout math and `.get()`-based chunk
+    /// access degrade to clipped/blank panels instead of crashing the
+    /// operator console. 3x2 leaves zero-height bodies after the tab bar.
+    #[test]
+    fn dashboard_renders_all_tabs_on_tiny_terminal_without_panic() {
+        for tab in 0..App::tab_titles().len() {
+            let mut app = App {
+                selected_tab: tab,
+                selected_route: Some(0),
+                ..Default::default()
+            };
+            app.log_entries.push_back(make_entry(None, "one line"));
+            for (w, h) in [(3u16, 2u16), (1, 1), (80, 3), (2, 24)] {
+                let backend = TestBackend::new(w, h);
+                let mut terminal = Terminal::new(backend).unwrap();
+                terminal
+                    .draw(|f| render(f, &app))
+                    .unwrap_or_else(|e| panic!("tab {tab} at {w}x{h} failed: {e}"));
+            }
+        }
+    }
+
+    /// The log panel shows the tail of the buffer: with more entries than
+    /// visible lines, the oldest entries are skipped and the newest shown.
+    #[test]
+    fn log_panel_shows_most_recent_entries_when_overflowing() {
+        let mut app = App {
+            selected_tab: 0, // Routes tab hosts the log panel
+            ..Default::default()
+        };
+        for i in 0..50 {
+            app.log_entries
+                .push_back(make_entry(None, &format!("msg-{i:02}")));
+        }
+
+        let backend = TestBackend::new(80, 16);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(text.contains("msg-49"), "newest entry missing: {text}");
+        assert!(
+            !text.contains("msg-00"),
+            "oldest entry should be scrolled out of the tail window"
+        );
     }
 
     #[test]

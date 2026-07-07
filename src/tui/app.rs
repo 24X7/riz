@@ -28,15 +28,24 @@ impl App {
     }
 
     pub fn next_tab(&mut self) {
-        self.selected_tab = (self.selected_tab + 1) % Self::tab_titles().len();
+        // Wrap-around without `%`: checked_add + range filter keeps the
+        // arithmetic panic-free (overflow-checks are on in release) while
+        // behaving identically to `(tab + 1) % count` for in-range tabs.
+        let count = Self::tab_titles().len();
+        self.selected_tab = self
+            .selected_tab
+            .checked_add(1)
+            .filter(|&t| t < count)
+            .unwrap_or(0);
     }
 
     pub fn prev_tab(&mut self) {
-        if self.selected_tab == 0 {
-            self.selected_tab = Self::tab_titles().len() - 1;
-        } else {
-            self.selected_tab -= 1;
-        }
+        // checked_sub: 0 wraps to the last tab; saturating_sub keeps the
+        // (non-empty by construction) titles length panic-free.
+        self.selected_tab = self
+            .selected_tab
+            .checked_sub(1)
+            .unwrap_or_else(|| Self::tab_titles().len().saturating_sub(1));
     }
 
     pub fn select_next_route(&mut self) {
@@ -45,7 +54,10 @@ impl App {
         }
         self.selected_route = Some(match self.selected_route {
             None => 0,
-            Some(i) => (i + 1).min(self.function_stats.len() - 1),
+            // saturating: clamp to the last index; the list is non-empty here.
+            Some(i) => i
+                .saturating_add(1)
+                .min(self.function_stats.len().saturating_sub(1)),
         });
     }
 
@@ -55,7 +67,7 @@ impl App {
         }
         self.selected_route = Some(match self.selected_route {
             None | Some(0) => 0,
-            Some(i) => i - 1,
+            Some(i) => i.saturating_sub(1),
         });
     }
 }
@@ -135,5 +147,31 @@ mod tests {
     #[test]
     fn logs_tab_is_removed() {
         assert!(!App::tab_titles().contains(&"Logs"));
+    }
+
+    #[test]
+    fn next_tab_cycles_through_all_and_wraps_to_zero() {
+        let mut app = App::default();
+        let count = App::tab_titles().len();
+        for expected in 1..count {
+            app.next_tab();
+            assert_eq!(app.selected_tab, expected);
+        }
+        app.next_tab(); // from last tab
+        assert_eq!(app.selected_tab, 0, "next from last tab wraps to first");
+    }
+
+    #[test]
+    fn prev_tab_wraps_from_zero_to_last() {
+        let mut app = App::default();
+        assert_eq!(app.selected_tab, 0);
+        app.prev_tab();
+        assert_eq!(
+            app.selected_tab,
+            App::tab_titles().len() - 1,
+            "prev from first tab wraps to last"
+        );
+        app.prev_tab();
+        assert_eq!(app.selected_tab, App::tab_titles().len() - 2);
     }
 }
