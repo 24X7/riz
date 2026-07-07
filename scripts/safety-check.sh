@@ -29,14 +29,16 @@ GATE_LINTS=(
   clippy::unwrap_used         # rule 7 — recoverable paths must return Err; reached zero 2026-07-06
   clippy::expect_used         # rule 7 — ditto; reached zero 2026-07-06
   clippy::unreachable         # rule 7 — prove it or return an error; reached zero 2026-07-06
+  clippy::exit                # rule 1 — exits only at CLI top level (doctor's are site-allowed deviations); reached zero 2026-07-06
+  clippy::indexing_slicing    # rule 9 — .get() over panicking access; reached zero 2026-07-06
+  clippy::arithmetic_side_effects # rule 5 — checked/saturating arithmetic; reached zero 2026-07-06
 )
 
 # Violations exist today — burned down by the safety review loop. Keep this
 # list in sync with the "ratchet tier" table in docs/SAFETY.md.
+# Structure lints (rule 4) are the only remaining ratchet entries; they close
+# in a dedicated later PR (user directive: last priority).
 RATCHET_LINTS=(
-  clippy::exit                   # rule 1 — orderly shutdown, not scattered exits
-  clippy::indexing_slicing       # rule 9 — use .get(), avoid panicking access
-  clippy::arithmetic_side_effects # rule 5 — checked/saturating arithmetic
   clippy::too_many_lines         # rule 4 — threshold in clippy.toml
   clippy::cognitive_complexity   # rule 4 — threshold in clippy.toml
 )
