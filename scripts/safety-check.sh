@@ -32,16 +32,16 @@ GATE_LINTS=(
   clippy::exit                # rule 1 — exits only at CLI top level (doctor's are site-allowed deviations); reached zero 2026-07-06
   clippy::indexing_slicing    # rule 9 — .get() over panicking access; reached zero 2026-07-06
   clippy::arithmetic_side_effects # rule 5 — checked/saturating arithmetic; reached zero 2026-07-06
+  clippy::too_many_lines          # rule 4 — threshold in clippy.toml; reached zero 2026-07-06
+  clippy::cognitive_complexity    # rule 4 — threshold in clippy.toml; reached zero 2026-07-06
 )
 
-# Violations exist today — burned down by the safety review loop. Keep this
-# list in sync with the "ratchet tier" table in docs/SAFETY.md.
-# Structure lints (rule 4) are the only remaining ratchet entries; they close
-# in a dedicated later PR (user directive: last priority).
-RATCHET_LINTS=(
-  clippy::too_many_lines         # rule 4 — threshold in clippy.toml
-  clippy::cognitive_complexity   # rule 4 — threshold in clippy.toml
-)
+# Ratchet completed 2026-07-06: the 253 sites baselined on 2026-07-03 are at
+# zero and every burned-down lint has been promoted into GATE_LINTS above
+# (PRs #30/#31/#32/#33/#37/#41/#42 + the structure pass). The report mode
+# below now just confirms the tier stays empty; if a lint ever needs
+# ratcheting again, list it here and move it out of the gate.
+RATCHET_LINTS=()
 
 if [[ "${1:-}" == "--gate" ]]; then
   flags=()
@@ -52,14 +52,16 @@ if [[ "${1:-}" == "--gate" ]]; then
   exit 0
 fi
 
+# The ${arr[@]+...} guards keep `set -u` happy on bash 3.2 (macOS default)
+# when the ratchet list is empty.
 flags=()
-for lint in "${RATCHET_LINTS[@]}"; do flags+=("-W" "$lint"); done
+for lint in ${RATCHET_LINTS[@]+"${RATCHET_LINTS[@]}"}; do flags+=("-W" "$lint"); done
 
 # One line per unique violation site: "<lint>\t<file>\t<line>". The lib and
 # bin targets compile the same files twice, so diagnostics are deduplicated by
 # site. `cargo clippy` exits 0 here — ratchet lints are warnings, and the
 # enforced tier is already clean.
-raw=$(cargo clippy --lib --bins --quiet --message-format=json -- "${flags[@]}" 2>/dev/null |
+raw=$(cargo clippy --lib --bins --quiet --message-format=json -- ${flags[@]+"${flags[@]}"} 2>/dev/null |
   jq -r 'select(.reason=="compiler-message") | (.message.code.code // empty) as $c
          | select($c != "")
          | $c + "\t" + (.message.spans[0].file_name // "?")
