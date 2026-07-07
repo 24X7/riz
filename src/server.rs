@@ -36,7 +36,7 @@ struct ReadyResponse {
 }
 
 pub fn build_app(state: Arc<AppState>) -> AxumRouter {
-    let mut app = AxumRouter::new()
+    let app = AxumRouter::new()
         .route("/health", get(health_handler))
         .route("/ready", get(ready_handler))
         .route("/cache/invalidate", post(cache_invalidate))
@@ -46,9 +46,19 @@ pub fn build_app(state: Arc<AppState>) -> AxumRouter {
         // preflight, non-SSE GET) back to dispatch_lambda unchanged.
         .route("/_riz/mcp", any(crate::system::mcp::transport::entry));
 
-    // Mount WebSocket upgrade routes for every protocol=websocket function.
-    // build_app runs once at startup, so a try_read in this sync context is
-    // OK — no other writer should be holding the config write lock at startup.
+    let app = mount_ws_upgrade_routes(app, &state);
+    let app = mount_gateway_routes(app, &state);
+
+    app.fallback(any(dispatch_lambda)).with_state(state)
+}
+
+/// Mount WebSocket upgrade routes for every protocol=websocket function.
+/// build_app runs once at startup, so a try_read in this sync context is
+/// OK — no other writer should be holding the config write lock at startup.
+fn mount_ws_upgrade_routes(
+    mut app: AxumRouter<Arc<AppState>>,
+    state: &Arc<AppState>,
+) -> AxumRouter<Arc<AppState>> {
     if let Ok(cfg) = state.config.try_read() {
         for (name, fc) in &cfg.functions {
             if matches!(fc.protocol, crate::config::Protocol::WebSocket) {
@@ -82,199 +92,216 @@ pub fn build_app(state: Arc<AppState>) -> AxumRouter {
             }
         }
     }
+    app
+}
 
-    // Mount the OpenAI-compatible endpoint (/_riz/v1/*) when [gateway] is set.
-    // Bearer-gated like every other /_riz/* surface: these routes spend real
-    // provider money — they must never be the one unauthenticated door. The
-    // token is resolved once at mount time (same lifecycle as the MCP
-    // handler's); changing it requires a restart.
+/// Mount the OpenAI-compatible endpoint (/_riz/v1/*) when [gateway] is set,
+/// plus the A2A agent surface when [agent] is set too.
+/// Bearer-gated like every other /_riz/* surface: these routes spend real
+/// provider money — they must never be the one unauthenticated door. The
+/// token is resolved once at mount time (same lifecycle as the MCP
+/// handler's); changing it requires a restart.
+fn mount_gateway_routes(
+    mut app: AxumRouter<Arc<AppState>>,
+    state: &Arc<AppState>,
+) -> AxumRouter<Arc<AppState>> {
     if let Ok(cfg) = state.config.try_read() {
         if cfg.gateway.enabled() {
             let bearer = cfg.effective_bearer_token();
             match crate::llm::Gateway::from_config(&cfg.gateway) {
                 Ok(gw) => {
                     let gw = Arc::new(gw);
-                    let gw_chat = gw.clone();
-                    let chat_telemetry = state.telemetry.clone();
-                    let chat_riz_state = state.riz_state.clone();
-                    let tok = bearer.clone();
-                    app = app.route(
-                        "/_riz/v1/chat/completions",
-                        post(
-                            move |headers: axum::http::HeaderMap,
-                                  body: Json<crate::llm::ChatRequest>| {
-                                let gw = gw_chat.clone();
-                                let telemetry = chat_telemetry.clone();
-                                let riz_state = chat_riz_state.clone();
-                                let tok = tok.clone();
-                                async move {
-                                    if let Some(resp) = bearer_reject(&headers, tok.as_deref()) {
-                                        return resp;
-                                    }
-                                    crate::system::openai_compat::chat_completions(
-                                        gw, telemetry, riz_state, body,
-                                    )
-                                    .await
-                                    .into_response()
-                                }
-                            },
-                        ),
-                    );
-                    let gw_embed = gw.clone();
-                    let tok = bearer.clone();
-                    app = app.route(
-                        "/_riz/v1/embeddings",
-                        post(
-                            move |headers: axum::http::HeaderMap,
-                                  body: Json<crate::llm::EmbeddingsRequest>| {
-                                let gw = gw_embed.clone();
-                                let tok = tok.clone();
-                                async move {
-                                    if let Some(resp) = bearer_reject(&headers, tok.as_deref()) {
-                                        return resp;
-                                    }
-                                    crate::system::openai_compat::embeddings(gw, body)
-                                        .await
-                                        .into_response()
-                                }
-                            },
-                        ),
-                    );
-                    let gw_models = gw.clone();
-                    let tok = bearer.clone();
-                    app = app.route(
-                        "/_riz/v1/models",
-                        get(move |headers: axum::http::HeaderMap| {
-                            let gw = gw_models.clone();
-                            let tok = tok.clone();
-                            async move {
-                                if let Some(resp) = bearer_reject(&headers, tok.as_deref()) {
-                                    return resp;
-                                }
-                                crate::system::openai_compat::models(gw)
-                                    .await
-                                    .into_response()
-                            }
-                        }),
-                    );
-                    let gw_usage = gw.clone();
-                    let tok = bearer.clone();
-                    app = app.route(
-                        "/_riz/v1/usage",
-                        get(move |headers: axum::http::HeaderMap| {
-                            let gw = gw_usage.clone();
-                            let tok = tok.clone();
-                            async move {
-                                if let Some(resp) = bearer_reject(&headers, tok.as_deref()) {
-                                    return resp;
-                                }
-                                crate::system::openai_compat::usage(gw)
-                                    .await
-                                    .into_response()
-                            }
-                        }),
-                    );
+                    app = mount_llm_api_routes(app, state, &gw, &bearer);
                     info!("LLM gateway enabled — OpenAI-compatible endpoint at /_riz/v1");
-
-                    // A2A built-in agent — this instance becomes a delegable
-                    // agent (validated: [agent] requires [gateway]). The card
-                    // is public (it DECLARES the auth, like llms.txt); the
-                    // JSON-RPC endpoint is bearer-gated with the rest of /_riz/*.
-                    if let Some(agent_cfg) = cfg.agent.clone() {
-                        let public_base = format!("http://{}:{}", cfg.server.host, cfg.server.port);
-                        let rt = Arc::new(crate::system::a2a::A2aRuntime::new(
-                            agent_cfg,
-                            gw.clone(),
-                            state.clone(),
-                            bearer.clone(),
-                            public_base,
-                        ));
-                        let rt_card = rt.clone();
-                        app = app.route(
-                            "/.well-known/agent-card.json",
-                            get(move || {
-                                let rt = rt_card.clone();
-                                async move { Json(rt.agent_card().await).into_response() }
-                            }),
-                        );
-                        let rt_rpc = rt.clone();
-                        let tok = bearer.clone();
-                        app = app.route(
-                            "/_riz/a2a",
-                            post(
-                                move |headers: axum::http::HeaderMap,
-                                      body: Json<serde_json::Value>| {
-                                    let rt = rt_rpc.clone();
-                                    let tok = tok.clone();
-                                    async move {
-                                        if let Some(resp) =
-                                            bearer_reject(&headers, tok.as_deref())
-                                        {
-                                            return resp;
-                                        }
-                                        // Mesh chain depth (loop protection):
-                                        // set by a delegating riz peer.
-                                        let hop = headers
-                                            .get("riz-a2a-hop")
-                                            .and_then(|v| v.to_str().ok())
-                                            .and_then(|v| v.parse::<u32>().ok())
-                                            .unwrap_or(0);
-                                        // SendStreamingMessage answers as SSE
-                                        // (spec §7); everything else is a
-                                        // single JSON-RPC response. `.get()`
-                                        // over `[]`: an absent method reads
-                                        // as "" either way, minus the
-                                        // panicking-access class.
-                                        let method = body
-                                            .0
-                                            .get("method")
-                                            .and_then(|m| m.as_str())
-                                            .unwrap_or("")
-                                            .to_string();
-                                        if matches!(
-                                            method.as_str(),
-                                            "SendStreamingMessage" | "message/stream"
-                                        ) {
-                                            let rpc_id = body
-                                                .0
-                                                .get("id")
-                                                .cloned()
-                                                .unwrap_or(serde_json::Value::Null);
-                                            let params = body
-                                                .0
-                                                .get("params")
-                                                .cloned()
-                                                .unwrap_or(serde_json::json!({}));
-                                            return match rt
-                                                .send_streaming(params, rpc_id.clone(), hop)
-                                                .await
-                                            {
-                                                Ok(stream) => axum::response::sse::Sse::new(stream)
-                                                    .into_response(),
-                                                Err((code, message)) => Json(serde_json::json!({
-                                                    "jsonrpc": "2.0", "id": rpc_id,
-                                                    "error": { "code": code, "message": message }
-                                                }))
-                                                .into_response(),
-                                            };
-                                        }
-                                        Json(rt.handle(body.0, hop).await).into_response()
-                                    }
-                                },
-                            ),
-                        );
-                        info!(
-                            "A2A agent '{}' enabled — card at /.well-known/agent-card.json, endpoint at /_riz/a2a",
-                            rt.cfg.name
-                        );
-                    }
+                    app = mount_agent_surface(app, state, &cfg, &gw, &bearer);
                 }
                 Err(e) => error!("gateway disabled: failed to build from config: {e}"),
             }
         }
     }
+    app
+}
 
-    app.fallback(any(dispatch_lambda)).with_state(state)
+/// A2A built-in agent — when `[agent]` is set, this instance becomes a
+/// delegable agent (validated: [agent] requires [gateway]). The card is
+/// public (it DECLARES the auth, like llms.txt); the JSON-RPC endpoint is
+/// bearer-gated with the rest of /_riz/*.
+fn mount_agent_surface(
+    mut app: AxumRouter<Arc<AppState>>,
+    state: &Arc<AppState>,
+    cfg: &crate::config::Config,
+    gw: &Arc<crate::llm::Gateway>,
+    bearer: &Option<String>,
+) -> AxumRouter<Arc<AppState>> {
+    if let Some(agent_cfg) = cfg.agent.clone() {
+        let public_base = format!("http://{}:{}", cfg.server.host, cfg.server.port);
+        let rt = Arc::new(crate::system::a2a::A2aRuntime::new(
+            agent_cfg,
+            gw.clone(),
+            state.clone(),
+            bearer.clone(),
+            public_base,
+        ));
+        app = mount_a2a_routes(app, &rt, bearer);
+        info!(
+            "A2A agent '{}' enabled — card at /.well-known/agent-card.json, endpoint at /_riz/a2a",
+            rt.cfg.name
+        );
+    }
+    app
+}
+
+/// The four OpenAI-compatible routes (/_riz/v1/chat/completions, embeddings,
+/// models, usage) — each behind the shared bearer gate.
+fn mount_llm_api_routes(
+    mut app: AxumRouter<Arc<AppState>>,
+    state: &Arc<AppState>,
+    gw: &Arc<crate::llm::Gateway>,
+    bearer: &Option<String>,
+) -> AxumRouter<Arc<AppState>> {
+    let gw_chat = gw.clone();
+    let chat_telemetry = state.telemetry.clone();
+    let chat_riz_state = state.riz_state.clone();
+    let tok = bearer.clone();
+    app = app.route(
+        "/_riz/v1/chat/completions",
+        post(
+            move |headers: axum::http::HeaderMap, body: Json<crate::llm::ChatRequest>| {
+                let gw = gw_chat.clone();
+                let telemetry = chat_telemetry.clone();
+                let riz_state = chat_riz_state.clone();
+                let tok = tok.clone();
+                async move {
+                    if let Some(resp) = bearer_reject(&headers, tok.as_deref()) {
+                        return resp;
+                    }
+                    crate::system::openai_compat::chat_completions(gw, telemetry, riz_state, body)
+                        .await
+                        .into_response()
+                }
+            },
+        ),
+    );
+    let gw_embed = gw.clone();
+    let tok = bearer.clone();
+    app = app.route(
+        "/_riz/v1/embeddings",
+        post(
+            move |headers: axum::http::HeaderMap, body: Json<crate::llm::EmbeddingsRequest>| {
+                let gw = gw_embed.clone();
+                let tok = tok.clone();
+                async move {
+                    if let Some(resp) = bearer_reject(&headers, tok.as_deref()) {
+                        return resp;
+                    }
+                    crate::system::openai_compat::embeddings(gw, body)
+                        .await
+                        .into_response()
+                }
+            },
+        ),
+    );
+    let gw_models = gw.clone();
+    let tok = bearer.clone();
+    app = app.route(
+        "/_riz/v1/models",
+        get(move |headers: axum::http::HeaderMap| {
+            let gw = gw_models.clone();
+            let tok = tok.clone();
+            async move {
+                if let Some(resp) = bearer_reject(&headers, tok.as_deref()) {
+                    return resp;
+                }
+                crate::system::openai_compat::models(gw)
+                    .await
+                    .into_response()
+            }
+        }),
+    );
+    let gw_usage = gw.clone();
+    let tok = bearer.clone();
+    app.route(
+        "/_riz/v1/usage",
+        get(move |headers: axum::http::HeaderMap| {
+            let gw = gw_usage.clone();
+            let tok = tok.clone();
+            async move {
+                if let Some(resp) = bearer_reject(&headers, tok.as_deref()) {
+                    return resp;
+                }
+                crate::system::openai_compat::usage(gw)
+                    .await
+                    .into_response()
+            }
+        }),
+    )
+}
+
+/// The A2A agent surface: the public Agent Card (it DECLARES the auth, like
+/// llms.txt) and the bearer-gated JSON-RPC endpoint.
+fn mount_a2a_routes(
+    mut app: AxumRouter<Arc<AppState>>,
+    rt: &Arc<crate::system::a2a::A2aRuntime>,
+    bearer: &Option<String>,
+) -> AxumRouter<Arc<AppState>> {
+    let rt_card = rt.clone();
+    app = app.route(
+        "/.well-known/agent-card.json",
+        get(move || {
+            let rt = rt_card.clone();
+            async move { Json(rt.agent_card().await).into_response() }
+        }),
+    );
+    let rt_rpc = rt.clone();
+    let tok = bearer.clone();
+    app.route(
+        "/_riz/a2a",
+        post(
+            move |headers: axum::http::HeaderMap, body: Json<serde_json::Value>| {
+                a2a_rpc_response(rt_rpc.clone(), tok.clone(), headers, body.0)
+            },
+        ),
+    )
+}
+
+/// Serve one JSON-RPC call on /_riz/a2a: bearer gate, mesh hop-depth intake,
+/// then SSE for the streaming methods and a single JSON-RPC body otherwise.
+async fn a2a_rpc_response(
+    rt: Arc<crate::system::a2a::A2aRuntime>,
+    tok: Option<String>,
+    headers: axum::http::HeaderMap,
+    body: serde_json::Value,
+) -> Response {
+    if let Some(resp) = bearer_reject(&headers, tok.as_deref()) {
+        return resp;
+    }
+    // Mesh chain depth (loop protection): set by a delegating riz peer.
+    let hop = headers
+        .get("riz-a2a-hop")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(0);
+    // SendStreamingMessage answers as SSE (spec §7); everything else is a
+    // single JSON-RPC response. `.get()` over `[]`: an absent method reads
+    // as "" either way, minus the panicking-access class.
+    let method = body
+        .get("method")
+        .and_then(|m| m.as_str())
+        .unwrap_or("")
+        .to_string();
+    if matches!(method.as_str(), "SendStreamingMessage" | "message/stream") {
+        let rpc_id = body.get("id").cloned().unwrap_or(serde_json::Value::Null);
+        let params = body.get("params").cloned().unwrap_or(serde_json::json!({}));
+        return match rt.send_streaming(params, rpc_id.clone(), hop).await {
+            Ok(stream) => axum::response::sse::Sse::new(stream).into_response(),
+            Err((code, message)) => Json(serde_json::json!({
+                "jsonrpc": "2.0", "id": rpc_id,
+                "error": { "code": code, "message": message }
+            }))
+            .into_response(),
+        };
+    }
+    Json(rt.handle(body, hop).await).into_response()
 }
 
 /// Maximum time we'll wait for in-flight requests to drain after receiving a
@@ -295,78 +322,100 @@ pub async fn run(state: Arc<AppState>, addr: SocketAddr) -> anyhow::Result<()> {
     // after boot regardless of whether a signal ever arrived.
     let (signal_observed_tx, signal_observed_rx) = tokio::sync::oneshot::channel::<()>();
 
-    let shutdown_state = state.clone();
-    let serve_future = axum::serve(listener, app).with_graceful_shutdown(async move {
-        shutdown_signal().await;
-        // Signal the TUI thread to exit cleanly BEFORE the drain begins.
-        // The TUI runs on a detached std::thread::spawn — if main returns
-        // first, the OS kills the TUI thread mid-render and the terminal is
-        // left in raw mode + mouse-capture mode, printing escape garbage on
-        // every keystroke. Signaling here gives the TUI ~drain-timeout
-        // seconds to break its loop and run its cleanup path.
-        crate::tui::request_shutdown();
-
-        // Close every live WebSocket connection NOW, before axum begins
-        // draining. WS handlers don't complete on their own — without this,
-        // axum's graceful drain waits the full SHUTDOWN_DRAIN_TIMEOUT (30s)
-        // for connections that will never close, then force-shuts. Sending
-        // Close to each connection makes the writer task emit a WebSocket
-        // Close frame to the client and exit, which lets the corresponding
-        // axum handler task complete and the drain finish in milliseconds.
-        let conn_count = shutdown_state.ws_connections.all().len();
-        if conn_count > 0 {
-            tracing::info!("closing {conn_count} active WebSocket connection(s) before drain");
-            for conn in shutdown_state.ws_connections.all() {
-                // try_send: on a full queue the drain below still force-stops
-                // after SHUTDOWN_DRAIN_TIMEOUT — never block shutdown on a
-                // slow client.
-                let _ = conn.outbound.try_send(crate::ws::OutboundMessage::Close);
-            }
-        }
-
-        tracing::info!(
-            "shutdown signal received — draining in-flight requests (max {}s)",
-            SHUTDOWN_DRAIN_TIMEOUT.as_secs(),
-        );
-        // Tell the outer task to start the drain deadline. send() consumes
-        // the sender; the closure runs at most once so this is fine.
-        let _ = signal_observed_tx.send(());
-    });
+    let serve_future = axum::serve(listener, app)
+        .with_graceful_shutdown(signal_then_prepare_drain(state.clone(), signal_observed_tx));
 
     // axum::serve(...).with_graceful_shutdown(...) returns a
     // WithGracefulShutdown which implements IntoFuture, not Future. We need
     // a real Future to use with tokio::select! and tokio::time::timeout,
     // so convert via IntoFuture::into_future().
     use std::future::IntoFuture;
-    let serve_future = serve_future.into_future();
-    tokio::pin!(serve_future);
+    serve_until_drained(serve_future.into_future(), signal_observed_rx).await?;
 
-    // Two phases:
-    //   1. Until the shutdown signal fires, just run serve_future. No
-    //      timeout — the server is supposed to serve indefinitely.
-    //   2. Once the signal fires (signal_observed_rx resolves), race
-    //      serve_future against SHUTDOWN_DRAIN_TIMEOUT. If axum drains
-    //      in time, exit cleanly; otherwise log + force shutdown.
+    tracing::info!("draining complete — killing child processes");
+    kill_all_processes(&state).await;
+    Ok(())
+}
+
+/// Run the server future through its two shutdown phases:
+///   1. Until the shutdown signal fires, just run serve_future. No
+///      timeout — the server is supposed to serve indefinitely.
+///   2. Once the signal fires (signal_observed_rx resolves), race
+///      serve_future against SHUTDOWN_DRAIN_TIMEOUT. If axum drains
+///      in time, exit cleanly; otherwise log + force shutdown.
+async fn serve_until_drained<F>(
+    serve_future: F,
+    signal_observed_rx: tokio::sync::oneshot::Receiver<()>,
+) -> std::io::Result<()>
+where
+    F: std::future::Future<Output = std::io::Result<()>>,
+{
+    tokio::pin!(serve_future);
     tokio::select! {
         // Server returned on its own (graceful drain completed naturally,
         // OR an unexpected error). Propagate the result.
-        r = &mut serve_future => r?,
+        r = &mut serve_future => r,
         // Signal fired. Switch to drain-timeout mode.
         _ = signal_observed_rx => {
             match tokio::time::timeout(SHUTDOWN_DRAIN_TIMEOUT, serve_future).await {
-                Ok(r) => r?,
+                Ok(r) => r,
                 Err(_elapsed) => {
                     tracing::warn!(
                         "drain timeout ({}s) elapsed — forcing shutdown with requests still in flight",
                         SHUTDOWN_DRAIN_TIMEOUT.as_secs(),
                     );
+                    Ok(())
                 }
             }
         }
     }
-    tracing::info!("draining complete — killing child processes");
-    kill_all_processes(&state).await;
-    Ok(())
+}
+
+/// The graceful-shutdown future handed to axum: wait for a shutdown signal,
+/// prepare the drain (TUI exit, WS close), then start the outer drain clock
+/// via `signal_observed_tx`.
+async fn signal_then_prepare_drain(
+    state: Arc<AppState>,
+    signal_observed_tx: tokio::sync::oneshot::Sender<()>,
+) {
+    shutdown_signal().await;
+    // Signal the TUI thread to exit cleanly BEFORE the drain begins.
+    // The TUI runs on a detached std::thread::spawn — if main returns
+    // first, the OS kills the TUI thread mid-render and the terminal is
+    // left in raw mode + mouse-capture mode, printing escape garbage on
+    // every keystroke. Signaling here gives the TUI ~drain-timeout
+    // seconds to break its loop and run its cleanup path.
+    crate::tui::request_shutdown();
+
+    close_ws_connections_for_drain(&state);
+
+    tracing::info!(
+        "shutdown signal received — draining in-flight requests (max {}s)",
+        SHUTDOWN_DRAIN_TIMEOUT.as_secs(),
+    );
+    // Tell the outer task to start the drain deadline. send() consumes
+    // the sender; this future runs at most once so this is fine.
+    let _ = signal_observed_tx.send(());
+}
+
+/// Close every live WebSocket connection NOW, before axum begins
+/// draining. WS handlers don't complete on their own — without this,
+/// axum's graceful drain waits the full SHUTDOWN_DRAIN_TIMEOUT (30s)
+/// for connections that will never close, then force-shuts. Sending
+/// Close to each connection makes the writer task emit a WebSocket
+/// Close frame to the client and exit, which lets the corresponding
+/// axum handler task complete and the drain finish in milliseconds.
+fn close_ws_connections_for_drain(state: &AppState) {
+    let conn_count = state.ws_connections.all().len();
+    if conn_count > 0 {
+        tracing::info!("closing {conn_count} active WebSocket connection(s) before drain");
+        for conn in state.ws_connections.all() {
+            // try_send: on a full queue the drain still force-stops
+            // after SHUTDOWN_DRAIN_TIMEOUT — never block shutdown on a
+            // slow client.
+            let _ = conn.outbound.try_send(crate::ws::OutboundMessage::Close);
+        }
+    }
 }
 
 /// Resolve when a shutdown signal (Ctrl+C / SIGTERM) arrives. If a handler
@@ -424,67 +473,267 @@ async fn kill_all_processes(state: &AppState) {
     }
 }
 
+/// Request-scoped fields threaded through the dispatch phases below.
+/// Extracted once at intake from the incoming request + peer address.
+struct RequestMeta {
+    start: Instant,
+    method_str: String,
+    method_typed: http::Method,
+    path: String,
+    query: String,
+    source_ip: String,
+    /// Origin header, extracted up-front; needed for both OPTIONS and
+    /// non-OPTIONS CORS handling. Invalid (non-ASCII / newline-containing)
+    /// values are treated as absent by the cors module.
+    request_origin: Option<String>,
+    route_key_for_logs: String,
+    cache_key: String,
+}
+
+impl RequestMeta {
+    fn from_request(req: &Request<AxumBody>, peer: SocketAddr) -> Self {
+        let method_str = req.method().as_str().to_uppercase();
+        let path = req.uri().path().to_string();
+        let query = req.uri().query().unwrap_or("").to_string();
+        let request_origin = req
+            .headers()
+            .get(http::header::ORIGIN)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        Self {
+            start: Instant::now(),
+            method_typed: req.method().clone(),
+            route_key_for_logs: crate::router::Router::route_key(&method_str, &path),
+            cache_key: CacheLayer::make_key(&method_str, &path, &query),
+            method_str,
+            path,
+            query,
+            source_ip: peer.ip().to_string(),
+            request_origin,
+        }
+    }
+
+    fn latency_ms(&self) -> f64 {
+        self.start.elapsed().as_secs_f64() * 1000.0
+    }
+}
+
 pub(crate) async fn dispatch_lambda(
     State(state): State<Arc<AppState>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     req: Request<AxumBody>,
 ) -> Response {
-    let start = Instant::now();
-    let method_str = req.method().as_str().to_uppercase();
-    let method_typed = req.method().clone();
-    let path = req.uri().path().to_string();
-    let query = req.uri().query().unwrap_or("").to_string();
-    let source_ip = peer.ip().to_string();
+    let meta = RequestMeta::from_request(&req, peer);
 
     // ── CORS preflight (OPTIONS) ─────────────────────────────────────────────
-    // Extract the Origin header up-front; needed for both OPTIONS and non-OPTIONS
-    // CORS handling below. Invalid (non-ASCII / newline-containing) values are
-    // treated as absent by the cors module.
-    let request_origin: Option<String> = req
-        .headers()
-        .get(http::header::ORIGIN)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
+    if meta.method_str == "OPTIONS" {
+        return cors_preflight_response(&state, &meta).await;
+    }
 
-    if method_str == "OPTIONS" {
-        // Look up whether the path has any registered handler (method-agnostic).
-        let function_name_for_path = {
-            let router = state.router.read().await;
-            router.function_for_path(&path)
-        };
-        match function_name_for_path {
-            None => {
-                // No handler owns this path → OPTIONS on an unregistered path
-                // must return 404, not 204 (acceptance criterion 4).
-                tracing::debug!(path, "CORS preflight: path not registered — returning 404");
-                return StatusCode::NOT_FOUND.into_response();
-            }
-            Some(fn_name) => {
-                // Path is registered → return 204 with preflight headers.
-                let cors_cfg = {
-                    let cfg = state.config.read().await;
-                    cfg.effective_cors_for(&fn_name)
-                };
-                let origin_ref = request_origin.as_deref().unwrap_or("");
-                let preflight_hdrs = cors::preflight_headers(&cors_cfg, origin_ref);
-                tracing::debug!(
-                    path,
-                    fn_name,
-                    origin = origin_ref,
-                    headers_count = preflight_hdrs.len(),
-                    "CORS preflight: returning 204"
-                );
-                let mut builder =
-                    axum::http::response::Builder::new().status(StatusCode::NO_CONTENT);
-                for (k, v) in &preflight_hdrs {
-                    builder = builder.header(k, v);
-                }
-                return builder
-                    .body(AxumBody::empty())
-                    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
-            }
+    // ── Static file serving (GET/HEAD fallback) ──────────────────────────────
+    if meta.method_typed == http::Method::GET || meta.method_typed == http::Method::HEAD {
+        if let Some(resp) = try_serve_static(&state, &meta, req.headers()).await {
+            log_static_hit(&state, &meta, resp.status().as_u16());
+            return resp;
         }
     }
+
+    // BUG-12: skip cache for authenticated/personalized requests.
+    let has_auth =
+        req.headers().contains_key("authorization") || req.headers().contains_key("cookie");
+
+    // Cache check — only when no auth headers present. The cache is keyed
+    // by raw method+path+query (a cached response is the request's response,
+    // not the function's).
+    if !has_auth {
+        if let Some(cached) = state.cache.get(&meta.cache_key).await {
+            return serve_cache_hit(&state, &cached, &meta).await;
+        }
+    }
+
+    let request_id = Uuid::new_v4().to_string();
+    let gw_request = match build_gateway_event(&state, req, &meta, &request_id).await {
+        Ok(event) => event,
+        Err(resp) => return resp,
+    };
+    let gw_request = match enforce_authorizer_phase(&state, gw_request, &meta).await {
+        Ok(event) => event,
+        Err(resp) => return resp,
+    };
+
+    let result = {
+        let router = state.router.read().await;
+        router.dispatch(gw_request).await
+    };
+    let latency = meta.latency_ms();
+
+    match result {
+        Ok(outcome) => {
+            finalize_dispatch_success(&state, outcome, &meta, &request_id, has_auth, latency).await
+        }
+        Err(e) => finalize_dispatch_error(&state, &e, &meta, &request_id).await,
+    }
+}
+
+/// Handle a CORS preflight (OPTIONS): 404 when no handler owns the path
+/// (method-agnostic lookup; acceptance criterion 4), otherwise 204 with the
+/// owning function's preflight headers.
+async fn cors_preflight_response(state: &AppState, meta: &RequestMeta) -> Response {
+    let function_name_for_path = {
+        let router = state.router.read().await;
+        router.function_for_path(&meta.path)
+    };
+    match function_name_for_path {
+        None => {
+            // No handler owns this path → OPTIONS on an unregistered path
+            // must return 404, not 204.
+            tracing::debug!(
+                path = %meta.path,
+                "CORS preflight: path not registered — returning 404"
+            );
+            StatusCode::NOT_FOUND.into_response()
+        }
+        Some(fn_name) => {
+            // Path is registered → return 204 with preflight headers.
+            let cors_cfg = {
+                let cfg = state.config.read().await;
+                cfg.effective_cors_for(&fn_name)
+            };
+            let origin_ref = meta.request_origin.as_deref().unwrap_or("");
+            let preflight_hdrs = cors::preflight_headers(&cors_cfg, origin_ref);
+            tracing::debug!(
+                path = %meta.path,
+                fn_name,
+                origin = origin_ref,
+                headers_count = preflight_hdrs.len(),
+                "CORS preflight: returning 204"
+            );
+            let mut builder = axum::http::response::Builder::new().status(StatusCode::NO_CONTENT);
+            for (k, v) in &preflight_hdrs {
+                builder = builder.header(k, v);
+            }
+            builder
+                .body(AxumBody::empty())
+                .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+        }
+    }
+}
+
+/// Static file serving (GET/HEAD fallback). After CORS preflight, before any
+/// function dispatch or cache lookup: if `[static]` is configured and NO
+/// function owns this path, serve a file from disk. Functions and `/_riz/*`
+/// always win — the `function_for_path` gate is the same method-agnostic
+/// lookup that drives CORS preflight, so a static file can never shadow an
+/// API (a method mismatch still yields the function's own 405/404).
+/// `static_files::serve` returns `None` only when the path is not under the
+/// mount, in which case the caller falls through to the normal 404 path.
+async fn try_serve_static(
+    state: &AppState,
+    meta: &RequestMeta,
+    headers: &http::HeaderMap,
+) -> Option<Response> {
+    let static_cfg = { state.config.read().await.static_site.clone() }?;
+    let owned_by_function = {
+        let router = state.router.read().await;
+        router.function_for_path(&meta.path).is_some()
+    };
+    if owned_by_function {
+        return None;
+    }
+    crate::static_files::serve(&meta.method_typed, &meta.path, headers, &static_cfg).await
+}
+
+/// Access-log line for a static-file hit (mirrors the dispatch access log).
+fn log_static_hit(state: &AppState, meta: &RequestMeta, status: u16) {
+    let latency = meta.latency_ms();
+    let request_id = Uuid::new_v4().to_string();
+    let (method_str, path, source_ip) = (&meta.method_str, &meta.path, &meta.source_ip);
+    state.push_log(
+        "INFO",
+        Some(&meta.route_key_for_logs),
+        format!(
+            "{method_str} {path} {status} {latency:.0}ms [static] req={request_id} ip={source_ip}"
+        ),
+    );
+}
+
+/// Serve a cache hit: access-log the hit, attribute it to the owning
+/// function for metrics, and attach that function's CORS response headers.
+async fn serve_cache_hit(
+    state: &AppState,
+    cached: &ApiGatewayV2httpResponse,
+    meta: &RequestMeta,
+) -> Response {
+    let latency = meta.latency_ms();
+    let request_id = Uuid::new_v4().to_string();
+    let (method_str, path, source_ip) = (&meta.method_str, &meta.path, &meta.source_ip);
+    state.push_log(
+        "INFO",
+        Some(&meta.route_key_for_logs),
+        format!("{method_str} {path} 200 {latency:.0}ms [cache] req={request_id} ip={source_ip}"),
+    );
+    // Attribute the cache hit to the function whose routes include this
+    // path — this avoids locking state.router. When no function claims the
+    // path we fall back to the global CORS config, which preserves the
+    // cache_hit metric without a wrong attribution.
+    let fn_name = attribute_path_to_function(state, meta).await;
+    // Compute CORS response headers for the cache-hit path.
+    let cors_hdrs =
+        cors_headers_for(state, fn_name.as_deref(), meta.request_origin.as_deref()).await;
+    if let Some(fn_name) = fn_name {
+        state
+            .riz_state
+            .record_invocation(&fn_name, latency, true, true)
+            .await;
+    }
+    apply_cors_response_headers(gateway_to_axum(cached), &cors_hdrs)
+}
+
+/// Scan FunctionState.routes (a Vec<String> of "METHOD /path" display
+/// strings) for the function owning this method+path. Match when the stored
+/// method is ANY or equals the request method, and the path matches.
+async fn attribute_path_to_function(state: &AppState, meta: &RequestMeta) -> Option<String> {
+    let functions = state.riz_state.functions.read().await;
+    functions
+        .values()
+        .find(|f| {
+            f.routes.iter().any(|r| {
+                if let Some((stored_method, stored_path)) = r.split_once(' ') {
+                    let method_ok =
+                        stored_method == "ANY" || stored_method == meta.method_str.as_str();
+                    let path_ok = stored_path == meta.path.as_str();
+                    method_ok && path_ok
+                } else {
+                    false
+                }
+            })
+        })
+        .map(|f| f.name.clone())
+}
+
+/// CORS response headers for a response: the named function's effective
+/// config, or the global `[cors]` block when no function is attributed.
+async fn cors_headers_for(
+    state: &AppState,
+    fn_name: Option<&str>,
+    origin: Option<&str>,
+) -> http::HeaderMap {
+    let cfg = state.config.read().await;
+    let cors_cfg = fn_name
+        .map(|n| cfg.effective_cors_for(n))
+        .unwrap_or_else(|| cfg.cors.clone());
+    cors::response_headers(&cors_cfg, origin)
+}
+
+/// Assemble the AWS API Gateway v2 request event from the incoming request:
+/// headers, cookies, query map, body, and the request context. Returns the
+/// ready event, or the error response to send instead (oversized body).
+async fn build_gateway_event(
+    state: &AppState,
+    req: Request<AxumBody>,
+    meta: &RequestMeta,
+    request_id: &str,
+) -> Result<ApiGatewayV2httpRequest, Response> {
     let user_agent = req
         .headers()
         .get(http::header::USER_AGENT)
@@ -492,161 +741,12 @@ pub(crate) async fn dispatch_lambda(
         .unwrap_or("")
         .to_string();
 
-    let cache_key = CacheLayer::make_key(&method_str, &path, &query);
-    let route_key_for_logs = crate::router::Router::route_key(&method_str, &path);
-
-    // ── Static file serving (GET/HEAD fallback) ──────────────────────────────
-    // After CORS preflight, before any function dispatch or cache lookup: if
-    // `[static]` is configured and NO function owns this path, serve a file
-    // from disk. Functions and `/_riz/*` always win — the `function_for_path`
-    // gate is the same method-agnostic lookup that drives CORS preflight, so a
-    // static file can never shadow an API (a method mismatch still yields the
-    // function's own 405/404). GET/HEAD only; `static_files::serve` returns
-    // `None` only when the path is not under the mount, in which case we fall
-    // through to the normal 404 path below.
-    if method_typed == http::Method::GET || method_typed == http::Method::HEAD {
-        let static_cfg = { state.config.read().await.static_site.clone() };
-        if let Some(static_cfg) = static_cfg {
-            let owned_by_function = {
-                let router = state.router.read().await;
-                router.function_for_path(&path).is_some()
-            };
-            if !owned_by_function {
-                if let Some(resp) =
-                    crate::static_files::serve(&method_typed, &path, req.headers(), &static_cfg)
-                        .await
-                {
-                    let latency = start.elapsed().as_secs_f64() * 1000.0;
-                    let request_id = Uuid::new_v4().to_string();
-                    let status = resp.status().as_u16();
-                    state.push_log(
-                        "INFO",
-                        Some(&route_key_for_logs),
-                        format!(
-                            "{method_str} {path} {status} {latency:.0}ms [static] req={request_id} ip={source_ip}"
-                        ),
-                    );
-                    return resp;
-                }
-            }
-        }
-    }
-
-    // BUG-12: skip cache for authenticated/personalized requests
-    let has_auth =
-        req.headers().contains_key("authorization") || req.headers().contains_key("cookie");
-
-    // Cache check — only when no auth headers present. The cache is keyed
-    // by raw method+path+query (a cached response is the request's response,
-    // not the function's). Attribution to function name happens via a
-    // RizState lookup — no config or router lock required on this path.
-    if !has_auth {
-        if let Some(cached) = state.cache.get(&cache_key).await {
-            let latency = start.elapsed().as_secs_f64() * 1000.0;
-            let request_id = Uuid::new_v4().to_string();
-            state.push_log(
-                "INFO",
-                Some(&route_key_for_logs),
-                format!("{method_str} {path} 200 {latency:.0}ms [cache] req={request_id} ip={source_ip}"),
-            );
-            // Attribute the cache hit to the function whose routes include
-            // this path. We scan FunctionState.routes (a Vec<String> of
-            // "METHOD /path" display strings) for a matching route key — this
-            // avoids locking state.router. For a more exact match we fall back
-            // to the route_key_for_logs label when no function claims the path,
-            // which preserves the cache_hit metric without a wrong attribution.
-            let fn_name = {
-                let functions = state.riz_state.functions.read().await;
-                functions
-                    .values()
-                    .find(|f| {
-                        f.routes.iter().any(|r| {
-                            // Routes are stored as "METHOD /path" or "ANY /path".
-                            // Match when the stored method is ANY or equals the
-                            // request method, and the path component matches.
-                            if let Some((stored_method, stored_path)) = r.split_once(' ') {
-                                let method_ok =
-                                    stored_method == "ANY" || stored_method == method_str.as_str();
-                                let path_ok = stored_path == path.as_str();
-                                method_ok && path_ok
-                            } else {
-                                false
-                            }
-                        })
-                    })
-                    .map(|f| f.name.clone())
-            };
-            // Compute CORS response headers for the cache-hit path.
-            // Use the attributed function name when known; fall back to global.
-            let cors_hdrs = {
-                let cfg = state.config.read().await;
-                let cors_cfg = fn_name
-                    .as_deref()
-                    .map(|n| cfg.effective_cors_for(n))
-                    .unwrap_or_else(|| cfg.cors.clone());
-                cors::response_headers(&cors_cfg, request_origin.as_deref())
-            };
-            if let Some(fn_name) = fn_name {
-                state
-                    .riz_state
-                    .record_invocation(&fn_name, latency, true, true)
-                    .await;
-            }
-            return apply_cors_response_headers(gateway_to_axum(&cached), &cors_hdrs);
-        }
-    }
-
     // Headers — passed through as `http::HeaderMap` directly into the event.
     let headers = req.headers().clone();
+    let cookies = parse_event_cookies(req.headers());
+    let query_string_parameters = parse_query_map(&meta.query);
+    let (body, is_base64_encoded) = read_event_body(req).await?;
 
-    // Cookies — AWS v2 represents them as a separate top-level field, parsed
-    // from the `Cookie` header (split on `; `).
-    let cookies: Option<Vec<String>> = req
-        .headers()
-        .get(http::header::COOKIE)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| {
-            s.split("; ")
-                .map(|c| c.trim().to_string())
-                .filter(|c| !c.is_empty())
-                .collect()
-        })
-        .filter(|v: &Vec<String>| !v.is_empty());
-
-    // Query string parameters — parse from raw query into a flat map (the
-    // AWS QueryMap accepts a HashMap<String, String> via From; we feed it
-    // pairs and let the type coerce).
-    let query_string_parameters: aws_lambda_events::query_map::QueryMap = {
-        let mut acc: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-        for pair in query.split('&').filter(|p| !p.is_empty()) {
-            if let Some((k, v)) = pair.split_once('=') {
-                acc.insert(percent_decode(k), percent_decode(v));
-            } else {
-                acc.insert(percent_decode(pair), String::new());
-            }
-        }
-        acc.into()
-    };
-
-    // BUG-10: 413 instead of silently swallowing oversized body.
-    let body_bytes = match axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024).await {
-        Ok(b) => b,
-        Err(_) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
-    };
-    // BUG-09: non-UTF8 bodies are base64-encoded in the event.
-    let (body, is_base64_encoded) = if body_bytes.is_empty() {
-        (None, false)
-    } else {
-        match String::from_utf8(body_bytes.to_vec()) {
-            Ok(s) => (Some(s), false),
-            Err(e) => {
-                let encoded = base64::engine::general_purpose::STANDARD.encode(e.into_bytes());
-                (Some(encoded), true)
-            }
-        }
-    };
-
-    let request_id = Uuid::new_v4().to_string();
     let time_epoch = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -667,27 +767,27 @@ pub(crate) async fn dispatch_lambda(
     };
 
     let ctx = ApiGatewayV2httpRequestContext {
-        route_key: Some(route_key_for_logs.clone()),
+        route_key: Some(meta.route_key_for_logs.clone()),
         account_id: Some("riz".into()),
         stage: Some(stage),
-        request_id: Some(request_id.clone()),
+        request_id: Some(request_id.to_string()),
         time: Some(time_str),
         time_epoch: time_epoch as i64,
         http: ApiGatewayV2httpRequestContextHttpDescription {
-            method: method_typed.clone(),
-            path: Some(path.clone()),
+            method: meta.method_typed.clone(),
+            path: Some(meta.path.clone()),
             protocol: Some("HTTP/1.1".into()),
-            source_ip: Some(source_ip.clone()),
+            source_ip: Some(meta.source_ip.clone()),
             user_agent: Some(user_agent),
         },
         ..Default::default()
     };
 
-    let gw_request = ApiGatewayV2httpRequest {
+    Ok(ApiGatewayV2httpRequest {
         version: Some("2.0".into()),
-        route_key: Some(route_key_for_logs.clone()),
-        raw_path: Some(path.clone()),
-        raw_query_string: Some(query.clone()),
+        route_key: Some(meta.route_key_for_logs.clone()),
+        raw_path: Some(meta.path.clone()),
+        raw_query_string: Some(meta.query.clone()),
         cookies,
         headers,
         query_string_parameters,
@@ -698,197 +798,265 @@ pub(crate) async fn dispatch_lambda(
         is_base64_encoded,
         kind: None,
         method_arn: None,
-        http_method: method_typed,
+        http_method: meta.method_typed.clone(),
         identity_source: None,
         authorization_token: None,
         resource: None,
-    };
+    })
+}
 
-    // ── Authorizer enforcement ────────────────────────────────────────────────
-    // Look up the authorizer for the matched function (if any) BEFORE
-    // dispatching. We do a cheap route-match to find the function name, then
-    // read the authorizer config from the shared config RwLock (one lock
-    // acquisition per request on the auth path, none when no authorizer
-    // is configured for the matched function).
-    let gw_request = {
-        let authorizer_config = {
-            // Phase 1: find the function name for this route.
-            let function_name_opt = {
-                let router = state.router.read().await;
-                router.find_function_name(&method_str, &path)
-            };
-            // Phase 2: look up its authorizer config.
-            if let Some(ref fn_name) = function_name_opt {
-                let cfg = state.config.read().await;
-                cfg.functions
-                    .get(fn_name.as_str())
-                    .and_then(|f| f.authorizer.clone())
-            } else {
-                None
-            }
-        };
+/// Cookies — AWS v2 represents them as a separate top-level field, parsed
+/// from the `Cookie` header (split on `; `).
+fn parse_event_cookies(headers: &http::HeaderMap) -> Option<Vec<String>> {
+    headers
+        .get(http::header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| {
+            s.split("; ")
+                .map(|c| c.trim().to_string())
+                .filter(|c| !c.is_empty())
+                .collect()
+        })
+        .filter(|v: &Vec<String>| !v.is_empty())
+}
 
-        if authorizer_config.is_some() {
-            let auth_header = gw_request
-                .headers
-                .get(http::header::AUTHORIZATION)
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string());
-
-            // Find function name again for cache key (borrow already dropped).
-            let function_name = {
-                let router = state.router.read().await;
-                router
-                    .find_function_name(&method_str, &path)
-                    .unwrap_or_else(|| "_unmatched".to_string())
-            };
-
-            let cache_key = AuthCacheKey::new(&source_ip, auth_header.as_deref(), &function_name);
-
-            // Cache hit check — skip the full enforce_authorizer call.
-            if let Some(cached_output) = state.auth_cache.get(&cache_key).await {
-                inject_authorizer_context(gw_request, &cached_output)
-            } else {
-                match enforce_authorizer(
-                    authorizer_config.as_ref(),
-                    &source_ip,
-                    auth_header.as_deref(),
-                    &function_name,
-                    gw_request,
-                    &state.auth_cache,
-                    &state.process_manager,
-                )
-                .await
-                {
-                    Ok(event) => event,
-                    Err(crate::auth::authorizer::AuthError::Unauthorized(msg)) => {
-                        tracing::warn!(
-                            source_ip = %source_ip,
-                            function = %function_name,
-                            "authorizer: 401 Unauthorized — {msg}"
-                        );
-                        return gateway_to_axum(&crate::runtime::error_response(
-                            401,
-                            "Unauthorized",
-                        ));
-                    }
-                    Err(crate::auth::authorizer::AuthError::Forbidden(msg)) => {
-                        tracing::warn!(
-                            source_ip = %source_ip,
-                            function = %function_name,
-                            "authorizer: 403 Forbidden — {msg}"
-                        );
-                        return gateway_to_axum(&crate::runtime::error_response(403, "Forbidden"));
-                    }
-                    Err(crate::auth::authorizer::AuthError::Other(msg)) => {
-                        tracing::warn!(
-                            source_ip = %source_ip,
-                            function = %function_name,
-                            "authorizer: 500 transient error — {msg}"
-                        );
-                        return gateway_to_axum(&crate::runtime::error_response(
-                            500,
-                            "Internal Server Error",
-                        ));
-                    }
-                }
-            }
+/// Query string parameters — parse from raw query into a flat map (the
+/// AWS QueryMap accepts a HashMap<String, String> via From; we feed it
+/// pairs and let the type coerce).
+fn parse_query_map(query: &str) -> aws_lambda_events::query_map::QueryMap {
+    let mut acc: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for pair in query.split('&').filter(|p| !p.is_empty()) {
+        if let Some((k, v)) = pair.split_once('=') {
+            acc.insert(percent_decode(k), percent_decode(v));
         } else {
-            gw_request
-        }
-    };
-    // ── End authorizer enforcement ────────────────────────────────────────────
-
-    let result = {
-        let router = state.router.read().await;
-        router.dispatch(gw_request).await
-    };
-    let latency = start.elapsed().as_secs_f64() * 1000.0;
-
-    match result {
-        Ok(outcome) => {
-            // Router returns (function_name, response). All metrics, cache
-            // bookkeeping, and access logs attribute to function_name —
-            // mirrors AWS CloudWatch per-function metric semantics.
-            let function_name = outcome.function_name.clone();
-            let gw_resp = outcome.response;
-
-            // Read per-function metadata from RizState — no config lock needed.
-            let (runtime_tag, effective_ttl) = {
-                let functions = state.riz_state.functions.read().await;
-                match functions.get(&function_name) {
-                    Some(fs) => (
-                        fs.runtime_tag
-                            .lock()
-                            .map(|r| r.clone())
-                            .unwrap_or_else(|_| "system".to_string()),
-                        fs.cache_ttl_secs.load(std::sync::atomic::Ordering::Relaxed),
-                    ),
-                    None => ("system".to_string(), 0),
-                }
-            };
-
-            let status_u16 = gw_resp.status_code as u16;
-            let healthy = status_u16 < 500;
-            let _ = &runtime_tag;
-
-            // Request root span (OTLP). Non-blocking emit — telemetry is
-            // best-effort and never adds latency to or fails the request path.
-            emit_request_span(
-                &state.telemetry,
-                start,
-                latency,
-                &method_str,
-                &function_name,
-                status_u16,
-            );
-
-            state
-                .riz_state
-                .record_invocation(&function_name, latency, healthy, false)
-                .await;
-
-            state.push_log(
-                "INFO",
-                Some(&function_name),
-                format!("{method_str} {path} {status_u16} {latency:.0}ms req={request_id} ip={source_ip} fn={function_name}"),
-            );
-
-            if !has_auth && effective_ttl > 0 && status_u16 < 400 {
-                state
-                    .cache
-                    .set(cache_key, gw_resp.clone(), effective_ttl)
-                    .await;
-            }
-
-            // Append CORS response headers for this function.
-            let cors_hdrs = {
-                let cfg = state.config.read().await;
-                let cors_cfg = cfg.effective_cors_for(&function_name);
-                cors::response_headers(&cors_cfg, request_origin.as_deref())
-            };
-            apply_cors_response_headers(gateway_to_axum(&gw_resp), &cors_hdrs)
-        }
-        Err(e) => {
-            let resp = e.to_response();
-            error!(req = %request_id, ip = %source_ip, "dispatch error: {e}");
-            // No function attribution possible — log under "_unmatched".
-            // BUG-16: error-path access logs MUST also carry request_id +
-            // source_ip so operators can correlate failures to a specific
-            // request. The success + cache-hit paths already include both.
-            state.push_log(
-                "ERROR",
-                None,
-                format!("dispatch error {method_str} {path} req={request_id} ip={source_ip}: {e}"),
-            );
-            // Apply global CORS config for error responses (unmatched routes).
-            let cors_hdrs = {
-                let cfg = state.config.read().await;
-                cors::response_headers(&cfg.cors, request_origin.as_deref())
-            };
-            apply_cors_response_headers(gateway_to_axum(&resp), &cors_hdrs)
+            acc.insert(percent_decode(pair), String::new());
         }
     }
+    acc.into()
+}
+
+/// Read the request body into the event's body field.
+/// BUG-10: 413 instead of silently swallowing an oversized body.
+/// BUG-09: non-UTF8 bodies are base64-encoded in the event.
+async fn read_event_body(req: Request<AxumBody>) -> Result<(Option<String>, bool), Response> {
+    let body_bytes = match axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024).await {
+        Ok(b) => b,
+        Err(_) => return Err(StatusCode::PAYLOAD_TOO_LARGE.into_response()),
+    };
+    if body_bytes.is_empty() {
+        return Ok((None, false));
+    }
+    match String::from_utf8(body_bytes.to_vec()) {
+        Ok(s) => Ok((Some(s), false)),
+        Err(e) => {
+            let encoded = base64::engine::general_purpose::STANDARD.encode(e.into_bytes());
+            Ok((Some(encoded), true))
+        }
+    }
+}
+
+/// Authorizer enforcement: look up the authorizer for the matched function
+/// (if any) BEFORE dispatching. We do a cheap route-match to find the
+/// function name, then read the authorizer config from the shared config
+/// RwLock (one lock acquisition per request on the auth path, none when no
+/// authorizer is configured for the matched function). Returns the (possibly
+/// context-enriched) event, or the 401/403/500 response to send instead.
+async fn enforce_authorizer_phase(
+    state: &AppState,
+    gw_request: ApiGatewayV2httpRequest,
+    meta: &RequestMeta,
+) -> Result<ApiGatewayV2httpRequest, Response> {
+    let authorizer_config = authorizer_config_for_route(state, meta).await;
+    if authorizer_config.is_none() {
+        return Ok(gw_request);
+    }
+
+    let auth_header = gw_request
+        .headers
+        .get(http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    // Find function name again for cache key (borrow already dropped).
+    let function_name = {
+        let router = state.router.read().await;
+        router
+            .find_function_name(&meta.method_str, &meta.path)
+            .unwrap_or_else(|| "_unmatched".to_string())
+    };
+
+    let cache_key = AuthCacheKey::new(&meta.source_ip, auth_header.as_deref(), &function_name);
+
+    // Cache hit check — skip the full enforce_authorizer call.
+    if let Some(cached_output) = state.auth_cache.get(&cache_key).await {
+        return Ok(inject_authorizer_context(gw_request, &cached_output));
+    }
+
+    match enforce_authorizer(
+        authorizer_config.as_ref(),
+        &meta.source_ip,
+        auth_header.as_deref(),
+        &function_name,
+        gw_request,
+        &state.auth_cache,
+        &state.process_manager,
+    )
+    .await
+    {
+        Ok(event) => Ok(event),
+        Err(err) => Err(authorizer_error_response(&err, meta, &function_name)),
+    }
+}
+
+/// Look up the matched function's authorizer config, if any.
+async fn authorizer_config_for_route(
+    state: &AppState,
+    meta: &RequestMeta,
+) -> Option<crate::config::AuthorizerConfig> {
+    // Phase 1: find the function name for this route.
+    let function_name_opt = {
+        let router = state.router.read().await;
+        router.find_function_name(&meta.method_str, &meta.path)
+    };
+    // Phase 2: look up its authorizer config.
+    if let Some(ref fn_name) = function_name_opt {
+        let cfg = state.config.read().await;
+        cfg.functions
+            .get(fn_name.as_str())
+            .and_then(|f| f.authorizer.clone())
+    } else {
+        None
+    }
+}
+
+/// Map an authorizer failure to its response: 401/403 carry the intended
+/// denial, 500 covers transient authorizer errors. Each is warn-logged with
+/// the source ip + function for correlation.
+fn authorizer_error_response(
+    err: &crate::auth::authorizer::AuthError,
+    meta: &RequestMeta,
+    function_name: &str,
+) -> Response {
+    use crate::auth::authorizer::AuthError;
+    let (status, public_msg) = match err {
+        AuthError::Unauthorized(msg) => {
+            tracing::warn!(
+                source_ip = %meta.source_ip,
+                function = %function_name,
+                "authorizer: 401 Unauthorized — {msg}"
+            );
+            (401, "Unauthorized")
+        }
+        AuthError::Forbidden(msg) => {
+            tracing::warn!(
+                source_ip = %meta.source_ip,
+                function = %function_name,
+                "authorizer: 403 Forbidden — {msg}"
+            );
+            (403, "Forbidden")
+        }
+        AuthError::Other(msg) => {
+            tracing::warn!(
+                source_ip = %meta.source_ip,
+                function = %function_name,
+                "authorizer: 500 transient error — {msg}"
+            );
+            (500, "Internal Server Error")
+        }
+    };
+    gateway_to_axum(&crate::runtime::error_response(status, public_msg))
+}
+
+/// Finalize a successful dispatch. Router returns (function_name, response).
+/// All metrics, cache bookkeeping, and access logs attribute to
+/// function_name — mirrors AWS CloudWatch per-function metric semantics.
+async fn finalize_dispatch_success(
+    state: &AppState,
+    outcome: crate::router::DispatchOutcome,
+    meta: &RequestMeta,
+    request_id: &str,
+    has_auth: bool,
+    latency: f64,
+) -> Response {
+    let function_name = outcome.function_name.clone();
+    let gw_resp = outcome.response;
+
+    // Read per-function metadata from RizState — no config lock needed.
+    let (runtime_tag, effective_ttl) = {
+        let functions = state.riz_state.functions.read().await;
+        match functions.get(&function_name) {
+            Some(fs) => (
+                fs.runtime_tag
+                    .lock()
+                    .map(|r| r.clone())
+                    .unwrap_or_else(|_| "system".to_string()),
+                fs.cache_ttl_secs.load(std::sync::atomic::Ordering::Relaxed),
+            ),
+            None => ("system".to_string(), 0),
+        }
+    };
+
+    let status_u16 = gw_resp.status_code as u16;
+    let healthy = status_u16 < 500;
+    let _ = &runtime_tag;
+
+    // Request root span (OTLP). Non-blocking emit — telemetry is
+    // best-effort and never adds latency to or fails the request path.
+    emit_request_span(
+        &state.telemetry,
+        meta.start,
+        latency,
+        &meta.method_str,
+        &function_name,
+        status_u16,
+    );
+
+    state
+        .riz_state
+        .record_invocation(&function_name, latency, healthy, false)
+        .await;
+
+    let (method_str, path, source_ip) = (&meta.method_str, &meta.path, &meta.source_ip);
+    state.push_log(
+        "INFO",
+        Some(&function_name),
+        format!("{method_str} {path} {status_u16} {latency:.0}ms req={request_id} ip={source_ip} fn={function_name}"),
+    );
+
+    if !has_auth && effective_ttl > 0 && status_u16 < 400 {
+        state
+            .cache
+            .set(meta.cache_key.clone(), gw_resp.clone(), effective_ttl)
+            .await;
+    }
+
+    // Append CORS response headers for this function.
+    let cors_hdrs =
+        cors_headers_for(state, Some(&function_name), meta.request_origin.as_deref()).await;
+    apply_cors_response_headers(gateway_to_axum(&gw_resp), &cors_hdrs)
+}
+
+/// Finalize a failed dispatch. No function attribution possible — log under
+/// "_unmatched". BUG-16: error-path access logs MUST also carry request_id +
+/// source_ip so operators can correlate failures to a specific request. The
+/// success + cache-hit paths already include both.
+async fn finalize_dispatch_error(
+    state: &AppState,
+    e: &crate::runtime::HandlerError,
+    meta: &RequestMeta,
+    request_id: &str,
+) -> Response {
+    let resp = e.to_response();
+    error!(req = %request_id, ip = %meta.source_ip, "dispatch error: {e}");
+    let (method_str, path, source_ip) = (&meta.method_str, &meta.path, &meta.source_ip);
+    state.push_log(
+        "ERROR",
+        None,
+        format!("dispatch error {method_str} {path} req={request_id} ip={source_ip}: {e}"),
+    );
+    // Apply global CORS config for error responses (unmatched routes).
+    let cors_hdrs = cors_headers_for(state, None, meta.request_origin.as_deref()).await;
+    apply_cors_response_headers(gateway_to_axum(&resp), &cors_hdrs)
 }
 
 /// Current wall-clock time as unix-nanos (for OTLP span timestamps).
