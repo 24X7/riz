@@ -392,14 +392,16 @@ async fn run_a2a_send(base: &str, message: &str, bearer: Option<&str>) -> anyhow
     {
         Ok(resp) if resp.status().is_success() => {
             let card: serde_json::Value = resp.json().await.unwrap_or_default();
-            if let Some(name) = card["name"].as_str() {
+            if let Some(name) = card.get("name").and_then(|v| v.as_str()) {
                 println!(
                     "agent: {name} — {}",
-                    card["description"].as_str().unwrap_or("")
+                    card.get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
                 );
             }
-            card["url"]
-                .as_str()
+            card.get("url")
+                .and_then(|v| v.as_str())
                 .map(str::to_string)
                 .unwrap_or_else(|| format!("{base}/_riz/a2a"))
         }
@@ -422,15 +424,27 @@ async fn run_a2a_send(base: &str, message: &str, bearer: Option<&str>) -> anyhow
     if let Some(err) = v.get("error").filter(|e| !e.is_null()) {
         anyhow::bail!(
             "a2a error {}: {}",
-            err["code"],
-            err["message"].as_str().unwrap_or("")
+            err.get("code").unwrap_or(&serde_json::Value::Null),
+            err.get("message").and_then(|v| v.as_str()).unwrap_or("")
         );
     }
-    let task = &v["result"];
-    let state = task["status"]["state"].as_str().unwrap_or("?");
-    println!("task:  {}", task["id"].as_str().unwrap_or("?"));
+    // .pointer(): missing/mistyped fields degrade to the "?" placeholders
+    // below instead of panicking on a malformed peer response.
+    let state = v
+        .pointer("/result/status/state")
+        .and_then(|s| s.as_str())
+        .unwrap_or("?");
+    println!(
+        "task:  {}",
+        v.pointer("/result/id")
+            .and_then(|s| s.as_str())
+            .unwrap_or("?")
+    );
     println!("state: {state}");
-    if let Some(answer) = task["artifacts"][0]["parts"][0]["text"].as_str() {
+    if let Some(answer) = v
+        .pointer("/result/artifacts/0/parts/0/text")
+        .and_then(|s| s.as_str())
+    {
         println!("\n{answer}");
     }
     if state != "completed" {
@@ -485,17 +499,23 @@ async fn run_mcp_inspect(url: &str, bearer: Option<&str>) -> anyhow::Result<()> 
         return Err(anyhow::anyhow!("initialize returned JSON-RPC error: {err}"));
     }
 
-    let protocol_version = init_json["result"]["protocolVersion"]
-        .as_str()
+    // .pointer(): a server that omits (or mistypes) any of these fields gets
+    // the "(unknown)" placeholders — never a panic in a diagnostic command.
+    let protocol_version = init_json
+        .pointer("/result/protocolVersion")
+        .and_then(|v| v.as_str())
         .unwrap_or("(unknown)");
-    let server_name = init_json["result"]["serverInfo"]["name"]
-        .as_str()
+    let server_name = init_json
+        .pointer("/result/serverInfo/name")
+        .and_then(|v| v.as_str())
         .unwrap_or("(unknown)");
-    let server_version = init_json["result"]["serverInfo"]["version"]
-        .as_str()
+    let server_version = init_json
+        .pointer("/result/serverInfo/version")
+        .and_then(|v| v.as_str())
         .unwrap_or("");
-    let caps: Vec<String> = init_json["result"]["capabilities"]
-        .as_object()
+    let caps: Vec<String> = init_json
+        .pointer("/result/capabilities")
+        .and_then(|v| v.as_object())
         .map(|o| o.keys().cloned().collect())
         .unwrap_or_default();
 
@@ -526,8 +546,9 @@ async fn run_mcp_inspect(url: &str, bearer: Option<&str>) -> anyhow::Result<()> 
         return Err(anyhow::anyhow!("tools/list returned JSON-RPC error: {err}"));
     }
 
-    let tools = list_json["result"]["tools"]
-        .as_array()
+    let tools = list_json
+        .pointer("/result/tools")
+        .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
 
@@ -626,10 +647,12 @@ fn report(severity: Finding, label: &str, detail: &str) {
 async fn run_doctor(config_path: &str) -> anyhow::Result<()> {
     let mut warns: u32 = 0;
     let mut fails: u32 = 0;
+    // saturating: a finding tally can never meaningfully exceed u32::MAX;
+    // a pinned count beats an overflow panic mid-diagnosis.
     let mut record = |sev: Finding| match sev {
         Finding::Pass => {}
-        Finding::Warn => warns += 1,
-        Finding::Fail => fails += 1,
+        Finding::Warn => warns = warns.saturating_add(1),
+        Finding::Fail => fails = fails.saturating_add(1),
     };
 
     println!("riz doctor — pre-flight checks\n");
@@ -645,6 +668,10 @@ async fn run_doctor(config_path: &str) -> anyhow::Result<()> {
         record(Finding::Fail);
         println!("\n  Hint: run `riz init <template>` to scaffold one.");
         println!("\n✗ 1 failure — cannot continue without a config.");
+        // Rule 1 deviation (docs/SAFETY.md): doctor is a top-level CLI
+        // diagnostic whose contract is "summary on stdout, exit code 1" —
+        // bubbling an anyhow::Err would duplicate the verdict on stderr.
+        #[allow(clippy::exit)]
         std::process::exit(1);
     }
     report(Finding::Pass, "riz.toml present", config_path);
@@ -663,6 +690,9 @@ async fn run_doctor(config_path: &str) -> anyhow::Result<()> {
                 "\n✗ {} failure(s) — cannot continue without parseable config.",
                 fails
             );
+            // Rule 1 deviation (docs/SAFETY.md): top-level CLI verdict path;
+            // the summary above is the message, the exit code is the contract.
+            #[allow(clippy::exit)]
             std::process::exit(1);
         }
     };
@@ -878,6 +908,9 @@ async fn run_doctor(config_path: &str) -> anyhow::Result<()> {
                 String::new()
             }
         );
+        // Rule 1 deviation (docs/SAFETY.md): top-level CLI verdict path;
+        // the summary above is the message, the exit code is the contract.
+        #[allow(clippy::exit)]
         std::process::exit(1);
     }
 }
@@ -942,16 +975,19 @@ fn strip_handler_export(handler: &std::path::Path) -> std::path::PathBuf {
 /// (`*` = required). None when the tool has only the generic envelope.
 fn typed_params_summary(schema: &serde_json::Value) -> Option<String> {
     let section = |key: &str| -> Option<String> {
-        let obj = &schema["properties"][key];
-        let props = obj["properties"].as_object()?;
-        let required: Vec<&str> = obj["required"]
-            .as_array()
+        // .get() chains: an absent/mistyped section yields None (no summary
+        // line) rather than panicking on schemas we don't control.
+        let obj = schema.get("properties")?.get(key)?;
+        let props = obj.get("properties").and_then(|v| v.as_object())?;
+        let required: Vec<&str> = obj
+            .get("required")
+            .and_then(|v| v.as_array())
             .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
             .unwrap_or_default();
         let fields: Vec<String> = props
             .iter()
             .map(|(name, spec)| {
-                let kind = spec["type"].as_str().unwrap_or("any");
+                let kind = spec.get("type").and_then(|v| v.as_str()).unwrap_or("any");
                 let star = if required.contains(&name.as_str()) {
                     "*"
                 } else {
@@ -978,9 +1014,10 @@ fn typed_params_summary(schema: &serde_json::Value) -> Option<String> {
 }
 
 fn schema_summary(schema: &serde_json::Value) -> String {
-    let kind = schema["type"].as_str().unwrap_or("any");
-    let props: Vec<&str> = schema["properties"]
-        .as_object()
+    let kind = schema.get("type").and_then(|v| v.as_str()).unwrap_or("any");
+    let props: Vec<&str> = schema
+        .get("properties")
+        .and_then(|v| v.as_object())
         .map(|o| o.keys().map(|s| s.as_str()).collect())
         .unwrap_or_default();
     if props.is_empty() {
@@ -1013,15 +1050,18 @@ fn main() -> anyhow::Result<()> {
     // adapter spawns for each pool worker; keeping it out of the async runtime
     // means each wasm worker stays lean (no multi-threaded scheduler per child).
     let argv: Vec<String> = std::env::args().collect();
+    // .get(2..): len >= 2 is guaranteed by the argv[1] match, but a checked
+    // slice keeps arg handling panic-free; missing tail args surface as the
+    // worker's own usage error.
     if argv.get(1).map(String::as_str) == Some("__wasm-host") {
-        return process::wasm::run_host(&argv[2..]);
+        return process::wasm::run_host(argv.get(2..).unwrap_or(&[]));
     }
     // The isolated telemetry worker. Like __wasm-host, it runs synchronously
     // *before* any tokio runtime so the child stays lean and decoupled from the
     // host event loop. `riz __telemetry <sink>` reads length-prefixed events
     // from stdin and (2a) appends them as JSON lines to the sink file.
     if argv.get(1).map(String::as_str) == Some("__telemetry") {
-        return observability::process::run_worker(&argv[2..]);
+        return observability::process::run_worker(argv.get(2..).unwrap_or(&[]));
     }
 
     tokio::runtime::Builder::new_multi_thread()
@@ -1469,5 +1509,54 @@ mod tests {
         assert_eq!(effective_log_level(true, None), "debug");
         assert_eq!(effective_log_level(false, None), "info");
         assert_eq!(effective_log_level(true, Some("warn")), "warn");
+    }
+
+    /// Malformed / hostile JSON schemas from a remote MCP server must
+    /// degrade to placeholders, never panic the inspect command.
+    #[test]
+    fn schema_summary_degrades_on_malformed_input() {
+        use serde_json::json;
+        assert_eq!(schema_summary(&json!(null)), "any");
+        assert_eq!(schema_summary(&json!("not an object")), "any");
+        assert_eq!(schema_summary(&json!({"type": 42})), "any");
+        assert_eq!(
+            schema_summary(&json!({"type": "object", "properties": "bogus"})),
+            "object"
+        );
+        assert_eq!(
+            schema_summary(&json!({"type": "object", "properties": {"a": {}}})),
+            "object { a }"
+        );
+    }
+
+    #[test]
+    fn typed_params_summary_degrades_on_malformed_input() {
+        use serde_json::json;
+        assert_eq!(typed_params_summary(&json!(null)), None);
+        assert_eq!(typed_params_summary(&json!({"properties": []})), None);
+        assert_eq!(
+            typed_params_summary(&json!({"properties": {"pathParams": "bogus"}})),
+            None
+        );
+        // required present but mistyped: fields render without the star.
+        let s = typed_params_summary(&json!({
+            "properties": {
+                "pathParams": {
+                    "properties": {"id": {"type": "string"}},
+                    "required": "not-an-array"
+                }
+            }
+        }));
+        assert_eq!(s.as_deref(), Some("path { id: string }"));
+        // well-formed control case
+        let s = typed_params_summary(&json!({
+            "properties": {
+                "pathParams": {
+                    "properties": {"id": {"type": "string"}},
+                    "required": ["id"]
+                }
+            }
+        }));
+        assert_eq!(s.as_deref(), Some("path { id: string* }"));
     }
 }
