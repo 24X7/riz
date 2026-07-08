@@ -159,6 +159,10 @@ cargo-dist-version = "0.22.1"
 ci = "github"
 # The installers to generate for each app
 installers = ["shell"]
+# Emit keyless GitHub build-provenance attestations for every release artifact
+# (SLSA provenance via Actions OIDC — no signing keys to hold). Consumers verify
+# with: gh attestation verify <file> --repo 24X7/riz
+github-attestations = true
 # Target platforms to build apps for (Rust target-triple syntax)
 targets = [
   "aarch64-apple-darwin",

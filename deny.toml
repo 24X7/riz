@@ -1,0 +1,73 @@
+# cargo-deny — supply-chain gate for the riz dependency tree.
+# Run locally:  cargo deny check
+# CI: .github/workflows/ci.yml → "cargo-deny (supply chain)".
+#
+# Checks: RUSTSEC advisories, an SPDX license allowlist, banned/wildcard
+# crates, and registry/source provenance. Advisories and licenses are the
+# hard gate; duplicate versions start as a warning (a large native tree —
+# wasmtime, tokio, rustls — legitimately carries a few).
+
+[graph]
+all-features = true
+
+[advisories]
+# RUSTSEC advisory database. A known vuln or a yanked crate fails CI.
+yanked = "deny"
+# Unmaintained crates are only actionable when we control the dependency, so we
+# gate them for workspace + direct deps; transitive proc-macros we can't swap
+# (e.g. `paste`, RUSTSEC-2024-0436, pulled by wasmtime) don't block CI.
+unmaintained = "workspace"
+# Time-boxed, documented exceptions. Each is a vulnerability with NO fixed
+# release available; expiry forces a revisit. Prefer a dependency bump over
+# adding an entry here.
+ignore = [
+  # rsa Marvin timing sidechannel. rsa is a [dev-dependency] only (JWT test
+  # keygen) — it never ships in the riz binary, which verifies RSA signatures
+  # from JWKS (n/e) and never performs private-key decryption, the operation
+  # the attack targets. No fixed rsa release exists. Review by 2026-12-31.
+  { id = "RUSTSEC-2023-0071", reason = "dev-only; verify-not-decrypt; no fixed release; review by 2026-12-31" },
+  # rustls-webpki 0.101.7 name-constraint / CRL issues. Reachable ONLY via the
+  # AWS SDK's default TLS client (rustls 0.21) on the S3 deploy path, talking to
+  # AWS endpoints; riz's own inbound TLS is terminated upstream, not here. The
+  # latest aws-sdk-s3/aws-config (1.119 / 1.8) still pull rustls 0.21 by
+  # default, so no version bump removes it yet — revisit when the SDK moves to
+  # rustls 0.23. Review by 2026-12-31.
+  { id = "RUSTSEC-2026-0098", reason = "AWS-SDK-only TLS path; no SDK release off rustls 0.21 yet; review by 2026-12-31" },
+  { id = "RUSTSEC-2026-0099", reason = "AWS-SDK-only TLS path; no SDK release off rustls 0.21 yet; review by 2026-12-31" },
+  { id = "RUSTSEC-2026-0104", reason = "AWS-SDK-only TLS path; no SDK release off rustls 0.21 yet; review by 2026-12-31" },
+]
+
+[licenses]
+# SPDX allowlist. A dependency whose license isn't listed fails CI — the fix
+# is a deliberate addition here, not a silent pass.
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "Zlib",
+  "MPL-2.0",
+  "CC0-1.0",
+  # Community Data License Agreement — permissive; carried by the bundled
+  # CA-root data crate (webpki-roots and friends), not by any code.
+  "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+# Duplicate versions: warn for now (promote to "deny" once the tree is deduped).
+multiple-versions = "warn"
+# A wildcard ("*") version requirement on a dependency is a supply-chain smell.
+wildcards = "deny"
+# Explicitly allow the workspace's own path crates to carry wildcard-free specs.
+allow = []
+deny = []
+
+[sources]
+# Only crates.io and explicitly-listed git sources are permitted.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

@@ -106,3 +106,43 @@ jobs:
       # examples/smoke-all.sh + tests/e2e_smoke_all.rs).
       - name: cargo nextest run (e2e smoke — full example fleet, isolated)
         run: cargo nextest run --test e2e_smoke_all
+
+  # Supply-chain gate (deny.toml): RUSTSEC advisories, an SPDX license
+  # allowlist, banned/wildcard crates, and registry provenance. Advisories are
+  # live, so this can start failing on a newly-published CVE even with no code
+  # change — that's the point. Fix = bump the dep, or add a dated, documented
+  # exception to deny.toml [advisories].ignore.
+  cargo-deny:
+    name: cargo-deny (supply chain)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+
+  # CycloneDX Software Bill of Materials for the workspace. Published as a
+  # build artifact every run (riz*.cdx.json) so a consumer can diff the exact
+  # dependency set that produced a build.
+  sbom:
+    name: SBOM (CycloneDX)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Install cargo-cyclonedx
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-cyclonedx
+      - name: Generate CycloneDX SBOM
+        run: cargo cyclonedx --format json --all
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: "**/*.cdx.json"
+          if-no-files-found: error
