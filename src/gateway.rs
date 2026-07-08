@@ -4,11 +4,9 @@
 //! on Riz unchanged — same crate (`aws_lambda_events`), same field names,
 //! same serde JSON format on the wire to the child process.
 
-// WebSocket types are consumed only from integration tests (tests/aws_contract.rs)
-// today; library code starts using them when WS Task 7 (upgrade handler) lands.
-// Keep the re-exports stable so handler authors and tests can rely on
-// `riz::gateway::*` regardless of which feature has shipped.
-#[allow(unused_imports)]
+// The WebSocket upgrade handler (src/ws/) and the integration tests both
+// consume these; keep the re-exports stable so handler authors and tests can
+// rely on `riz::gateway::*`.
 pub use aws_lambda_events::apigw::{
     ApiGatewayProxyResponse,
     ApiGatewayV2httpRequest,

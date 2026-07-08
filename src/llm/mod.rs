@@ -50,8 +50,8 @@ pub enum ProviderError {
     BudgetExceeded,
 }
 
-/// A configured provider. One variant per supported backend; the real HTTP
-/// providers (OpenAI/Anthropic/Ollama) land in follow-up commits.
+/// A configured provider. One variant per supported backend — the mock plus
+/// real HTTP upstreams (OpenAI-compatible, Ollama, Anthropic).
 #[derive(Debug)]
 pub enum Provider {
     Mock(MockProvider),
@@ -62,7 +62,8 @@ pub enum Provider {
 }
 
 impl Provider {
-    // Used for log/introspection once multiple provider kinds ship.
+    // Introspection helper (provider kind as a static str) kept for logging;
+    // no call site yet, hence the allow.
     #[allow(dead_code)]
     pub fn kind(&self) -> &'static str {
         match self {
@@ -162,9 +163,9 @@ impl Gateway {
         }
     }
 
-    /// Build a gateway from the parsed `[gateway]` config. Real HTTP providers
-    /// (openai/anthropic/ollama) are added in follow-up commits; until then an
-    /// unimplemented kind is a clear build error rather than a silent no-op.
+    /// Build a gateway from the parsed `[gateway]` config. Each provider kind
+    /// (mock/openai/ollama/anthropic) maps to its backend here; an unknown kind
+    /// is a clear build error rather than a silent no-op.
     pub fn from_config(cfg: &crate::config::GatewayConfig) -> Result<Self, String> {
         let mut providers = HashMap::new();
         for (name, pc) in &cfg.providers {
@@ -562,8 +563,8 @@ pub enum ChatStream {
     /// `chat.completion.chunk` wire format; pipe the bytes to the client
     /// verbatim. Usage is metered by the internal tee when the stream ends.
     Upstream(Pin<Box<dyn Stream<Item = Result<bytes::Bytes, ProviderError>> + Send>>),
-    /// No native stream for this provider (mock; anthropic for now) — the
-    /// caller synthesizes chunks from the buffered response.
+    /// No native stream for this provider (mock) — the caller synthesizes
+    /// chunks from the buffered response.
     Buffered(ChatResponse),
 }
 

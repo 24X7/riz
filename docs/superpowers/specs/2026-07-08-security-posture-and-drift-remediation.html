@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>riz — Security posture &amp; drift remediation spec</title>
+<style>
+  :root{
+    --bg:#0A0A0B; --bg1:#111114; --bg2:#17171C; --bg3:#1d1d23;
+    --line:#2A2A31; --line2:#3A3A44;
+    --hi:#F3F3EE; --tx:#B7B7B2; --dim:#807F7C;
+    --acid:#CFFF04; --acid-dim:#A9CE12;
+    --ok:#7CE38B; --okbg:rgba(124,227,139,.12); --okln:rgba(124,227,139,.32);
+    --warn:#F5C451; --warnbg:rgba(245,196,81,.12); --warnln:rgba(245,196,81,.34);
+    --gap:#F07167; --gapbg:rgba(240,113,103,.12); --gapln:rgba(240,113,103,.34);
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --wrap:74ch;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);font-family:var(--sans);
+    font-size:16px;line-height:1.62;-webkit-font-smoothing:antialiased;
+    background-image:
+      radial-gradient(1100px 600px at 78% -12%, rgba(207,255,4,.05), transparent 60%),
+      linear-gradient(180deg,#0c0c0e,var(--bg) 320px);}
+  .page{max-width:960px;margin:0 auto;padding:0 24px 120px}
+  .col{max-width:var(--wrap)}
+
+  a{color:var(--hi);text-decoration:none;border-bottom:1px solid var(--line2)}
+  a:hover{border-color:var(--acid);color:#fff}
+  a:focus-visible{outline:2px solid var(--acid);outline-offset:3px;border-radius:2px}
+  code{font-family:var(--mono);font-size:.86em;color:#e7e7e2;
+    background:var(--bg2);border:1px solid var(--line);border-radius:5px;padding:.08em .38em}
+  em{color:var(--acid);font-style:normal}
+  strong{color:var(--hi);font-weight:600}
+  p{margin:.85rem 0}
+
+  /* ---- masthead ---- */
+  header.mast{padding:64px 0 30px;border-bottom:1px solid var(--line)}
+  .mark{font-family:var(--mono);font-weight:700;font-size:.94rem;color:var(--hi);
+    letter-spacing:.02em}
+  .mark .cur{color:var(--acid)}
+  .eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--acid-dim);margin:26px 0 14px;font-weight:600}
+  h1{font-size:clamp(2rem,5.2vw,3rem);line-height:1.06;letter-spacing:-.02em;
+    color:var(--hi);margin:0;text-wrap:balance;font-weight:650}
+  .dek{font-size:1.16rem;line-height:1.5;color:var(--tx);max-width:60ch;margin:20px 0 0}
+  .dek b{color:var(--hi)}
+  .meta{display:flex;flex-wrap:wrap;gap:10px 12px;margin-top:30px;font-family:var(--mono);
+    font-size:.74rem}
+  .meta .m{border:1px solid var(--line);background:var(--bg1);border-radius:999px;
+    padding:6px 13px;color:var(--tx)}
+  .meta .m b{color:var(--hi);font-weight:600}
+  .meta .m.live b{color:var(--acid)}
+
+  /* ---- callout ---- */
+  .note{border:1px solid var(--line2);background:linear-gradient(180deg,var(--bg2),var(--bg1));
+    border-radius:12px;padding:18px 20px;margin:34px 0;position:relative}
+  .note .tag{font-family:var(--mono);font-size:.68rem;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--acid);display:block;margin-bottom:7px}
+  .note p{margin:0;color:var(--tx)}
+
+  /* ---- section rhythm ---- */
+  section{padding-top:56px}
+  .sec-eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.15em;text-transform:uppercase;
+    color:var(--dim);margin-bottom:12px}
+  h2{font-size:1.72rem;line-height:1.12;letter-spacing:-.015em;color:var(--hi);margin:0 0 6px;
+    text-wrap:balance;font-weight:640}
+  h3{font-size:1.12rem;color:var(--hi);margin:34px 0 4px;font-weight:620;letter-spacing:-.01em}
+  h3 .pkg{font-family:var(--mono)}
+  .lead{font-size:1.04rem;color:var(--tx);max-width:64ch}
+
+  .pkgbadge{display:inline-flex;align-items:center;justify-content:center;
+    width:26px;height:26px;border-radius:7px;border:1px solid var(--acid);
+    color:var(--acid);font-family:var(--mono);font-weight:700;font-size:.86rem;
+    margin-right:11px;vertical-align:middle;background:rgba(207,255,4,.07)}
+
+  /* ---- TOC ---- */
+  .toc{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-top:26px}
+  .toc a{border:1px solid var(--line);background:var(--bg1);border-radius:11px;padding:15px 16px;
+    display:block;color:var(--tx)}
+  .toc a:hover{border-color:var(--line2);background:var(--bg2)}
+  .toc .k{font-family:var(--mono);font-size:.7rem;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--acid-dim);display:block;margin-bottom:5px}
+  .toc .t{color:var(--hi);font-weight:600;font-size:.98rem}
+  .toc .d{font-size:.82rem;color:var(--dim);margin-top:3px}
+
+  /* ---- figure frame ---- */
+  figure{margin:30px 0 12px;border:1px solid var(--line);border-radius:14px;background:var(--bg1);
+    overflow:hidden}
+  figcaption{font-family:var(--mono);font-size:.72rem;letter-spacing:.06em;color:var(--dim);
+    padding:12px 18px;border-bottom:1px solid var(--line);background:var(--bg2);
+    display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  figcaption b{color:var(--hi);letter-spacing:.02em;text-transform:none}
+  .fig-body{padding:24px 18px}
+  .scroll{overflow-x:auto}
+
+  /* ---- sequencing flow ---- */
+  .seq{display:flex;align-items:stretch;gap:0;min-width:640px}
+  .seq .node{flex:1;border:1px solid var(--line2);border-radius:12px;background:var(--bg2);
+    padding:16px 16px 18px;position:relative}
+  .seq .arrow{flex:0 0 42px;display:flex;align-items:center;justify-content:center;color:var(--dim)}
+  .seq .arrow svg{width:24px;height:24px}
+  .seq .n-k{font-family:var(--mono);font-size:.72rem;color:var(--acid);letter-spacing:.08em}
+  .seq .n-t{color:var(--hi);font-weight:640;margin:8px 0 4px;font-size:1.02rem}
+  .seq .n-d{font-size:.83rem;color:var(--dim);line-height:1.45}
+  .seq .dep{margin-top:14px;font-family:var(--mono);font-size:.7rem;color:var(--warn);
+    border-top:1px dashed var(--line2);padding-top:10px}
+  .seq .indep{margin-top:14px;font-family:var(--mono);font-size:.7rem;color:var(--ok);
+    border-top:1px dashed var(--line2);padding-top:10px}
+
+  /* ---- tables ---- */
+  table{border-collapse:collapse;width:100%;font-size:.9rem}
+  .matrix{min-width:720px}
+  th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+  thead th{font-family:var(--mono);font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--dim);font-weight:600;background:var(--bg2);border-bottom:1px solid var(--line2)}
+  tbody tr:last-child td{border-bottom:none}
+  .layer{color:var(--hi);font-weight:600}
+  .layer small{display:block;color:var(--dim);font-weight:400;font-family:var(--mono);font-size:.72rem;
+    margin-top:2px;letter-spacing:.02em}
+  .bnote{color:var(--tx);font-size:.86rem}
+  .cell{white-space:nowrap;font-family:var(--mono);font-size:.8rem;font-weight:600}
+  .cell.ok{color:var(--ok)} .cell.warn{color:var(--warn)} .cell.gap{color:var(--gap)}
+  .cell .sub{display:block;font-weight:400;color:var(--dim);font-size:.72rem;white-space:normal;
+    margin-top:2px}
+  td.gcol{position:relative}
+  td.ok-bg{background:var(--okbg)} td.warn-bg{background:var(--warnbg)} td.gap-bg{background:var(--gapbg)}
+
+  .legend{display:flex;flex-wrap:wrap;gap:16px;padding:14px 18px;border-top:1px solid var(--line);
+    background:var(--bg2);font-family:var(--mono);font-size:.74rem;color:var(--tx)}
+  .legend .lg{display:inline-flex;align-items:center;gap:7px}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+  .dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.gap{background:var(--gap)}
+
+  /* ---- vertical wall flow ---- */
+  .walls{max-width:560px;margin:0 auto}
+  .flowrow{display:flex;justify-content:center;padding:5px 0}
+  .flowrow svg{width:20px;height:22px;color:var(--dim)}
+  .pill{border:1px solid var(--line2);border-radius:10px;background:var(--bg2);padding:12px 16px;
+    text-align:center}
+  .pill.io{border-style:dashed;color:var(--dim);font-family:var(--mono);font-size:.82rem;
+    background:transparent;max-width:220px;margin:0 auto}
+  .pill.wall{border-color:var(--acid);background:rgba(207,255,4,.06)}
+  .pill .wk{font-family:var(--mono);font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--acid);display:block;margin-bottom:3px}
+  .pill .wt{color:var(--hi);font-weight:640}
+  .pill .ws{font-family:var(--mono);font-size:.76rem;color:var(--dim);margin-top:4px}
+  .pill.run{border-color:var(--line2)}
+  .pill.run .wt{color:var(--hi)}
+  .guardwrap{border:1px dashed var(--line2);border-radius:14px;padding:14px;position:relative;
+    margin-top:6px}
+  .guardwrap .glabel{position:absolute;top:-10px;left:16px;background:var(--bg1);padding:0 9px;
+    font-family:var(--mono);font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ok)}
+
+  /* ---- trust boundary nested boxes ---- */
+  .trust{max-width:640px;margin:0 auto;font-family:var(--mono)}
+  .box{border:1px solid var(--line2);border-radius:12px;padding:14px;margin:0}
+  .box>.blabel{font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);
+    display:block;margin-bottom:11px}
+  .box.host{border-color:var(--line2);background:var(--bg1)}
+  .box.rizproc{border-color:#4a5a2a;background:rgba(207,255,4,.03);margin-top:12px}
+  .box.rizproc>.blabel{color:var(--acid-dim)}
+  .box.handler{border-color:var(--line2);background:var(--bg2);margin-top:12px}
+  .box.wasi{border-color:var(--ok);background:var(--okbg);margin-top:12px}
+  .box.wasi>.blabel{color:var(--ok)}
+  .assets{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+  .chip{font-family:var(--mono);font-size:.74rem;border:1px solid var(--line2);border-radius:7px;
+    padding:5px 10px;color:var(--tx);background:var(--bg1)}
+  .chip.auth{border-color:var(--warnln);color:var(--warn)}
+  .chip.cred{border-color:var(--gapln);color:var(--gap)}
+  .brokerline{font-size:.76rem;color:var(--tx);margin-top:11px;line-height:1.5}
+  .brokerline b{color:var(--ok)}
+
+  /* ---- supply chain pipeline ---- */
+  .pipe{display:flex;flex-direction:column;gap:22px;min-width:640px}
+  .track .tname{font-family:var(--mono);font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--dim);margin-bottom:10px}
+  .steps{display:flex;align-items:center;gap:0;flex-wrap:nowrap}
+  .step{border:1px solid var(--line2);border-radius:9px;background:var(--bg2);padding:9px 13px;
+    font-family:var(--mono);font-size:.78rem;color:var(--tx);white-space:nowrap}
+  .step.new{border-color:var(--acid);color:var(--acid);background:rgba(207,255,4,.07);font-weight:600}
+  .step.gate{border-style:solid}
+  .sarrow{flex:0 0 26px;text-align:center;color:var(--dim)}
+  .newkey{margin-top:6px;font-family:var(--mono);font-size:.72rem;color:var(--acid-dim)}
+
+  /* ---- generic content lists ---- */
+  ul.facts{list-style:none;padding:0;margin:14px 0;max-width:66ch}
+  ul.facts li{position:relative;padding-left:22px;margin:9px 0;color:var(--tx)}
+  ul.facts li::before{content:"→";position:absolute;left:0;color:var(--acid-dim);font-family:var(--mono)}
+  ul.facts li b{color:var(--hi)}
+
+  .proof{font-family:var(--mono);font-size:.78rem;color:var(--dim);margin-top:8px}
+  .proof code{color:var(--ok);background:transparent;border:none;padding:0}
+
+  .kv{border:1px solid var(--line);border-radius:12px;overflow:hidden;margin:22px 0}
+  .kv .row{display:grid;grid-template-columns:130px 1fr;border-bottom:1px solid var(--line)}
+  .kv .row:last-child{border-bottom:none}
+  .kv .k{padding:11px 16px;font-family:var(--mono);font-size:.76rem;color:var(--dim);
+    letter-spacing:.06em;text-transform:uppercase;background:var(--bg2)}
+  .kv .v{padding:11px 16px;color:var(--tx)}
+  .kv .v code{font-size:.82em}
+
+  /* excluded */
+  .excl{border-left:2px solid var(--line2);padding-left:18px;margin:18px 0}
+  .excl .x{font-family:var(--mono);font-size:.78rem;color:var(--gap);margin-bottom:2px}
+  .excl .x.byd{color:var(--warn)}
+  .excl p{margin:2px 0 16px;color:var(--tx);font-size:.94rem;max-width:66ch}
+
+  hr.rule{border:none;border-top:1px solid var(--line);margin:56px 0 0}
+  footer{margin-top:60px;padding-top:26px;border-top:1px solid var(--line);
+    font-family:var(--mono);font-size:.76rem;color:var(--dim);display:flex;justify-content:space-between;
+    flex-wrap:wrap;gap:10px}
+
+  @media (max-width:640px){
+    .kv .row{grid-template-columns:1fr}
+    .kv .k{border-bottom:1px solid var(--line)}
+    header.mast{padding-top:44px}
+  }
+  @media (prefers-reduced-motion:no-preference){
+    section,figure{animation:rise .5s ease both}
+    @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  }
+</style>
+
+<div class="page">
+
+<header class="mast">
+  <span class="mark">riz<span class="cur">▮</span></span>
+  <div class="eyebrow">Internal spec · 2026-07-08 · informs web/security.html</div>
+  <h1>Security posture, supply&#8209;chain &amp; drift remediation</h1>
+  <p class="dek">Three shippable packages distilled from an external review — <b>keeping only
+    the claims that verified against the code and the live site</b>. Package C, the security
+    page, is the design target this document feeds.</p>
+  <div class="meta">
+    <span class="m live">Status: <b>approved for spec review</b></span>
+    <span class="m">Scope: <b>A · B · C</b></span>
+    <span class="m">Sequencing: <b>A → B → C</b></span>
+    <span class="m">Runtimes: <b>6</b> (bun·node·python·rust·go·wasm)</span>
+  </div>
+
+  <div class="toc">
+    <a href="#a"><span class="k">Package A</span><span class="t">Drift fixes</span>
+      <span class="d">12 verified edits — counts, comments, CLI text</span></a>
+    <a href="#b"><span class="k">Package B</span><span class="t">Supply-chain guardrails</span>
+      <span class="d">cargo-deny · SBOM · build provenance</span></a>
+    <a href="#c"><span class="k">Package C</span><span class="t">Security-posture page</span>
+      <span class="d">isolation matrix · walls · threat model</span></a>
+    <a href="#excluded"><span class="k">Appendix</span><span class="t">Excluded &amp; verified</span>
+      <span class="d">refuted / by-design items, with evidence</span></a>
+  </div>
+</header>
+
+<div class="note">
+  <span class="tag">How to read this</span>
+  <p>The origin was a codex review. Every concrete claim was re-checked against source and a
+  live fetch of <code>riz.dev</code>; opinion and refuted items are quarantined in the appendix.
+  The two centerpiece diagrams — the <a href="#matrix">isolation matrix</a> and the
+  <a href="#walls">three-walls flow</a> — are drawn to translate directly into sections of
+  <code>web/security.html</code>.</p>
+</div>
+
+<figure id="seq">
+  <figcaption><b>Delivery sequence</b><span>A ships independently · C consumes B&#39;s outputs</span></figcaption>
+  <div class="fig-body scroll">
+    <div class="seq">
+      <div class="node">
+        <span class="n-k">PACKAGE A</span>
+        <div class="n-t">Drift fixes</div>
+        <div class="n-d">Stale counts, comments &amp; CLI copy that contradict the code.</div>
+        <div class="indep">no dependencies · ship first</div>
+      </div>
+      <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 12h15M13 6l6 6-6 6"/></svg></div>
+      <div class="node">
+        <span class="n-k">PACKAGE B</span>
+        <div class="n-t">Supply-chain</div>
+        <div class="n-d">cargo-deny gate, CycloneDX SBOM, build-provenance attestation.</div>
+        <div class="indep">produces the facts C cites</div>
+      </div>
+      <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 12h15M13 6l6 6-6 6"/></svg></div>
+      <div class="node">
+        <span class="n-k">PACKAGE C</span>
+        <div class="n-t">Security page</div>
+        <div class="n-d">Boundary statement + threat model; every claim maps to a test.</div>
+        <div class="dep">depends on B — cites SBOM/provenance as shipped</div>
+      </div>
+    </div>
+  </div>
+</figure>
+
+<!-- ================= PACKAGE A ================= -->
+<section id="a">
+  <div class="sec-eyebrow">Package A</div>
+  <h2><span class="pkgbadge">A</span>Documentation &amp; comment drift</h2>
+  <p class="lead">Twelve edits, each verified against source during the assessment. They protect
+  the project&#39;s &ldquo;every claim maps to a passing test&rdquo; posture — the brand erodes fastest
+  when the code says one thing and the metadata says another.</p>
+
+  <figure>
+    <figcaption><b>The 12 edits</b><span>src/ edits obey the SAFETY.md lint tier</span></figcaption>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>#</th><th>File</th><th>Current</th><th>Change</th></tr></thead>
+        <tbody>
+          <tr><td class="cell">A1</td><td><code>Cargo.toml:50</code></td><td class="bnote">&ldquo;five runtimes (…, WASM)&rdquo;</td><td class="bnote">six; add Go</td></tr>
+          <tr><td class="cell">A2</td><td><code>CLAUDE.md:4</code></td><td class="bnote">five runtimes</td><td class="bnote">six; add Go</td></tr>
+          <tr><td class="cell">A3</td><td><code>registries/README.md:31</code></td><td class="bnote">&ldquo;five runtimes in one binary&rdquo;</td><td class="bnote">six</td></tr>
+          <tr><td class="cell">A4</td><td><code>src/config.rs:774</code></td><td class="bnote">doc comment cites <code>crates/riz-go-runtime</code> (no such dir)</td><td class="bnote">point at real <code>examples/lambdas/echo-go</code></td></tr>
+          <tr><td class="cell">A5</td><td><code>src/llm/mod.rs:53-54</code></td><td class="bnote">&ldquo;providers … land in follow-up commits&rdquo;</td><td class="bnote">they landed; describe present state</td></tr>
+          <tr><td class="cell">A6</td><td><code>src/llm/mod.rs:165-167</code></td><td class="bnote">&ldquo;added in follow-up commits&rdquo;</td><td class="bnote">same</td></tr>
+          <tr><td class="cell">A7</td><td><code>src/llm/types.rs:16</code></td><td class="bnote"><code>(follow-up commits)</code></td><td class="bnote">drop the parenthetical</td></tr>
+          <tr><td class="cell">A8</td><td><code>src/config.rs:167</code></td><td class="bnote"><code>(follow-up commits)</code></td><td class="bnote">drop the parenthetical</td></tr>
+          <tr><td class="cell">A9</td><td><code>src/llm/mod.rs:565</code></td><td class="bnote">&ldquo;no native stream (… anthropic for now)&rdquo;</td><td class="bnote">Anthropic now streams, translated</td></tr>
+          <tr><td class="cell">A10</td><td><code>src/llm/mod.rs:64-65</code></td><td class="bnote">&ldquo;once multiple kinds ship&rdquo; + <code>#[allow(dead_code)]</code></td><td class="bnote">update; drop allow <em>iff</em> clippy agrees</td></tr>
+          <tr><td class="cell">A11</td><td><code>src/gateway.rs:7-8,:11</code></td><td class="bnote">&ldquo;until WS Task 7 lands&rdquo; + <code>#[allow(unused_imports)]</code></td><td class="bnote">it landed; drop allow <em>iff</em> clippy agrees</td></tr>
+          <tr><td class="cell">A12</td><td><code>src/main.rs:351</code></td><td class="bnote">&ldquo;use <code>--git</code> to disable&rdquo; (backwards)</td><td class="bnote">drop misleading parenthetical</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="legend"><span class="lg">Non-goal: A12 is a copy fix — <b style="color:var(--hi)">no <code>--no-git</code> flag is added</b>; the flag stays opt-in <code>--git</code>.</span></div>
+  </figure>
+
+  <div class="kv">
+    <div class="row"><div class="k">Verify</div><div class="v"><code>cargo fmt --all -- --check</code> · <code>cargo clippy --workspace --all-targets -- -D warnings</code> (catches A10/A11) · <code>cargo nextest run</code></div></div>
+    <div class="row"><div class="k">Sweep</div><div class="v"><code>rg -n "five runtimes|follow-up commits|crates/riz-go-runtime"</code> — only dated <code>docs/assessments/**</code> survive (historical, out of scope)</div></div>
+  </div>
+</section>
+
+<!-- ================= PACKAGE B ================= -->
+<section id="b">
+  <div class="sec-eyebrow">Package B</div>
+  <h2><span class="pkgbadge">B</span>Supply-chain guardrails</h2>
+  <p class="lead">Today: no <code>cargo-deny</code>, no <code>cargo audit</code>, no SBOM, no signing.
+  The security page can only claim what CI actually enforces, so the machinery lands <em>before</em> the page.</p>
+
+  <figure id="pipe">
+    <figcaption><b>What gets added</b><span>new nodes in acid · everything else already exists</span></figcaption>
+    <div class="fig-body scroll">
+      <div class="pipe">
+        <div class="track">
+          <div class="tname">ci.yml — on every push</div>
+          <div class="steps">
+            <span class="step">fmt</span><span class="sarrow">›</span>
+            <span class="step">clippy -D</span><span class="sarrow">›</span>
+            <span class="step gate">safety gate</span><span class="sarrow">›</span>
+            <span class="step new">cargo-deny</span><span class="sarrow">›</span>
+            <span class="step">build</span><span class="sarrow">›</span>
+            <span class="step">nextest</span>
+          </div>
+          <div class="newkey">+ cargo-deny — RUSTSEC advisories · license allowlist · banned/yanked/dup crates</div>
+        </div>
+        <div class="track">
+          <div class="tname">release.yml — on tag</div>
+          <div class="steps">
+            <span class="step">cross-build binaries</span><span class="sarrow">›</span>
+            <span class="step new">CycloneDX SBOM</span><span class="sarrow">›</span>
+            <span class="step new">provenance attest</span><span class="sarrow">›</span>
+            <span class="step">release assets</span>
+          </div>
+          <div class="newkey">+ SBOM <code>riz.cdx.json</code> asset · + keyless attestation → verify with <code>gh attestation verify &lt;file&gt; --repo 24X7/riz</code></div>
+        </div>
+      </div>
+    </div>
+  </figure>
+
+  <ul class="facts">
+    <li><b>B1 — deny.toml + CI gate.</b> Four checks (advisories · licenses · bans · sources). Gated once the tree is clean.</li>
+    <li><b>Discovery risk.</b> cargo-deny may surface a real advisory. Handling, in order: (1) update the dep; (2) if unfixable, a <b>dated, documented</b> <code>deny.toml</code> ignore with the RUSTSEC id. CI stays green; the state is recorded.</li>
+    <li><b>B2 — CycloneDX SBOM</b> generated on release, attached as <code>riz.cdx.json</code>. No gating.</li>
+    <li><b>B3 — build-provenance</b> via <code>actions/attest-build-provenance</code> (keyless; <code>id-token: write</code> + <code>attestations: write</code>). No secrets to hold.</li>
+  </ul>
+
+  <div class="note">
+    <span class="tag">Deferred to roadmap — documented on the C page, not built here</span>
+    <p>Detached <b style="color:var(--hi)">cosign</b> signatures · the <code>curl … | sh</code> installer
+    <b style="color:var(--hi)">verifying before it executes</b> (touches the outward-facing hosted install path —
+    larger, riskier, its own effort) · external security audit.</p>
+  </div>
+</section>
+
+<!-- ================= PACKAGE C ================= -->
+<section id="c">
+  <div class="sec-eyebrow">Package C · the design target</div>
+  <h2><span class="pkgbadge">C</span>The security-posture page</h2>
+  <p class="lead">A new <code>web/security.html</code> in the established site style — the perimeter
+  counterpart to <code>sandbox.html</code>. Where sandbox sells the capability, this page states
+  <em>where the confinement stops</em>. Every protection statement links a real test or code path.</p>
+
+  <h3><span class="pkg">C · §2</span> &nbsp;The isolation matrix</h3>
+  <p>The centerpiece. The one truth the marketing page glosses: <strong>strong deny-by-default
+  isolation is a WASM property, not a whole-runtime one.</strong> Native runtimes get resource
+  ceilings and (on Linux) a filesystem allowlist — not a syscall or network jail.</p>
+
+  <figure id="matrix">
+    <figcaption><b>Defense layers × runtime class</b><span>from src/process/safety.rs, verified</span></figcaption>
+    <div class="scroll">
+      <table class="matrix">
+        <thead>
+          <tr><th style="min-width:200px">Layer</th><th>Native<br><small style="color:var(--dim)">bun·node·python·rust·go</small></th><th>WASM<br><small style="color:var(--dim)">runtime="wasm"</small></th><th style="min-width:230px">Boundary / limit</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="layer">OS process + kill-on-drop<small>process group · dies with host</small></td>
+            <td class="gcol ok-bg"><span class="cell ok">✓ yes</span></td>
+            <td class="gcol ok-bg"><span class="cell ok">✓ yes</span></td>
+            <td class="bnote">Child SIGKILLed with the parent.</td>
+          </tr>
+          <tr>
+            <td class="layer">Always-on rlimits<small>CORE=0 · NOFILE · FSIZE · NPROC</small></td>
+            <td class="gcol ok-bg"><span class="cell ok">✓ yes</span></td>
+            <td class="gcol ok-bg"><span class="cell ok">✓ yes</span></td>
+            <td class="bnote">Resource / DoS ceilings — <b style="color:var(--warn)">not a confinement boundary</b>.</td>
+          </tr>
+          <tr>
+            <td class="layer">prctl pair<small>PDEATHSIG · NO_NEW_PRIVS</small></td>
+            <td class="gcol warn-bg"><span class="cell warn">~ Linux<span class="sub">no-op elsewhere</span></span></td>
+            <td class="gcol warn-bg"><span class="cell warn">~ Linux<span class="sub">no-op elsewhere</span></span></td>
+            <td class="bnote">Linux-only; blocks privilege escalation via setuid/exec.</td>
+          </tr>
+          <tr>
+            <td class="layer">Opt-in rlimits<small>RLIMIT_AS · RLIMIT_CPU</small></td>
+            <td class="gcol warn-bg"><span class="cell warn">~ opt-in<span class="sub">per-function, off by default</span></span></td>
+            <td class="gcol warn-bg"><span class="cell warn">~ opt-in</span></td>
+            <td class="bnote">Memory / CPU caps when configured.</td>
+          </tr>
+          <tr>
+            <td class="layer">Landlock FS allowlist<small>filesystem ACL</small></td>
+            <td class="gcol warn-bg"><span class="cell warn">~ Linux ≥5.13<span class="sub">macOS/BSD: none · &lt;5.13: best-effort</span></span></td>
+            <td class="gcol warn-bg"><span class="cell warn">~ Linux ≥5.13</span></td>
+            <td class="bnote">The <b style="color:var(--gap)">key honest caveat</b>: no filesystem confinement off Linux.</td>
+          </tr>
+          <tr>
+            <td class="layer">WASI deny-by-default fs + net<small>the strong wall</small></td>
+            <td class="gcol gap-bg"><span class="cell gap">✗ no<span class="sub">native code is not WASI-confined</span></span></td>
+            <td class="gcol ok-bg"><span class="cell ok">✓ yes</span></td>
+            <td class="bnote">No fs, no sockets unless granted. <b style="color:var(--ok)">WASM only.</b></td>
+          </tr>
+          <tr>
+            <td class="layer">Capability broker<small>host-held credentials</small></td>
+            <td class="gcol gap-bg"><span class="cell gap">✗ no</span></td>
+            <td class="gcol ok-bg"><span class="cell ok">✓ yes</span></td>
+            <td class="bnote">Guest never opens a socket; creds never cross the WASI boundary.</td>
+          </tr>
+          <tr>
+            <td class="layer">Guards in / out<small>fail-closed policy .wasm</small></td>
+            <td class="gcol ok-bg"><span class="cell ok">✓ yes</span></td>
+            <td class="gcol ok-bg"><span class="cell ok">✓ yes</span></td>
+            <td class="bnote">One policy module wraps <b style="color:var(--hi)">every</b> runtime identically.</td>
+          </tr>
+          <tr>
+            <td class="layer">Syscall filter<small>seccomp-bpf</small></td>
+            <td class="gcol gap-bg"><span class="cell gap">✗ no<span class="sub">syscalls unrestricted</span></span></td>
+            <td class="gcol ok-bg"><span class="cell ok">✓ via WASI<span class="sub">no raw syscalls</span></span></td>
+            <td class="bnote">Native code runs at the OS user&#39;s full syscall surface.</td>
+          </tr>
+          <tr>
+            <td class="layer">Network egress<small>outbound control</small></td>
+            <td class="gcol gap-bg"><span class="cell gap">✗ no<span class="sub">restrict externally</span></span></td>
+            <td class="gcol ok-bg"><span class="cell ok">✓ deny-default</span></td>
+            <td class="bnote">Native egress is unrestricted; use a network policy / firewall.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="legend">
+      <span class="lg"><span class="dot ok"></span> confines</span>
+      <span class="lg"><span class="dot warn"></span> partial / platform-gated</span>
+      <span class="lg"><span class="dot gap"></span> not covered — compose externally</span>
+    </div>
+  </figure>
+
+  <h3><span class="pkg">C · §3</span> &nbsp;Three walls — with their limits</h3>
+  <p>Cross-links <code>sandbox.html</code>, then states each wall&#39;s edge plainly instead of leaving
+  it implied.</p>
+
+  <figure id="walls">
+    <figcaption><b>WASM request path</b><span>guards wrap every runtime; walls 1–2 are the WASM case</span></figcaption>
+    <div class="fig-body">
+      <div class="walls">
+        <div class="guardwrap">
+          <span class="glabel">Wall 3 · guards · fail-closed</span>
+          <div class="pill io">request</div>
+          <div class="flowrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 4v15M6 13l6 6 6-6"/></svg></div>
+          <div class="pill wall"><span class="wk">Wall 1 · WASI capability check</span><span class="wt">deny by default</span><span class="ws">fs: no grant → denied · net: no grant → denied</span></div>
+          <div class="flowrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 4v15M6 13l6 6 6-6"/></svg></div>
+          <div class="pill run"><span class="wt">your .wasm runs</span><span class="ws">sub-ms spawn</span></div>
+          <div class="flowrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 4v15M6 13l6 6 6-6"/></svg></div>
+          <div class="pill wall"><span class="wk">Wall 2 · host safety profile</span><span class="wt">always-on</span><span class="ws">rlimits · PDEATHSIG · no-new-privs</span></div>
+          <div class="flowrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 4v15M6 13l6 6 6-6"/></svg></div>
+          <div class="pill io">response</div>
+        </div>
+      </div>
+      <ul class="facts" style="margin-top:22px">
+        <li><b>Landlock</b> needs kernel ≥5.13 and degrades best-effort below it.</li>
+        <li><b>rlimits</b> are resource ceilings, not a confinement boundary.</li>
+        <li><b>No built-in container / user-namespace</b> — compose your own (container, VM, dedicated user) for defense in depth.</li>
+      </ul>
+    </div>
+  </figure>
+
+  <h3><span class="pkg">C · §4</span> &nbsp;Threat model &amp; trust boundaries</h3>
+  <p>Assets, the boundaries that protect them, and what sits in scope. Reuses <code>SECURITY.md</code>&#39;s
+  scope section; notes the fail-closed <code>/deploy</code> gate (503 with neither key nor CIDR).</p>
+
+  <figure id="trust">
+    <figcaption><b>Trust boundaries</b><span>credentials stay host-side of the WASI line</span></figcaption>
+    <div class="fig-body scroll">
+      <div class="trust" style="min-width:300px">
+        <div class="box host">
+          <span class="blabel">Host / OS user &nbsp;·&nbsp; assets:</span>
+          <div class="assets">
+            <span class="chip">host filesystem</span>
+            <span class="chip">the network</span>
+            <span class="chip cred">DB credentials</span>
+            <span class="chip">co-tenant data</span>
+          </div>
+          <div class="box rizproc">
+            <span class="blabel">riz process &nbsp;·&nbsp; auth surface</span>
+            <div class="assets">
+              <span class="chip auth">/deploy — key or CIDR, else 503</span>
+              <span class="chip auth">/_riz/* — bearer-gated</span>
+            </div>
+            <div class="box handler">
+              <span class="blabel">handler process — rlimits · prctl · (Linux) Landlock</span>
+              <div class="box wasi">
+                <span class="blabel">WASI sandbox — no fs · no net</span>
+                <div class="assets"><span class="chip">guest .wasm</span></div>
+                <div class="brokerline">names a grant → <b>broker executes host-side</b> → rows back.
+                  <br>Credentials <b>never</b> cross this line.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </figure>
+
+  <h3><span class="pkg">C · §5–6</span> &nbsp;Supply chain &amp; reporting</h3>
+  <ul class="facts">
+    <li><b>Supply chain</b> — cites Package B as shipped: cargo-deny gate, SBOM per release,
+      build-provenance + the <code>gh attestation verify</code> invocation. Roadmap subsection names
+      cosign, verify-on-install, external audit.</li>
+    <li><b>Reporting</b> — links <code>SECURITY.md</code> (private advisory / <code>chris@riz.dev</code>, 3-day ack).</li>
+    <li><b>Wiring</b> — nav + footer on every page, cross-link from <code>sandbox.html</code>,
+      add to <code>llms.txt</code> / <code>.well-known/riz.json</code>, register concrete claims in
+      <code>tests/claims/registry.toml</code>.</li>
+  </ul>
+  <p class="proof">Every protection claim maps to a referent — e.g.
+    <code>child_inherits_always_on_caps</code> ·
+    <code>child_with_allowlist_can_read_allowed_path_only</code> ·
+    <code>src/deploy.rs</code> fail-closed gate. No claim without one. No banned framing in copy.</p>
+</section>
+
+<!-- ================= APPENDIX ================= -->
+<section id="excluded">
+  <div class="sec-eyebrow">Appendix</div>
+  <h2>Excluded — verified as not-actionable</h2>
+  <p class="lead">Recorded so the reasoning is preserved, not silently dropped.</p>
+
+  <div class="excl">
+    <div class="x">✗ refuted — homepage crawlability</div>
+    <p><code>web/index.html</code> is ~24&nbsp;KB of static HTML (JSON-LD, <code>llms.txt</code>,
+    <code>.well-known/riz.json</code>); a live fetch of <code>https://riz.dev/</code> returned the full
+    hero, pitch, runtime list, and install command. The reviewer&#39;s &ldquo;Loading…&rdquo; was a
+    transient Turbo-nav frame — not reproducible in source or on the deployed site.</p>
+
+    <div class="x byd">~ by design — in-memory LLM budget ledger</div>
+    <p><code>Mutex&lt;HashMap&gt;</code> is correct for a single-binary local gateway; fleet-wide
+    persistence is a documented roadmap item, not a defect.</p>
+
+    <div class="x byd">~ by design — per-instance WebSocket state</div>
+    <p>Sticky sessions required, cross-replica broadcast on the roadmap — already stated in
+    <code>docs/CAPABILITY-CARD.md:40</code>.</p>
+
+    <div class="x byd">✓ positive — /deploy fails closed</div>
+    <p>Returns 503 with neither key nor CIDR configured. Referenced by Package C, not changed.</p>
+
+    <div class="x byd">— out of scope by selection</div>
+    <p>Production deployment guide, benchmark-methodology page, and homepage-message rewrite are
+    legitimate asks deferred by the scoping decision.</p>
+  </div>
+</section>
+
+<hr class="rule">
+<footer>
+  <span>riz · security-posture &amp; drift remediation spec</span>
+  <span>source: docs/superpowers/specs/2026-07-08-…-design.md</span>
+</footer>
+
+</div>
+
+</head>
+<body></body>
+</html>
