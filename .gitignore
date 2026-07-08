@@ -9,3 +9,6 @@ __pycache__/
 *.pyc
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+
+# CycloneDX SBOMs are generated in CI, not committed
+*.cdx.json
