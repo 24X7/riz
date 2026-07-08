@@ -348,7 +348,7 @@ fn try_git_init(target: &std::path::Path) {
         .args(["commit", "--quiet", "-m", "riz init"])
         .current_dir(target)
         .status();
-    println!("  git init + initial commit (use --git to disable)");
+    println!("  git init + initial commit");
 }
 
 /// Print a "what to do next" block. Specs are now arbitrary (any repo), so we

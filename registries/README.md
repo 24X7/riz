@@ -28,8 +28,8 @@ you run that turns your own HTTP/Lambda handlers into MCP tools.
 | License | Apache-2.0 |
 | Reverse-DNS name | `io.github.24X7/riz` |
 
-Shipped capabilities only (no roadmap claims): five runtimes in one binary
-(Bun, Node.js, Python, Rust, capability-sandboxed WASM/WASI deny-by-default),
+Shipped capabilities only (no roadmap claims): six runtimes in one binary
+(Bun, Node.js, Python, Rust, Go, capability-sandboxed WASM/WASI deny-by-default),
 auto-exposure of every `riz.toml` function as an MCP tool, built-in
 OpenAI-compatible LLM gateway, JWT/JWKS auth, and no per-request cold start
 (warm pre-spawned pool per function).

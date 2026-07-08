@@ -164,12 +164,10 @@ pub struct ProviderConfig {
     /// Backend kind: "mock" | "openai" | "anthropic" | "ollama".
     pub kind: String,
     /// Env var holding the API key (read at startup; never stored in config).
-    /// Consumed by the real HTTP providers (follow-up commits).
-    #[allow(dead_code)]
+    /// Consumed by the HTTP providers in `Gateway::from_config`.
     #[serde(default)]
     pub api_key_env: Option<String>,
     /// Override the provider's base URL (e.g. a local Ollama or a proxy).
-    #[allow(dead_code)]
     #[serde(default)]
     pub base_url: Option<String>,
 }
@@ -771,7 +769,7 @@ pub enum RuntimeKind {
     Python,
     Node,
     /// A pre-compiled Go binary speaking the line-JSON stdin/stdout protocol
-    /// (see `crates/riz-go-runtime`). Like Rust, the handler IS the executable
+    /// (see `examples/lambdas/echo-go`). Like Rust, the handler IS the executable
     /// — there is no module/export split. Runs via the same `static_binary`
     /// spawner as Rust.
     Go,

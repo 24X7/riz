@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 riz is a self-hosted AWS Lambda + API Gateway v2 runtime in one Rust binary:
-five runtimes (Bun, Node.js, Python, Rust, WASM), every function an MCP tool,
+six runtimes (Bun, Node.js, Python, Rust, Go, WASM), every function an MCP tool,
 no per-request cold start. Scope is HTTP/WS Lambdas only — SQS/SNS/S3/
 EventBridge-style event sources are out of scope by decision, not omission.
 
@@ -54,3 +54,10 @@ cargo nextest run --test e2e_smoke_all   # isolated: boots the example fleet
 - Assessments and design docs live under `docs/` (`assessments/`, `plans/`,
   `specs`-style documents); production bug postmortems in
   `docs/production-bugs.md`.
+- Runtime/language support has one source of truth: the `RuntimeKind` enum in
+  `src/config.rs`. When you add or remove a runtime — or change a function shape
+  (module/export vs. static-binary vs. wasm) — update the count and enumerated
+  list everywhere it appears in prose, in lockstep: `Cargo.toml` `description`,
+  `README.md`, this file's intro line, `registries/README.md`, `CONTRIBUTING.md`,
+  `docs/CAPABILITY-CARD.md`, and `web/`. Keep the wording greppable
+  (`rg -n "runtimes"`) so the set never drifts out of sync again.
