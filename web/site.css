@@ -212,12 +212,27 @@ h1.mega em{font-style:normal;color:var(--acid)}
   background:var(--ink-2);
 }
 .statbar-in{
-  max-width:var(--maxw);margin:0 auto;padding:1.1rem 28px;
-  display:flex;gap:2.6rem;flex-wrap:wrap;align-items:center;
-  font-family:var(--mono);font-size:.8rem;color:var(--t-mid);
+  max-width:var(--maxw);margin:0 auto;padding:0 28px;
+  display:grid;grid-template-columns:repeat(5,1fr);
 }
-.statbar-in b{color:var(--t-max);font-weight:700}
-.statbar-in .acid{color:var(--acid)}
+.stat{
+  padding:1.35rem 1.4rem;border-left:1px solid var(--line);
+  display:flex;flex-direction:column;gap:.5rem;
+}
+.stat:first-child{border-left:none;padding-left:0}
+.stat .val{
+  font-family:var(--mono);font-size:1.9rem;font-weight:700;line-height:1;
+  color:var(--t-max);letter-spacing:-.01em;font-variant-numeric:tabular-nums;
+}
+.stat .val.acid{color:var(--acid)}
+.stat .lbl{font-family:var(--mono);font-size:.72rem;line-height:1.5;color:var(--t-low)}
+.stat .lbl a{color:var(--t-mid);text-decoration:underline dotted}
+.stat .lbl a:hover{color:var(--acid)}
+@media(max-width:820px){
+  .statbar-in{grid-template-columns:repeat(2,1fr);padding:.4rem 28px}
+  .stat{border-left:none;border-top:1px solid var(--line);padding:1.1rem 0}
+  .stat:first-child,.stat:nth-child(2){border-top:none}
+}
 
 /* ════════ SECTIONS ════════ */
 section{padding:5.5rem 0}
@@ -469,6 +484,19 @@ h2.sec em{font-style:normal;color:var(--acid)}
   font-size:.9rem;color:var(--t-hi);margin:1.4rem 0;max-width:660px;
 }
 .callout b{color:var(--acid)}
+
+/* ════════ TRUST-BOUNDARY DIAGRAM (security.html) ════════ */
+.trust{font-family:var(--mono);font-size:.82rem;line-height:1.5;color:var(--t-mid);padding:1.15rem}
+.trust .t-host{color:var(--acid);font-weight:700;font-size:.92rem}
+.trust .t-assets{color:var(--t-low);margin:.25rem 0 0}
+.trust .path{color:var(--t-hi)}
+.trust .layer{border:1px solid var(--line-2);border-radius:8px;padding:.72rem .85rem;margin-top:.7rem}
+.trust .layer .lname{color:var(--acid);font-weight:700;font-size:.86rem}
+.trust .layer .lname .dim{color:var(--t-low);font-weight:400}
+.trust .layer .row{margin-top:.3rem;color:var(--t-mid)}
+.trust .layer .row .dim{color:var(--t-low)}
+.trust .layer.wasi{border-color:var(--acid-30);background:var(--acid-08)}
+.trust .t-foot{color:var(--t-low);margin-top:.8rem}
 
 /* page hero for detail pages — consistent everywhere */
 .page-hero{padding:5rem 0 3.2rem;border-bottom:1px solid var(--line)}
