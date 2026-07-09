@@ -1,5 +1,9 @@
 # Security Policy
 
+> Posture overview — what the sandbox, process profile, Landlock, and rlimits
+> each protect, and exactly where confinement stops:
+> <https://riz.dev/security.html>.
+
 ## Supported versions
 
 riz is pre-1.0. Security fixes land on the latest `0.1.x` release and `main`.
