@@ -239,24 +239,25 @@
       <div>
         <div class="well">
           <div class="well-hd"><b>trust boundaries</b><span>credentials stay host-side</span></div>
-          <pre><span class="k">Host / OS user</span>
-  assets: fs · network · DB creds · co-tenant data
-  ┌──────────────────────────────────────┐
-  │ <span class="k">riz process</span>                          │
-  │   /deploy   → key or CIDR, else 503   │
-  │   /_riz/*   → bearer-gated            │
-  │  ┌────────────────────────────────┐   │
-  │  │ <span class="k">handler process</span>                │   │
-  │  │  rlimits · prctl · Landlock    │   │
-  │  │  ┌──────────────────────────┐  │   │
-  │  │  │ <span class="k">WASI sandbox</span>  no fs·no net │  │   │
-  │  │  │  guest .wasm             │  │   │
-  │  │  │  names a grant →         │  │   │
-  │  │  │  <span class="c">broker runs it host-side</span> │  │   │
-  │  │  └──────────────────────────┘  │   │
-  │  └────────────────────────────────┘   │
-  └──────────────────────────────────────┘
-  <span class="c">the DSN never crosses the WASI line</span></pre>
+          <div class="trust">
+            <div class="t-host">Host / OS user</div>
+            <div class="t-assets">assets: fs · network · DB creds · co-tenant data</div>
+            <div class="layer">
+              <div class="lname">riz process</div>
+              <div class="row"><span class="path">/deploy</span> → key or CIDR, else 503</div>
+              <div class="row"><span class="path">/_riz/*</span> → bearer-gated</div>
+              <div class="layer">
+                <div class="lname">handler process</div>
+                <div class="row">rlimits · prctl · Landlock</div>
+                <div class="layer wasi">
+                  <div class="lname">WASI sandbox <span class="dim">no fs · no net</span></div>
+                  <div class="row">guest <span class="path">.wasm</span></div>
+                  <div class="row">names a grant → <span class="dim">broker runs it host-side</span></div>
+                </div>
+              </div>
+            </div>
+            <div class="t-foot">the DSN never crosses the WASI line</div>
+          </div>
         </div>
       </div>
     </div>
