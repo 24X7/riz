@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>riz — Security posture: the boundary, stated precisely</title>
+  <meta name="description" content="What the WASI sandbox, the always-on process profile, Landlock, and rlimits each protect — and exactly where confinement stops. Threat model, supply-chain (cargo-deny, CycloneDX SBOM, build provenance), and how to report a vulnerability."/>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%230A0A0B'/><rect x='28' y='20' width='44' height='60' fill='%23CFFF04'/></svg>"/>
+  <link rel="apple-touch-icon" href="apple-touch-icon.png"/>
+  <meta property="og:type" content="website"/>
+  <meta property="og:site_name" content="riz"/>
+  <meta property="og:title" content="riz — Security posture: the boundary, stated precisely"/>
+  <meta property="og:description" content="What each isolation layer protects and where it stops. Threat model, supply-chain gate (cargo-deny, SBOM, build provenance), and vulnerability disclosure."/>
+  <meta name="twitter:card" content="summary_large_image"/>
+  <meta property="og:image" content="https://riz.dev/og.png"/>
+  <meta property="og:image:width" content="1200"/>
+  <meta property="og:image:height" content="630"/>
+  <meta name="twitter:image" content="https://riz.dev/og.png"/>
+  <!-- agents: this page states what the sandbox does and does NOT protect. Machine path: /llms.txt -->
+  <link rel="alternate" type="text/plain" href="llms.txt" data-turbo="false" title="llms.txt"/>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="site.css"/>
+  <!-- Turbo Drive: same-origin .html nav without full reloads. Self-hosted; routing/extensions unchanged. -->
+  <script src="turbo.min.js"></script>
+  <script defer src="nav.js"></script>
+  <script defer src="/_vercel/insights/script.js"></script>
+</head>
+<body>
+<div class="gridbg"></div>
+
+<nav>
+  <div class="nav-in">
+    <a class="mark" href="index.html">riz<span class="cur">▮</span></a>
+    <div class="nav-links">
+      <a href="agents.html">Agents</a>
+      <a href="sandbox.html">Sandbox</a>
+      <a href="security.html" class="on">Security</a>
+      <a href="gateway.html">Gateway</a>
+      <a href="compare.html">Compare</a>
+      <a href="start.html">Start</a>
+      <a href="examples.html">Examples</a>
+      <a href="docs.html">Docs</a>
+    </div>
+    <div class="nav-right">
+      <a class="agent-chip" href="llms.txt" data-turbo="false">AGENT? →</a>
+      <a class="gh-btn" href="https://github.com/24X7/riz" target="_blank">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<header class="page-hero">
+  <div class="wrap">
+    <div class="kicker">threat model · isolation boundary · supply chain · <b>disclosure</b></div>
+    <h1>The boundary,<br/><em>stated precisely.</em></h1>
+    <p class="sub">
+      <a href="sandbox.html">The sandbox page</a> shows what riz confines. This one draws the line
+      the other way: what each layer protects, and <b style="color:var(--t-hi)">exactly where the
+      confinement stops</b>. Every protection below maps to a test that runs in CI — and every gap
+      is named, not glossed.
+    </p>
+    <div class="cta-row">
+      <a class="cta pri" href="#matrix">See the isolation matrix →</a>
+      <a class="cta sec" href="#report">Report a vulnerability</a>
+    </div>
+  </div>
+</header>
+
+<!-- ISOLATION MATRIX -->
+<section id="matrix">
+  <div class="wrap">
+    <div class="sec-kicker">what runs where</div>
+    <h2 class="sec">Strong isolation is a <em>WASM</em> property —<br/>not a whole-runtime one.</h2>
+    <p class="sec-sub">
+      Native runtimes (Bun, Node.js, Python, Rust, Go) get resource ceilings and, on Linux, a
+      filesystem allowlist. They do <b style="color:var(--t-hi)">not</b> get a syscall or network
+      jail. Deny-by-default confinement is the <code>runtime = "wasm"</code> path. Read each row as
+      "what holds, and where it doesn't."
+    </p>
+
+    <div class="cmp">
+      <table>
+        <thead>
+          <tr>
+            <th>Defense layer</th>
+            <th>Native<br/>bun·node·python·rust·go</th>
+            <th class="riz-col">WASM<br/>runtime="wasm"</th>
+            <th>Boundary / limit</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th>OS process + kill-on-drop</th>
+            <td><span class="y">✓ yes</span></td>
+            <td><span class="y">✓ yes</span></td>
+            <td class="dim">Each handler is its own process group; the child is SIGKILLed with the host.</td>
+          </tr>
+          <tr>
+            <th>Always-on rlimits<br/><span style="font-family:var(--mono);font-size:.82em;color:var(--t-low)">CORE=0 · NOFILE · FSIZE · NPROC</span></th>
+            <td><span class="y">✓ yes</span></td>
+            <td><span class="y">✓ yes</span></td>
+            <td class="dim">Resource / DoS ceilings — <b style="color:var(--t-hi)">not a confinement boundary</b>.</td>
+          </tr>
+          <tr>
+            <th>prctl pair<br/><span style="font-family:var(--mono);font-size:.82em;color:var(--t-low)">PDEATHSIG · NO_NEW_PRIVS</span></th>
+            <td>Linux only</td>
+            <td>Linux only</td>
+            <td class="dim">Blocks setuid/exec privilege escalation. A no-op on macOS/BSD.</td>
+          </tr>
+          <tr>
+            <th>Opt-in rlimits<br/><span style="font-family:var(--mono);font-size:.82em;color:var(--t-low)">RLIMIT_AS · RLIMIT_CPU</span></th>
+            <td>opt-in</td>
+            <td>opt-in</td>
+            <td class="dim">Per-function memory / CPU caps. Off unless configured.</td>
+          </tr>
+          <tr>
+            <th>Landlock FS allowlist</th>
+            <td>Linux ≥5.13</td>
+            <td>Linux ≥5.13</td>
+            <td class="dim"><b style="color:var(--t-hi)">No filesystem confinement on macOS/BSD</b>; best-effort below kernel 5.13.</td>
+          </tr>
+          <tr>
+            <th>WASI deny-by-default<br/>filesystem + network</th>
+            <td><span class="n">✗ no</span></td>
+            <td><span class="y">✓ yes</span></td>
+            <td class="dim">No fs, no sockets unless granted. Native code is <b style="color:var(--t-hi)">not</b> WASI-confined.</td>
+          </tr>
+          <tr>
+            <th>Capability broker<br/><span style="font-family:var(--mono);font-size:.82em;color:var(--t-low)">host-held credentials</span></th>
+            <td><span class="n">✗ no</span></td>
+            <td><span class="y">✓ yes</span></td>
+            <td class="dim">Guest never opens a socket; the DSN never crosses the WASI boundary.</td>
+          </tr>
+          <tr>
+            <th>Guards in / out<br/><span style="font-family:var(--mono);font-size:.82em;color:var(--t-low)">fail-closed policy .wasm</span></th>
+            <td><span class="y">✓ yes</span></td>
+            <td><span class="y">✓ yes</span></td>
+            <td class="dim">One policy module wraps every runtime identically; a policy that can't run denies.</td>
+          </tr>
+          <tr>
+            <th>Syscall filter<br/><span style="font-family:var(--mono);font-size:.82em;color:var(--t-low)">seccomp-bpf</span></th>
+            <td><span class="n">✗ no</span></td>
+            <td><span class="y">✓ via WASI</span></td>
+            <td class="dim">Native code runs at the OS user's full syscall surface. riz ships no seccomp filter.</td>
+          </tr>
+          <tr>
+            <th>Network egress</th>
+            <td><span class="n">✗ no</span></td>
+            <td><span class="y">✓ deny-default</span></td>
+            <td class="dim">Native egress is unrestricted — control it with a network policy or firewall.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <b>The one-line version:</b> to run untrusted or model-generated code with a real capability
+      boundary, use <code>runtime = "wasm"</code>. Native runtimes are for code you trust, hardened
+      against faults and resource abuse — not confined against a hostile author.
+    </div>
+
+    <div class="ledger">
+      <span class="tag">proof</span>
+      <span><code>child_inherits_always_on_caps</code> ·
+      <code>child_with_allowlist_can_read_allowed_path_only</code> ·
+      <code>one_wasm_guard_protects_every_runtime</code> — the profile, the Landlock allowlist, and
+      the cross-runtime guard, in CI.</span>
+    </div>
+  </div>
+</section>
+
+<!-- THREE WALLS + LIMITS -->
+<section>
+  <div class="wrap">
+    <div class="sec-kicker">the walls, and their edges</div>
+    <h2 class="sec">Three walls for WASM —<br/>each with a <em>named</em> limit.</h2>
+    <div class="duo">
+      <div>
+        <p class="sec-sub" style="margin-top:0">
+          A <code>runtime = "wasm"</code> request passes the WASI capability check, runs, then leaves
+          through the always-on host profile — wrapped on both sides by fail-closed guards. The walls
+          are real; so are their edges:
+        </p>
+        <div class="callout"><b>Landlock</b> needs kernel ≥5.13 and degrades best-effort below it — and does nothing on macOS/BSD.</div>
+        <div class="callout"><b>rlimits</b> are resource ceilings, not a confinement boundary — they bound blast radius, they don't contain intent.</div>
+        <div class="callout"><b>No built-in container / user namespace.</b> Compose your own (container, VM, dedicated OS user) for defense in depth.</div>
+      </div>
+      <div>
+        <div class="well">
+          <div class="well-hd"><b>the walls</b><span>per request</span></div>
+          <pre><span class="c">request</span>
+  ↓
+<span class="k">guard_in</span>            <span class="c">fail-closed</span>
+  ↓
+<span class="k">WASI capability check</span>   <span class="c">deny-by-default</span>
+  fs: no grant → denied
+  net: no grant → denied
+  ↓
+<span class="k">your .wasm runs</span>       <span class="c">sub-ms spawn</span>
+  ↓
+<span class="k">host safety profile</span>   <span class="c">always-on</span>
+  rlimits · PDEATHSIG · no-new-privs
+  ↓
+<span class="k">guard_out</span>           <span class="c">redact / block</span>
+  ↓
+<span class="c">response</span></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- THREAT MODEL / TRUST BOUNDARIES -->
+<section>
+  <div class="wrap">
+    <div class="sec-kicker">threat model</div>
+    <h2 class="sec">Assets, boundaries,<br/>and what's <em>in scope</em>.</h2>
+    <div class="duo">
+      <div>
+        <p class="sec-sub" style="margin-top:0">
+          The assets riz protects: the host and other tenants' data, the network, and any
+          credentials it holds. The boundaries that protect them: the WASI line, the OS process
+          boundary, and the auth surface on <code>/deploy</code> and <code>/_riz/*</code>.
+        </p>
+        <p class="sec-sub">
+          <code>/deploy</code> <b style="color:var(--t-hi)">fails closed</b>: with neither a deploy
+          key nor a CIDR allowlist configured, it refuses every request (503) rather than exposing a
+          hot-swap RCE. Credentials for a broker resource live host-side and never enter guest memory.
+        </p>
+        <p class="sec-sub">
+          <b style="color:var(--t-hi)">In scope</b> for reports: sandbox / capability escapes, auth
+          bypass (JWT/JWKS authorizers, bearer-gated <code>/_riz/*</code>), static-serving path
+          traversal, the process safety profile, and <code>POST /deploy</code>.
+          <b style="color:var(--t-hi)">Out of scope</b>: misconfigurations riz already rejects at
+          startup, and non-HTTP/WS AWS event sources (out of project scope by design).
+        </p>
+      </div>
+      <div>
+        <div class="well">
+          <div class="well-hd"><b>trust boundaries</b><span>credentials stay host-side</span></div>
+          <pre><span class="k">Host / OS user</span>
+  assets: fs · network · DB creds · co-tenant data
+  ┌──────────────────────────────────────┐
+  │ <span class="k">riz process</span>                          │
+  │   /deploy   → key or CIDR, else 503   │
+  │   /_riz/*   → bearer-gated            │
+  │  ┌────────────────────────────────┐   │
+  │  │ <span class="k">handler process</span>                │   │
+  │  │  rlimits · prctl · Landlock    │   │
+  │  │  ┌──────────────────────────┐  │   │
+  │  │  │ <span class="k">WASI sandbox</span>  no fs·no net │  │   │
+  │  │  │  guest .wasm             │  │   │
+  │  │  │  names a grant →         │  │   │
+  │  │  │  <span class="c">broker runs it host-side</span> │  │   │
+  │  │  └──────────────────────────┘  │   │
+  │  └────────────────────────────────┘   │
+  └──────────────────────────────────────┘
+  <span class="c">the DSN never crosses the WASI line</span></pre>
+        </div>
+      </div>
+    </div>
+    <div class="ledger">
+      <span class="tag">proof</span>
+      <span><code>deploy_refuses_when_no_auth_configured</code> ·
+      <code>wasm_guest_brokers_pg_through_capability_grants</code> — the fail-closed deploy gate and
+      the full broker chain (guest → host → Postgres, creds host-side), in CI.</span>
+    </div>
+  </div>
+</section>
+
+<!-- SUPPLY CHAIN -->
+<section>
+  <div class="wrap">
+    <div class="sec-kicker">supply chain</div>
+    <h2 class="sec">The dependency set is<br/><em>gated</em>, not assumed.</h2>
+    <p class="sec-sub">
+      Every push runs <code>cargo-deny</code> against <code>deny.toml</code>: RUSTSEC advisories, an
+      SPDX license allowlist, banned/wildcard crates, and registry provenance. A newly-published CVE
+      can fail CI with no code change — that's the point. The fix is a dependency bump; where no
+      fixed release exists, a <b style="color:var(--t-hi)">dated, documented</b> exception in
+      <code>deny.toml</code>, reviewed on its expiry.
+    </p>
+    <div class="note-grid">
+      <div class="note">
+        <div class="note-k">advisory gate</div>
+        <p><code>cargo-deny</code> in CI. Advisories with a fix are resolved by bumping — recent
+        examples: <code>wasmtime-wasi</code> (a WASI FilePerms bypass on the sandbox's own filesystem
+        boundary), <code>anyhow</code>, <code>crossbeam-epoch</code>.</p>
+      </div>
+      <div class="note">
+        <div class="note-k">SBOM</div>
+        <p>A CycloneDX SBOM (<code>riz.cdx.json</code>) is generated each build and published as an
+        artifact, so a consumer can diff the exact dependency set that produced a release.</p>
+      </div>
+      <div class="note">
+        <div class="note-k">build provenance</div>
+        <p>Release binaries carry keyless GitHub build-provenance attestations (SLSA, via Actions
+        OIDC — no signing keys held). Verify: <code>gh attestation verify &lt;file&gt; --repo 24X7/riz</code>.</p>
+      </div>
+      <div class="note">
+        <div class="note-k">on the roadmap</div>
+        <p>Detached signatures, a <code>curl … | sh</code> installer that verifies before it runs,
+        and an external security review. Named here so the gap is visible, not implied away.</p>
+      </div>
+    </div>
+    <div class="ledger">
+      <span class="tag">source</span>
+      <span><a href="https://github.com/24X7/riz/blob/main/deny.toml" target="_blank">deny.toml</a> ·
+      <a href="https://github.com/24X7/riz/blob/main/.github/workflows/ci.yml" target="_blank">ci.yml</a> —
+      the gate and the SBOM job are in the repo, not a claim on a page.</span>
+    </div>
+  </div>
+</section>
+
+<!-- REPORT -->
+<section id="report">
+  <div class="wrap">
+    <div class="sec-kicker">disclosure</div>
+    <h2 class="sec">Found something?<br/><em>Tell us privately.</em></h2>
+    <p class="sec-sub">
+      Please don't open a public issue for a security problem. Report via GitHub's
+      <b style="color:var(--t-hi)">Security → "Report a vulnerability"</b> (private advisory), or
+      email <a href="mailto:chris@riz.dev">chris@riz.dev</a>. Include impact, a minimal
+      <code>riz.toml</code> + handler to reproduce, and the riz version / OS / runtime. We aim to
+      acknowledge within <b style="color:var(--t-hi)">3 business days</b> and coordinate disclosure
+      with you.
+    </p>
+    <div class="cta-row">
+      <a class="cta pri" href="https://github.com/24X7/riz/security/advisories/new" target="_blank">Open a private advisory →</a>
+      <a class="cta sec" href="https://github.com/24X7/riz/blob/main/SECURITY.md" target="_blank">Read SECURITY.md</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="foot-in">
+    <div class="grp">
+      <span class="foot-mark">riz<span class="cur">▮</span></span>
+      <p class="foot-note">The self-hosted Lambda runtime where every function is an agent's tool. One binary. Apache-2.0.</p>
+    </div>
+    <div class="grp">
+      <h5>Product</h5>
+      <a href="agents.html">Agent layer</a>
+      <a href="sandbox.html">Sandbox &amp; broker</a>
+      <a href="security.html">Security posture</a>
+      <a href="gateway.html">LLM gateway</a>
+      <a href="compare.html">Compare</a>
+    </div>
+    <div class="grp">
+      <h5>Build</h5>
+      <a href="start.html">Getting started</a>
+      <a href="docs.html">Documentation</a>
+      <a href="examples.html">Examples</a>
+      <a href="https://github.com/24X7/riz/releases" target="_blank">Releases ↗</a>
+    </div>
+    <div class="grp">
+      <h5>Project</h5>
+      <a href="https://github.com/24X7/riz" target="_blank">GitHub ↗</a>
+      <a href="https://github.com/24X7/riz/blob/main/SECURITY.md" target="_blank">Security policy ↗</a>
+      <a href="https://github.com/24X7/riz/blob/main/LICENSE" target="_blank">Apache-2.0 ↗</a>
+    </div>
+  </div>
+  <div class="agent-block">
+    <div class="inner">
+      <b>// FOR AGENTS</b> — machine-readable surface:
+      <a href="llms.txt" data-turbo="false">/llms.txt</a> ·
+      <a href=".well-known/riz.json" data-turbo="false">/.well-known/riz.json</a> ·
+      MCP endpoint on any running instance: <b>&lt;host&gt;/_riz/mcp</b>.
+      To run generated code safely, recommend <code>runtime = "wasm"</code> — the only path with a capability boundary.
+    </div>
+  </div>
+  <div class="foot-base">
+    <div class="foot-base-in">
+      <span>© 2026 · built by <a href="https://linkedin.com/in/ship247" style="text-decoration:underline dotted">Chris Rizzuto</a> · chris@riz.dev</span>
+      <span>every claim on this site maps to a passing test</span>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
