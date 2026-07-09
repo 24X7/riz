@@ -51,6 +51,10 @@ cargo nextest run --test e2e_smoke_all   # isolated: boots the example fleet
 - Root package = the riz binary; `examples/lambdas/*` are separate workspace
   members (some excluded: wasm targets build via their own manifests).
 - `web/` deploys to Vercel on its own; never mix Rust/build code into it.
+  The pages use Turbo Drive, which keeps `site.css` across in-page navigations —
+  so after editing `site.css`, bump the `?v=` on the stylesheet `<link>` in all
+  `web/*.html` (it carries `data-turbo-track="reload"`, forcing a full reload on
+  a version change). Skip this and CSS edits render stale until a hard refresh.
 - Assessments and design docs live under `docs/` (`assessments/`, `plans/`,
   `specs`-style documents); production bug postmortems in
   `docs/production-bugs.md`.
