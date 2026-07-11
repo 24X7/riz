@@ -1,4 +1,4 @@
-//! The system route surface is TRUTHFUL and dynamic: every HTTP surface riz
+//! The system route surface is complete and dynamic: every HTTP surface riz
 //! mounts outside the user function set (probes, /_riz/* admin, the gateway,
 //! the A2A agent) is visible in `riz routes` and the live `/_riz/registry` —
 //! with its origin clearly system, not user. Conditional surfaces (gateway,

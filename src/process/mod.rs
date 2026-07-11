@@ -823,8 +823,8 @@ impl ProcessManager {
         raw.into_iter()
             .map(|r| {
                 // saturating_add: summed RSS across a pool cannot overflow u64
-                // in practice; saturation (not wrap) keeps the stat honest-ish
-                // if it ever did.
+                // in practice; saturation (not wrap) keeps the stat from
+                // flipping to a bogus tiny value if it ever did.
                 let (mem_bytes, cpu) = r.pids.iter().fold((0u64, 0f32), |(m, c), &pid| {
                     match sys.process(Pid::from_u32(pid)) {
                         Some(p) => (m.saturating_add(p.memory()), c + p.cpu_usage()),

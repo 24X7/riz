@@ -2,7 +2,7 @@
 //! "every capability sentence on this site is pinned to a passing test."
 //!
 //! `tests/claims/registry.toml` maps each capability claim shown anywhere in
-//! `web/*.html` to one of three honest statuses:
+//! `web/*.html` to one of three status labels:
 //!
 //!   * `proven` — backed by a REAL test fn that exists in `tests/` or `src/`. The site DISPLAYS that fn name (the cap cards' "proof:" line and the detail pages' proof ledgers), so the claim's `page_text` is that fn name: one string that is both a verbatim drift-guard substring of the live page and the test that must exist.
 //!   * `benchmark` — a perf number proved by a benches/ recipe, with a deterministic CI-floor sibling test as its `proof`.
@@ -179,7 +179,7 @@ fn proven_and_benchmark_claims_point_at_a_real_test() {
     }
 }
 
-/// The reverse invariant that makes the displayed "proof:" labels honest:
+/// The reverse invariant that keeps every displayed "proof:" label backed:
 /// every test-function name the site SHOWS as a proof must be registered as a
 /// proven claim here (and therefore must exist in source, by the test above).
 /// Without this, the page could print `proof: total_fabrication` and nothing

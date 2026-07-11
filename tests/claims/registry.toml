@@ -214,10 +214,10 @@ proof = "liveness_fault_injection_respawns_within_250ms"
 
 [[claim]]
 id = "perf-throughput"
-page_text = "91k</b> req/s · p99 &lt; 1ms"
+page_text = "req/s · p99 &lt; 1ms"
 status = "benchmark"
 proof = "ws_handles_100_messages_within_10s"
-note = "Headline 91k req/s · p99<1ms is a benches/ result (the stat bar links the recipe), not a deterministic CI test. The CI-floor sibling ws_handles_100_messages_within_10s is the regression gate that fails if load throughput collapses. page_text keeps the <b> tag so the drift guard pins the exact stat-bar rendering."
+note = "Headline 91k req/s · p99<1ms is a benches/ result (the stat bar links the recipe), not a deterministic CI test. The CI-floor sibling ws_handles_100_messages_within_10s is the regression gate that fails if load throughput collapses. The stat bar renders the number and label in separate spans (`91k</span><span>req/s…`), so the drift guard pins the markup-independent `req/s · p99 &lt; 1ms` rather than the `91k` figure, which the benches recipe substantiates."
 
 # ─────────────────────────── Static file serving ────────────────────────────
 
@@ -251,13 +251,13 @@ proof = "scaffolded_files_are_served_by_a_static_instance"
 id = "test-count"
 page_text = "900+"
 status = "copy-only"
-note = "Honest floor, not a pinned count: the absolute number from `cargo nextest list` grows every commit (903+ as of 2026-06-15), so the site states a floor ('900+') that stays true without per-commit churn. Appears in the home stat bar and the docs lede. The capability it gestures at — every claim mapped to a test — is exactly what this registry + claims_truth.rs enforce."
+note = "A floor, not a pinned count: the absolute number from `cargo nextest list` grows every commit (903+ as of 2026-06-15), so the site states a floor ('900+') that stays true without per-commit churn. Appears in the home stat bar and the docs lede. The capability it gestures at — every claim mapped to a test — is exactly what this registry + claims_truth.rs enforce."
 
 [[claim]]
 id = "no-per-request-cold-start"
 page_text = "no per-request cold start"
 status = "copy-only"
-note = "Honest phrasing of the warm-pool behavior — NOT 'zero cold starts ever'. riz keeps one warm pre-spawned child-process pool per function, so a cold start happens only at boot, respawn, or hot-swap, never per request in steady state. The deterministic perf-floor sibling is ws_handles_100_messages_within_10s (see perf-throughput); registered copy-only because 'no per-request cold start' is a steady-state architectural property, not a single asserted number."
+note = "Precise phrasing of the warm-pool behavior — NOT 'zero cold starts ever'. riz keeps one warm pre-spawned child-process pool per function, so a cold start happens only at boot, respawn, or hot-swap, never per request in steady state. The deterministic perf-floor sibling is ws_handles_100_messages_within_10s (see perf-throughput); registered copy-only because 'no per-request cold start' is a steady-state architectural property, not a single asserted number."
 
 [[claim]]
 id = "claims-as-code"

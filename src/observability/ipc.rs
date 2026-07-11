@@ -23,8 +23,8 @@ pub enum SpanKind {
 
 /// OTel GenAI semantic-convention attribute keys. These are just well-known
 /// string keys in the generic [`TelemetryEvent::attributes`] map — naming them
-/// here keeps the request → chat-completion wiring and the OTLP encoder honest
-/// about which conventions we follow.
+/// here keeps the request → chat-completion wiring and the OTLP encoder
+/// consistent about which conventions we follow.
 pub const GEN_AI_SYSTEM: &str = "gen_ai.system";
 pub const GEN_AI_REQUEST_MODEL: &str = "gen_ai.request.model";
 pub const GEN_AI_INPUT_TOKENS: &str = "gen_ai.usage.input_tokens";
