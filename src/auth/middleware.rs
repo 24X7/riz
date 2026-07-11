@@ -8,7 +8,6 @@
 //! HTTP status.
 
 use crate::auth::authorizer::{AuthCache, AuthCacheKey, AuthError, Authorizer, AuthorizerOutput};
-use crate::auth::jwt::JwtAuthorizer;
 use crate::auth::request::RequestAuthorizer;
 use crate::config::AuthorizerConfig;
 use crate::gateway::ApiGatewayV2httpRequest;
@@ -119,7 +118,12 @@ async fn authorize_via_jwt(
         return Ok(inject_authorizer_context(event, &cached));
     }
 
-    let authorizer = JwtAuthorizer::new(jwt_cfg.clone()).await.map_err(|e| {
+    // Reuse a cached authorizer (one JWKS fetch per uri per cooldown) instead
+    // of constructing — and re-fetching the JWKS — on every cache-missed
+    // request. Without this, a stream of distinct invalid tokens amplifies into
+    // one IdP fetch each. Fail-closed: a build failure returns Err, nothing
+    // cached.
+    let authorizer = cache.jwt_authorizer(jwt_cfg).await.map_err(|e| {
         warn!(
             source_ip = %source_ip,
             function_name = %function_name,

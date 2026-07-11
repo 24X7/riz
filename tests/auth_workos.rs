@@ -268,3 +268,76 @@ async fn workos_tampered_signature_is_rejected() {
         .expect_err("tampered-signature token must be rejected");
     assert!(matches!(err, AuthError::Unauthorized(_)), "got: {err:?}");
 }
+
+// ── P1.1: the AuthCache JWKS-authorizer cache ──────────────────────────────
+//
+// Repeated decision-cache-missed requests (e.g. a stream of distinct invalid
+// Bearer tokens) must reuse one JWKS fetch, not fire one at the IdP per
+// request. `AuthCache::jwt_authorizer` caches the constructed authorizer keyed
+// by `jwks_uri` with a refresh cooldown, single-flighting construction.
+
+/// Like `serve_jwks`, but counts how many times the JWKS document is fetched
+/// (one accepted connection = one fetch, since we answer `Connection: close`).
+fn serve_jwks_counting(jwks: String) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let hits = std::sync::Arc::new(AtomicUsize::new(0));
+    let hits_thread = hits.clone();
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            hits_thread.fetch_add(1, Ordering::SeqCst);
+            stream.set_read_timeout(Some(Duration::from_secs(2))).ok();
+            let mut buf = [0u8; 2048];
+            let _ = stream.read(&mut buf);
+            let body = jwks.clone();
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(resp.as_bytes());
+            let _ = stream.flush();
+        }
+    });
+    (format!("http://{addr}/.well-known/jwks.json"), hits)
+}
+
+#[tokio::test]
+async fn jwks_authorizer_cache_fetches_once_within_cooldown() {
+    use std::sync::atomic::Ordering;
+    let key = TestKey::generate();
+    let (jwks_uri, hits) = serve_jwks_counting(key.jwks);
+    let cfg = workos_config(jwks_uri);
+    let cache = riz::auth::authorizer::AuthCache::new();
+
+    // Five cache-missed authorizer builds within the cooldown window.
+    for _ in 0..5 {
+        cache.jwt_authorizer(&cfg).await.expect("authorizer builds");
+    }
+
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        1,
+        "JWKS must be fetched exactly once across repeated cache-missed builds"
+    );
+}
+
+#[tokio::test]
+async fn jwks_authorizer_cache_fails_closed_when_unreachable() {
+    // Port 1 has nothing listening — construction (JWKS fetch) must fail.
+    let cfg = workos_config("http://127.0.0.1:1/.well-known/jwks.json".to_string());
+    let cache = riz::auth::authorizer::AuthCache::new();
+
+    assert!(
+        cache.jwt_authorizer(&cfg).await.is_err(),
+        "an unreachable JWKS must fail closed"
+    );
+    // Nothing is cached on error, so a second attempt also fails rather than
+    // serving a stale authorizer.
+    assert!(
+        cache.jwt_authorizer(&cfg).await.is_err(),
+        "a failed build must not be cached"
+    );
+}

@@ -4,10 +4,22 @@ use moka::future::Cache;
 use moka::Expiry;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
+use crate::auth::jwt::JwtAuthorizer;
+use crate::config::JwtAuthorizerConfig;
 use crate::gateway::ApiGatewayV2httpRequest;
+
+/// A JWKS is re-fetched at most once per this window per `jwks_uri`. Between
+/// fetches, cache-missed requests reuse the constructed authorizer, so a burst
+/// of distinct invalid tokens cannot amplify into one IdP fetch each.
+const JWKS_REFRESH_COOLDOWN: Duration = Duration::from_secs(300);
+
+/// Distinct `jwks_uri`s a deployment authorizes against — small; bounds the
+/// authorizer cache (rule 3).
+const JWKS_AUTHORIZER_CAPACITY: u64 = 64;
 
 /// Result of a successful authorization check.
 #[derive(Clone, Debug)]
@@ -153,6 +165,12 @@ impl Expiry<String, AuthorizerOutput> for AuthOutputExpiry {
 #[derive(Clone)]
 pub struct AuthCache {
     inner: Cache<String, AuthorizerOutput>,
+    /// JWKS-backed authorizers keyed by `jwks_uri`. Each holds one fetched
+    /// JWKS; entries expire after [`JWKS_REFRESH_COOLDOWN`]. This is what stops
+    /// a burst of decision-cache-missed requests (a stream of distinct invalid
+    /// Bearer tokens, say) from constructing a fresh authorizer — and thus
+    /// firing a fresh JWKS fetch at the IdP — on every request.
+    jwks_authorizers: Cache<String, Arc<JwtAuthorizer>>,
 }
 
 impl AuthCache {
@@ -161,7 +179,14 @@ impl AuthCache {
             .max_capacity(10_000)
             .expire_after(AuthOutputExpiry)
             .build();
-        Self { inner: cache }
+        let jwks_authorizers = Cache::builder()
+            .max_capacity(JWKS_AUTHORIZER_CAPACITY)
+            .time_to_live(JWKS_REFRESH_COOLDOWN)
+            .build();
+        Self {
+            inner: cache,
+            jwks_authorizers,
+        }
     }
 
     pub async fn get(&self, key: &AuthCacheKey) -> Option<AuthorizerOutput> {
@@ -174,6 +199,25 @@ impl AuthCache {
 
     pub async fn invalidate(&self, key: &AuthCacheKey) {
         self.inner.invalidate(&key.to_cache_string()).await;
+    }
+
+    /// Return a `JwtAuthorizer` for `cfg.jwks_uri`, constructing it — and
+    /// fetching the JWKS — at most once per [`JWKS_REFRESH_COOLDOWN`] per uri.
+    /// Concurrent misses single-flight via moka's `try_get_with`, so a burst of
+    /// invalid tokens triggers exactly one fetch. Fail-closed: a build error
+    /// (unreachable/invalid JWKS) is returned and nothing is cached, so the
+    /// next request retries rather than serving a stale authorizer.
+    pub async fn jwt_authorizer(
+        &self,
+        cfg: &JwtAuthorizerConfig,
+    ) -> Result<Arc<JwtAuthorizer>, AuthError> {
+        let cfg = cfg.clone();
+        self.jwks_authorizers
+            .try_get_with(cfg.jwks_uri.clone(), async move {
+                JwtAuthorizer::new(cfg).await.map(Arc::new)
+            })
+            .await
+            .map_err(|e| AuthError::Other(e.to_string()))
     }
 }
 
