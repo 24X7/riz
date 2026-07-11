@@ -133,6 +133,11 @@ webpki-roots = "0.26"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4"
+# Per-worker seccomp-BPF syscall blocklist applied in pre_exec (process/safety.rs).
+seccompiler = "0.5"
+# Raw syscall numbers (libc::SYS_*) for the seccomp blocklist; already in the
+# tree via nix, named directly for the blocklist constants.
+libc = "0.2"
 
 [profile.release]
 opt-level = 3
