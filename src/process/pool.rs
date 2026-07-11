@@ -3,7 +3,7 @@ use crate::process::runtime::{RuntimeRegistry, WorkerTransport};
 use crate::process::runtime_api::WorkerEndpoint;
 use crate::state::{LogEntry, RizState};
 use anyhow::Context;
-use std::sync::atomic::{AtomicBool, AtomicU32};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -57,6 +57,10 @@ pub(super) struct RoutePool {
     pub(super) semaphore: Arc<Semaphore>,
     pub(super) restart_count: AtomicU32,
     pub(super) consecutive_crashes: AtomicU32,
+    /// Requests rejected because the pool was at its concurrency limit
+    /// (load-shed events). A rising rate is the saturation signal that says
+    /// "raise concurrency or add instances".
+    pub(super) admission_rejected: AtomicU64,
     pub(super) healthy: AtomicBool,
     pub(super) runtime_registry: Arc<RuntimeRegistry>,
     pub(super) log_tx: mpsc::Sender<LogEntry>,

@@ -1529,7 +1529,9 @@ async fn build_dispatch_router(
         Arc::new(system::ready::ReadinessHandler::new()),
         Arc::new(system::metrics::MetricsHandler::new(
             riz_state.clone(),
+            process_manager.clone(),
             bearer.clone(),
+            config.metrics.enabled,
         )),
         Arc::new(system::registry::RegistryHandler::new(
             riz_state.clone(),

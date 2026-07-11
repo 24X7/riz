@@ -81,7 +81,9 @@ async fn make_state() -> Arc<riz::state::AppState> {
         Arc::new(riz::system::health::HealthHandler::new(riz_state.clone())),
         Arc::new(riz::system::metrics::MetricsHandler::new(
             riz_state.clone(),
+            Arc::new(riz::process::ProcessManager::new(riz_state.clone())),
             None,
+            true,
         )),
         Arc::new(riz::system::registry::RegistryHandler::new(
             riz_state.clone(),

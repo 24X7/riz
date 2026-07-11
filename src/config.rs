@@ -196,6 +196,10 @@ pub struct Config {
     /// declares its own `[function.<name>.cors]` override.
     #[serde(default)]
     pub cors: CorsConfig,
+    /// Prometheus metrics endpoint (`[metrics]`). Enabled by default; set
+    /// `enabled = false` to remove `/_riz/metrics`.
+    #[serde(default)]
+    pub metrics: MetricsConfig,
     /// LLM gateway: provider routing + fallback behind an OpenAI-compatible
     /// endpoint. Absent/empty `[gateway]` → gateway disabled.
     #[serde(default)]
@@ -451,6 +455,20 @@ impl Default for ServerConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct MetricsConfig {
+    /// Expose `/_riz/metrics` (Prometheus text format). Default true.
+    pub enabled: bool,
+}
+
+impl Default for MetricsConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
 pub struct CacheConfig {
     #[serde(default)]
     pub default_ttl_secs: u64,
