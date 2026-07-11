@@ -134,11 +134,7 @@ async fn sync_existing_functions(
             }
             if function_changed(old_cfg, new_cfg) {
                 info!("hot-reload: swapping pool for {name}");
-                if let Err(e) = state
-                    .process_manager
-                    .hot_swap(name, new_cfg.clone(), &state.runtime_registry)
-                    .await
-                {
+                if let Err(e) = state.process_manager.hot_swap(name, new_cfg.clone()).await {
                     error!("hot_swap failed for {name}: {e}");
                 }
             }
@@ -420,11 +416,7 @@ async fn hot_swap_functions(
         };
         if let Some(fcfg) = fcfg_opt {
             info!("handler source change → hot-swap {fn_name}");
-            if let Err(e) = state
-                .process_manager
-                .hot_swap(&fn_name, fcfg, &state.runtime_registry)
-                .await
-            {
+            if let Err(e) = state.process_manager.hot_swap(&fn_name, fcfg).await {
                 error!("hot_swap on source change failed for {fn_name}: {e}");
             }
         }

@@ -214,3 +214,62 @@ async fn hotreload_picks_up_new_route_end_to_end() {
         "GET /echo must still return 200 after hot-reload (regression: old routes lost)"
     );
 }
+
+/// A hot-swap that raises `concurrency` must resize the pool's admission — the
+/// semaphore AND the worker count — not merely respawn at the old size.
+/// Regression guard for P1.4: `hot_swap` used to drain and respawn into the
+/// existing pool, leaving the semaphore and `config` pinned to the old
+/// concurrency, so a raise from 1→3 admitted only 1 concurrent request despite
+/// 3 workers. The fix rebuilds the pool entry via `build_pool_into`.
+#[tokio::test]
+async fn hot_swap_resizes_concurrency() {
+    if !bun_available() {
+        eprintln!("SKIP: bun not on PATH");
+        return;
+    }
+
+    let tmpdir = tempfile::TempDir::new().expect("tempdir");
+    let config_path = tmpdir.path().join("riz.toml");
+    std::fs::write(&config_path, riz_toml_with_routes(&[("/echo", "GET")])).expect("write config");
+
+    let (_addr, app_state) = boot_riz_from_path(config_path).await;
+    let mgr = app_state.process_manager.clone();
+
+    // Baseline: concurrency 1, one worker.
+    let before = mgr.pool_stats().await;
+    let echo_before = before
+        .iter()
+        .find(|s| s.name == "echo-bun")
+        .expect("echo-bun pool exists");
+    assert_eq!(echo_before.concurrency, 1, "baseline concurrency is 1");
+    assert_eq!(echo_before.pids.len(), 1, "baseline has 1 worker");
+
+    // Hot-swap the same function to concurrency 3.
+    let mut new_cfg = app_state
+        .config
+        .read()
+        .await
+        .functions
+        .get("echo-bun")
+        .expect("echo-bun config")
+        .clone();
+    new_cfg.concurrency = 3;
+    mgr.hot_swap("echo-bun", new_cfg)
+        .await
+        .expect("hot_swap to concurrency 3 succeeds");
+
+    // After: concurrency 3 AND three workers — proving the semaphore and pool
+    // were rebuilt to the new size, not left at 1.
+    let after = mgr.pool_stats().await;
+    let echo_after = after
+        .iter()
+        .find(|s| s.name == "echo-bun")
+        .expect("echo-bun pool exists after swap");
+    assert_eq!(echo_after.concurrency, 3, "concurrency raised to 3");
+    assert_eq!(
+        echo_after.pids.len(),
+        3,
+        "three workers after swap, got {:?}",
+        echo_after.pids
+    );
+}
