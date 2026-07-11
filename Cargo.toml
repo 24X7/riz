@@ -35,10 +35,20 @@ mem_forget = "deny"
 # Rule 9: unsafe hygiene — one operation per block, each with a SAFETY proof.
 undocumented_unsafe_blocks = "deny"
 multiple_unsafe_ops_per_block = "deny"
-# Rule 3 ratchet: unbounded channels (configured in clippy.toml) stay `allow`
-# until the existing call sites migrate to bounded — tracked by
-# scripts/safety-check.sh, promoted to deny when the count reaches zero.
-disallowed_methods = "allow"
+# Rule 3: unbounded channels (list in clippy.toml) are wrong on every target,
+# tests included; burned to zero and promoted from the gate to workspace-deny
+# on 2026-07-06.
+disallowed_methods = "deny"
+# Rule 1: `std::process::exit` only at the CLI top level — the three doctor
+# verdict sites carry statement-scoped `#[allow(clippy::exit)]`. A test that
+# called exit would kill the nextest runner, so this binds all targets.
+# Promoted from the gate to workspace-deny on 2026-07-06.
+exit = "deny"
+# The remaining Power-of-10 lints (unwrap/expect/panic/indexing_slicing,
+# arithmetic_side_effects, unreachable, too_many_lines, cognitive_complexity)
+# stay production-scoped in scripts/safety-check.sh --gate (--lib --bins):
+# integration-test helpers and #[cfg(test)] modules legitimately break them,
+# and the policy exempts test code (docs/SAFETY.md "Scope").
 
 [package]
 name = "riz"
