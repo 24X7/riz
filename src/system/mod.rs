@@ -6,6 +6,7 @@ pub mod health;
 pub mod mcp;
 pub mod metrics;
 pub mod openai_compat;
+pub mod ready;
 pub mod registry;
 
 /// The ONE table of every HTTP surface riz mounts outside the user function
