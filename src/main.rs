@@ -458,15 +458,63 @@ async fn run_mcp_inspect(url: &str, bearer: Option<&str>) -> anyhow::Result<()> 
         .timeout(std::time::Duration::from_secs(5))
         .build()?;
 
-    let auth_header = |req: reqwest::RequestBuilder| -> reqwest::RequestBuilder {
-        if let Some(t) = bearer {
-            req.header("authorization", format!("Bearer {t}"))
-        } else {
-            req
-        }
-    };
+    let init_json = mcp_initialize(&client, url, bearer).await?;
+    print_mcp_server_info(url, &init_json);
 
-    // ── initialize ────────────────────────────────────────────────────────
+    // ── tools/list ────────────────────────────────────────────────────────
+    let list_body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/list"
+    });
+    let list_resp = with_bearer(client.post(url).json(&list_body), bearer)
+        .send()
+        .await?
+        .error_for_status()?;
+    let list_json: serde_json::Value = list_resp.json().await?;
+    if let Some(err) = list_json.get("error") {
+        return Err(anyhow::anyhow!("tools/list returned JSON-RPC error: {err}"));
+    }
+
+    let tools = list_json
+        .pointer("/result/tools")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    println!();
+    if tools.is_empty() {
+        println!("No tools registered. Add a `[function.<name>]` block to riz.toml.");
+        return Ok(());
+    }
+    println!("Registered tools ({}):", tools.len());
+    for tool in &tools {
+        print_tool_entry(tool);
+    }
+
+    probe_sse_channel(&client, url, bearer).await;
+
+    println!();
+    println!("✓ MCP endpoint healthy. Point Claude / Cursor at {url} to use these tools.");
+    Ok(())
+}
+
+/// Attach the bearer token, when given, to an outgoing inspect request.
+fn with_bearer(req: reqwest::RequestBuilder, bearer: Option<&str>) -> reqwest::RequestBuilder {
+    if let Some(t) = bearer {
+        req.header("authorization", format!("Bearer {t}"))
+    } else {
+        req
+    }
+}
+
+/// The MCP `initialize` handshake: POST, decode auth/HTTP/JSON-RPC failures
+/// into actionable errors, return the response JSON.
+async fn mcp_initialize(
+    client: &reqwest::Client,
+    url: &str,
+    bearer: Option<&str>,
+) -> anyhow::Result<serde_json::Value> {
     let init_body = serde_json::json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -478,7 +526,7 @@ async fn run_mcp_inspect(url: &str, bearer: Option<&str>) -> anyhow::Result<()> 
         }
     });
 
-    let init_resp = auth_header(client.post(url).json(&init_body))
+    let init_resp = with_bearer(client.post(url).json(&init_body), bearer)
         .send()
         .await
         .map_err(|e| anyhow::anyhow!("failed to POST {url}: {e}"))?;
@@ -498,9 +546,14 @@ async fn run_mcp_inspect(url: &str, bearer: Option<&str>) -> anyhow::Result<()> 
     if let Some(err) = init_json.get("error") {
         return Err(anyhow::anyhow!("initialize returned JSON-RPC error: {err}"));
     }
+    Ok(init_json)
+}
 
-    // .pointer(): a server that omits (or mistypes) any of these fields gets
-    // the "(unknown)" placeholders — never a panic in a diagnostic command.
+/// Print the server / protocol / capabilities header from the `initialize`
+/// result. `.pointer()`: a server that omits (or mistypes) any of these
+/// fields gets the "(unknown)" placeholders — never a panic in a diagnostic
+/// command.
+fn print_mcp_server_info(url: &str, init_json: &serde_json::Value) {
     let protocol_version = init_json
         .pointer("/result/protocolVersion")
         .and_then(|v| v.as_str())
@@ -530,65 +583,45 @@ async fn run_mcp_inspect(url: &str, bearer: Option<&str>) -> anyhow::Result<()> 
             caps.join(", ")
         }
     );
+}
 
-    // ── tools/list ────────────────────────────────────────────────────────
-    let list_body = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 2,
-        "method": "tools/list"
-    });
-    let list_resp = auth_header(client.post(url).json(&list_body))
-        .send()
-        .await?
-        .error_for_status()?;
-    let list_json: serde_json::Value = list_resp.json().await?;
-    if let Some(err) = list_json.get("error") {
-        return Err(anyhow::anyhow!("tools/list returned JSON-RPC error: {err}"));
-    }
-
-    let tools = list_json
-        .pointer("/result/tools")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-
+/// Print one tool's name/description/schemas from the `tools/list` result.
+fn print_tool_entry(tool: &serde_json::Value) {
+    let name = tool["name"].as_str().unwrap_or("(unnamed)");
+    let desc = tool["description"].as_str().unwrap_or("");
+    let has_output_schema = tool.get("outputSchema").is_some();
     println!();
-    if tools.is_empty() {
-        println!("No tools registered. Add a `[function.<name>]` block to riz.toml.");
-        return Ok(());
+    println!("  • {name}");
+    if !desc.is_empty() {
+        println!("    {desc}");
     }
-    println!("Registered tools ({}):", tools.len());
-    for tool in &tools {
-        let name = tool["name"].as_str().unwrap_or("(unnamed)");
-        let desc = tool["description"].as_str().unwrap_or("");
-        let has_output_schema = tool.get("outputSchema").is_some();
-        println!();
-        println!("  • {name}");
-        if !desc.is_empty() {
-            println!("    {desc}");
-        }
+    println!(
+        "    inputSchema:   {}",
+        schema_summary(&tool["inputSchema"])
+    );
+    if let Some(typed) = typed_params_summary(&tool["inputSchema"]) {
+        println!("    typed params:  {typed}");
+    }
+    if has_output_schema {
         println!(
-            "    inputSchema:   {}",
-            schema_summary(&tool["inputSchema"])
+            "    outputSchema:  {} (MCP 2025-06-18+ structured output)",
+            schema_summary(&tool["outputSchema"])
         );
-        if let Some(typed) = typed_params_summary(&tool["inputSchema"]) {
-            println!("    typed params:  {typed}");
-        }
-        if has_output_schema {
-            println!(
-                "    outputSchema:  {} (MCP 2025-06-18+ structured output)",
-                schema_summary(&tool["outputSchema"])
-            );
-        } else {
-            println!("    outputSchema:  — (not declared)");
-        }
+    } else {
+        println!("    outputSchema:  — (not declared)");
     }
-    // ── SSE channel probe (Streamable HTTP, spec 2025-03-26+) ───────────────
-    // GET with Accept: text/event-stream opens the server-initiated channel.
-    // Verify it answers 200 text/event-stream; don't consume the stream.
-    let sse_resp = auth_header(client.get(url).header("accept", "text/event-stream"))
-        .send()
-        .await;
+}
+
+/// SSE channel probe (Streamable HTTP, spec 2025-03-26+): GET with Accept:
+/// text/event-stream opens the server-initiated channel. Verify it answers
+/// 200 text/event-stream; don't consume the stream.
+async fn probe_sse_channel(client: &reqwest::Client, url: &str, bearer: Option<&str>) {
+    let sse_resp = with_bearer(
+        client.get(url).header("accept", "text/event-stream"),
+        bearer,
+    )
+    .send()
+    .await;
     println!();
     match sse_resp {
         Ok(r) if r.status().is_success() => {
@@ -606,10 +639,6 @@ async fn run_mcp_inspect(url: &str, bearer: Option<&str>) -> anyhow::Result<()> 
         Ok(r) => println!("SSE channel:   unavailable (GET → {})", r.status()),
         Err(e) => println!("SSE channel:   probe failed: {e}"),
     }
-
-    println!();
-    println!("✓ MCP endpoint healthy. Point Claude / Cursor at {url} to use these tools.");
-    Ok(())
 }
 
 /// Severity of a single doctor check. PASS is silent-ish, WARN means the
@@ -640,258 +669,48 @@ fn report(severity: Finding, label: &str, detail: &str) {
     }
 }
 
+/// Running warn/fail tally across the doctor checks.
+/// saturating: a finding tally can never meaningfully exceed u32::MAX;
+/// a pinned count beats an overflow panic mid-diagnosis.
+struct DoctorTally {
+    warns: u32,
+    fails: u32,
+}
+
+impl DoctorTally {
+    fn record(&mut self, sev: Finding) {
+        match sev {
+            Finding::Pass => {}
+            Finding::Warn => self.warns = self.warns.saturating_add(1),
+            Finding::Fail => self.fails = self.fails.saturating_add(1),
+        }
+    }
+}
+
 /// Pre-flight diagnostic. Verifies the environment is ready for `riz run`
 /// without actually booting the runtime. Each check prints a single line;
 /// the summary tail counts warnings and failures so CI can grep on `riz
 /// doctor` output if desired.
 async fn run_doctor(config_path: &str) -> anyhow::Result<()> {
-    let mut warns: u32 = 0;
-    let mut fails: u32 = 0;
-    // saturating: a finding tally can never meaningfully exceed u32::MAX;
-    // a pinned count beats an overflow panic mid-diagnosis.
-    let mut record = |sev: Finding| match sev {
-        Finding::Pass => {}
-        Finding::Warn => warns = warns.saturating_add(1),
-        Finding::Fail => fails = fails.saturating_add(1),
-    };
+    let mut tally = DoctorTally { warns: 0, fails: 0 };
 
     println!("riz doctor — pre-flight checks\n");
 
-    // 1. riz.toml — exists, parses, validates.
-    let toml_path = std::path::Path::new(config_path);
-    if !toml_path.exists() {
-        report(
-            Finding::Fail,
-            "riz.toml present",
-            &format!("not found at {config_path}"),
-        );
-        record(Finding::Fail);
-        println!("\n  Hint: run `riz init <template>` to scaffold one.");
-        println!("\n✗ 1 failure — cannot continue without a config.");
-        // Rule 1 deviation (docs/SAFETY.md): doctor is a top-level CLI
-        // diagnostic whose contract is "summary on stdout, exit code 1" —
-        // bubbling an anyhow::Err would duplicate the verdict on stderr.
-        #[allow(clippy::exit)]
-        std::process::exit(1);
-    }
-    report(Finding::Pass, "riz.toml present", config_path);
-    record(Finding::Pass);
-
-    let config = match config::Config::from_file(config_path) {
-        Ok(c) => {
-            report(Finding::Pass, "riz.toml parses", "");
-            record(Finding::Pass);
-            c
-        }
-        Err(e) => {
-            report(Finding::Fail, "riz.toml parses", &format!("{e}"));
-            record(Finding::Fail);
-            println!(
-                "\n✗ {} failure(s) — cannot continue without parseable config.",
-                fails
-            );
-            // Rule 1 deviation (docs/SAFETY.md): top-level CLI verdict path;
-            // the summary above is the message, the exit code is the contract.
-            #[allow(clippy::exit)]
-            std::process::exit(1);
-        }
-    };
-
-    match config.validate() {
-        Ok(_) => {
-            report(
-                Finding::Pass,
-                "riz.toml validates",
-                &format!("{} function(s)", config.functions.len()),
-            );
-            record(Finding::Pass);
-        }
-        Err(e) => {
-            report(Finding::Fail, "riz.toml validates", &e.to_string());
-            record(Finding::Fail);
-        }
-    }
+    // 1. riz.toml — exists, parses, validates. Unrecoverable findings
+    //    (missing / unparseable config) exit inside.
+    let config = doctor_check_config(config_path, &mut tally);
 
     // 2. Runtime binaries — only check the ones actually needed by the config.
-    let mut needs_bun = false;
-    let mut needs_python = false;
-    let mut needs_node = false;
-    let mut needs_rust_bin: Vec<(String, std::path::PathBuf)> = Vec::new();
-    for (name, fc) in &config.functions {
-        match fc.runtime {
-            config::RuntimeKind::Bun => needs_bun = true,
-            config::RuntimeKind::Python => needs_python = true,
-            config::RuntimeKind::Node => needs_node = true,
-            // Rust and Go handlers are pre-compiled native binaries — there's
-            // no run-time toolchain to check, just that the binary exists
-            // (verified in the per-function handler-file pass below).
-            config::RuntimeKind::Rust | config::RuntimeKind::Go => {
-                needs_rust_bin.push((name.clone(), fc.handler.clone()));
-            }
-            // WASM needs no external toolchain at run time — wasmtime is
-            // embedded in the riz binary. The `.wasm` module presence is
-            // checked in the per-function handler-file pass below.
-            config::RuntimeKind::Wasm => {}
-        }
-    }
+    doctor_check_runtime_binaries(&config, &mut tally);
 
-    if needs_bun {
-        match which_binary("bun") {
-            Some(path) => {
-                report(Finding::Pass, "bun on PATH", &path.display().to_string());
-                record(Finding::Pass);
-            }
-            None => {
-                report(
-                    Finding::Fail,
-                    "bun on PATH",
-                    "not found — required for TypeScript/JavaScript handlers",
-                );
-                record(Finding::Fail);
-                println!("       Install: curl -fsSL https://bun.sh/install | bash");
-            }
-        }
-    }
+    // 3. Per-function handler-file presence.
+    doctor_check_handler_files(&config, &mut tally);
 
-    if needs_python {
-        match which_binary("python3") {
-            Some(path) => {
-                report(
-                    Finding::Pass,
-                    "python3 on PATH",
-                    &path.display().to_string(),
-                );
-                record(Finding::Pass);
-            }
-            None => {
-                report(
-                    Finding::Fail,
-                    "python3 on PATH",
-                    "not found — required for Python handlers",
-                );
-                record(Finding::Fail);
-            }
-        }
-    }
-
-    if needs_node {
-        match which_binary("node") {
-            Some(path) => {
-                report(Finding::Pass, "node on PATH", &path.display().to_string());
-                record(Finding::Pass);
-            }
-            None => {
-                report(
-                    Finding::Fail,
-                    "node on PATH",
-                    "not found — required for Node.js handlers",
-                );
-                record(Finding::Fail);
-                println!("       Install: https://nodejs.org/en/download");
-            }
-        }
-    }
-
-    // 3. Per-function handler-file presence. For Bun/Python/Node this is the
-    //    .ts/.py/.mjs file; for Rust it's the precompiled binary at `handler =`.
-    for (name, fc) in &config.functions {
-        let handler_str = fc.handler.display().to_string();
-        let label = format!("function `{name}` handler");
-        match fc.runtime {
-            config::RuntimeKind::Bun | config::RuntimeKind::Python | config::RuntimeKind::Node => {
-                // Handler is "file.ext.export" or "./path/file.handler". Strip
-                // the trailing export segment and check the file exists.
-                let candidate = strip_handler_export(&fc.handler);
-                if candidate.exists() {
-                    report(Finding::Pass, &label, &candidate.display().to_string());
-                    record(Finding::Pass);
-                } else {
-                    report(
-                        Finding::Fail,
-                        &label,
-                        &format!("file not found: {}", candidate.display()),
-                    );
-                    record(Finding::Fail);
-                }
-            }
-            config::RuntimeKind::Rust | config::RuntimeKind::Go => {
-                if fc.handler.exists() {
-                    report(Finding::Pass, &label, &handler_str);
-                    record(Finding::Pass);
-                } else {
-                    report(
-                        Finding::Warn,
-                        &label,
-                        &format!("binary not built: {handler_str}"),
-                    );
-                    record(Finding::Warn);
-                    let hint = match fc.runtime {
-                        config::RuntimeKind::Go => "go build -o <handler> .",
-                        _ => "cargo build --release",
-                    };
-                    println!("       Hint: {hint}");
-                }
-            }
-            config::RuntimeKind::Wasm => {
-                if fc.handler.exists() {
-                    report(Finding::Pass, &label, &handler_str);
-                    record(Finding::Pass);
-                } else {
-                    report(
-                        Finding::Warn,
-                        &label,
-                        &format!("wasm module not built: {handler_str}"),
-                    );
-                    record(Finding::Warn);
-                    println!("       Hint: cargo build --release --target wasm32-wasip1");
-                }
-            }
-        }
-    }
-
-    // 4. Port availability. If something is already bound to the port, hit
-    //    /_riz/health to see if it's a healthy Riz — that's still "OK,"
-    //    just a different kind of OK.
-    let host = config.server.host.clone();
-    let port = config.server.port;
-    let bind_target = format!("{host}:{port}");
-    match std::net::TcpListener::bind(&bind_target) {
-        Ok(listener) => {
-            drop(listener);
-            report(Finding::Pass, "configured port free", &bind_target);
-            record(Finding::Pass);
-        }
-        Err(_) => {
-            // Something else is bound. Hit /_riz/health and see if it's riz.
-            let probe_url = format!("http://{host}:{port}/_riz/health");
-            let probe = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(2))
-                .build()
-                .ok();
-            let already_riz = if let Some(c) = probe {
-                c.get(&probe_url).send().await.is_ok()
-            } else {
-                false
-            };
-            if already_riz {
-                report(
-                    Finding::Pass,
-                    "configured port",
-                    &format!("{bind_target} (riz already running)"),
-                );
-                record(Finding::Pass);
-            } else {
-                report(
-                    Finding::Fail,
-                    "configured port free",
-                    &format!("{bind_target} is in use by something else"),
-                );
-                record(Finding::Fail);
-            }
-        }
-    }
+    // 4. Port availability.
+    doctor_check_port(&config, &mut tally).await;
 
     // 5. Summary.
+    let (warns, fails) = (tally.warns, tally.fails);
     println!();
     if fails == 0 && warns == 0 {
         println!("✓ All checks passed. Run `riz run` to start.");
@@ -912,6 +731,253 @@ async fn run_doctor(config_path: &str) -> anyhow::Result<()> {
         // the summary above is the message, the exit code is the contract.
         #[allow(clippy::exit)]
         std::process::exit(1);
+    }
+}
+
+/// Doctor check 1: riz.toml exists, parses, and validates. A missing or
+/// unparseable config is unrecoverable for the remaining checks — those two
+/// findings print their own summary and exit 1.
+fn doctor_check_config(config_path: &str, tally: &mut DoctorTally) -> config::Config {
+    let toml_path = std::path::Path::new(config_path);
+    if !toml_path.exists() {
+        report(
+            Finding::Fail,
+            "riz.toml present",
+            &format!("not found at {config_path}"),
+        );
+        tally.record(Finding::Fail);
+        println!("\n  Hint: run `riz init <template>` to scaffold one.");
+        println!("\n✗ 1 failure — cannot continue without a config.");
+        // Rule 1 deviation (docs/SAFETY.md): doctor is a top-level CLI
+        // diagnostic whose contract is "summary on stdout, exit code 1" —
+        // bubbling an anyhow::Err would duplicate the verdict on stderr.
+        #[allow(clippy::exit)]
+        std::process::exit(1);
+    }
+    report(Finding::Pass, "riz.toml present", config_path);
+    tally.record(Finding::Pass);
+
+    let config = match config::Config::from_file(config_path) {
+        Ok(c) => {
+            report(Finding::Pass, "riz.toml parses", "");
+            tally.record(Finding::Pass);
+            c
+        }
+        Err(e) => {
+            report(Finding::Fail, "riz.toml parses", &format!("{e}"));
+            tally.record(Finding::Fail);
+            println!(
+                "\n✗ {} failure(s) — cannot continue without parseable config.",
+                tally.fails
+            );
+            // Rule 1 deviation (docs/SAFETY.md): top-level CLI verdict path;
+            // the summary above is the message, the exit code is the contract.
+            #[allow(clippy::exit)]
+            std::process::exit(1);
+        }
+    };
+
+    match config.validate() {
+        Ok(_) => {
+            report(
+                Finding::Pass,
+                "riz.toml validates",
+                &format!("{} function(s)", config.functions.len()),
+            );
+            tally.record(Finding::Pass);
+        }
+        Err(e) => {
+            report(Finding::Fail, "riz.toml validates", &e.to_string());
+            tally.record(Finding::Fail);
+        }
+    }
+    config
+}
+
+/// Doctor check 2: runtime binaries on PATH — only the ones the config's
+/// functions actually need.
+fn doctor_check_runtime_binaries(config: &config::Config, tally: &mut DoctorTally) {
+    let mut needs_bun = false;
+    let mut needs_python = false;
+    let mut needs_node = false;
+    let mut needs_rust_bin: Vec<(String, std::path::PathBuf)> = Vec::new();
+    for (name, fc) in &config.functions {
+        match fc.runtime {
+            config::RuntimeKind::Bun => needs_bun = true,
+            config::RuntimeKind::Python => needs_python = true,
+            config::RuntimeKind::Node => needs_node = true,
+            // Rust and Go handlers are pre-compiled native binaries — there's
+            // no run-time toolchain to check, just that the binary exists
+            // (verified in the per-function handler-file pass).
+            config::RuntimeKind::Rust | config::RuntimeKind::Go => {
+                needs_rust_bin.push((name.clone(), fc.handler.clone()));
+            }
+            // WASM needs no external toolchain at run time — wasmtime is
+            // embedded in the riz binary. The `.wasm` module presence is
+            // checked in the per-function handler-file pass.
+            config::RuntimeKind::Wasm => {}
+        }
+    }
+
+    if needs_bun {
+        match which_binary("bun") {
+            Some(path) => {
+                report(Finding::Pass, "bun on PATH", &path.display().to_string());
+                tally.record(Finding::Pass);
+            }
+            None => {
+                report(
+                    Finding::Fail,
+                    "bun on PATH",
+                    "not found — required for TypeScript/JavaScript handlers",
+                );
+                tally.record(Finding::Fail);
+                println!("       Install: curl -fsSL https://bun.sh/install | bash");
+            }
+        }
+    }
+
+    if needs_python {
+        match which_binary("python3") {
+            Some(path) => {
+                report(
+                    Finding::Pass,
+                    "python3 on PATH",
+                    &path.display().to_string(),
+                );
+                tally.record(Finding::Pass);
+            }
+            None => {
+                report(
+                    Finding::Fail,
+                    "python3 on PATH",
+                    "not found — required for Python handlers",
+                );
+                tally.record(Finding::Fail);
+            }
+        }
+    }
+
+    if needs_node {
+        match which_binary("node") {
+            Some(path) => {
+                report(Finding::Pass, "node on PATH", &path.display().to_string());
+                tally.record(Finding::Pass);
+            }
+            None => {
+                report(
+                    Finding::Fail,
+                    "node on PATH",
+                    "not found — required for Node.js handlers",
+                );
+                tally.record(Finding::Fail);
+                println!("       Install: https://nodejs.org/en/download");
+            }
+        }
+    }
+}
+
+/// Doctor check 3: per-function handler-file presence. For Bun/Python/Node
+/// this is the .ts/.py/.mjs file; for Rust it's the precompiled binary at
+/// `handler =`; for WASM the `.wasm` module.
+fn doctor_check_handler_files(config: &config::Config, tally: &mut DoctorTally) {
+    for (name, fc) in &config.functions {
+        let handler_str = fc.handler.display().to_string();
+        let label = format!("function `{name}` handler");
+        match fc.runtime {
+            config::RuntimeKind::Bun | config::RuntimeKind::Python | config::RuntimeKind::Node => {
+                // Handler is "file.ext.export" or "./path/file.handler". Strip
+                // the trailing export segment and check the file exists.
+                let candidate = strip_handler_export(&fc.handler);
+                if candidate.exists() {
+                    report(Finding::Pass, &label, &candidate.display().to_string());
+                    tally.record(Finding::Pass);
+                } else {
+                    report(
+                        Finding::Fail,
+                        &label,
+                        &format!("file not found: {}", candidate.display()),
+                    );
+                    tally.record(Finding::Fail);
+                }
+            }
+            config::RuntimeKind::Rust | config::RuntimeKind::Go => {
+                if fc.handler.exists() {
+                    report(Finding::Pass, &label, &handler_str);
+                    tally.record(Finding::Pass);
+                } else {
+                    report(
+                        Finding::Warn,
+                        &label,
+                        &format!("binary not built: {handler_str}"),
+                    );
+                    tally.record(Finding::Warn);
+                    let hint = match fc.runtime {
+                        config::RuntimeKind::Go => "go build -o <handler> .",
+                        _ => "cargo build --release",
+                    };
+                    println!("       Hint: {hint}");
+                }
+            }
+            config::RuntimeKind::Wasm => {
+                if fc.handler.exists() {
+                    report(Finding::Pass, &label, &handler_str);
+                    tally.record(Finding::Pass);
+                } else {
+                    report(
+                        Finding::Warn,
+                        &label,
+                        &format!("wasm module not built: {handler_str}"),
+                    );
+                    tally.record(Finding::Warn);
+                    println!("       Hint: cargo build --release --target wasm32-wasip1");
+                }
+            }
+        }
+    }
+}
+
+/// Doctor check 4: port availability. If something is already bound to the
+/// port, hit /_riz/health to see if it's a healthy Riz — that's still "OK,"
+/// just a different kind of OK.
+async fn doctor_check_port(config: &config::Config, tally: &mut DoctorTally) {
+    let host = config.server.host.clone();
+    let port = config.server.port;
+    let bind_target = format!("{host}:{port}");
+    match std::net::TcpListener::bind(&bind_target) {
+        Ok(listener) => {
+            drop(listener);
+            report(Finding::Pass, "configured port free", &bind_target);
+            tally.record(Finding::Pass);
+        }
+        Err(_) => {
+            // Something else is bound. Hit /_riz/health and see if it's riz.
+            let probe_url = format!("http://{host}:{port}/_riz/health");
+            let probe = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(2))
+                .build()
+                .ok();
+            let already_riz = if let Some(c) = probe {
+                c.get(&probe_url).send().await.is_ok()
+            } else {
+                false
+            };
+            if already_riz {
+                report(
+                    Finding::Pass,
+                    "configured port",
+                    &format!("{bind_target} (riz already running)"),
+                );
+                tally.record(Finding::Pass);
+            } else {
+                report(
+                    Finding::Fail,
+                    "configured port free",
+                    &format!("{bind_target} is in use by something else"),
+                );
+                tally.record(Finding::Fail);
+            }
+        }
     }
 }
 
@@ -1070,81 +1136,107 @@ fn main() -> anyhow::Result<()> {
         .block_on(async_main())
 }
 
+/// Bearer token for the client commands: the --bearer flag, falling back to
+/// $RIZ_AUTH_BEARER_TOKEN.
+fn resolve_bearer(flag: Option<&String>) -> Option<String> {
+    flag.cloned()
+        .or_else(|| std::env::var("RIZ_AUTH_BEARER_TOKEN").ok())
+}
+
+/// `riz init`, resolved from its CLI flags: `--list` prints the official
+/// templates and exits; otherwise a template spec is required.
+fn run_init_command(
+    spec: Option<&str>,
+    dir: Option<&str>,
+    reference: Option<&str>,
+    list: bool,
+    force: bool,
+    git: bool,
+) -> anyhow::Result<()> {
+    if list {
+        print_template_list();
+        return Ok(());
+    }
+    let spec = spec.ok_or_else(|| {
+        anyhow::anyhow!("template spec required. Run `riz init --list` to see official templates.")
+    })?;
+    run_init(spec, dir, reference, git, force)
+}
+
+/// Dispatch the subcommands that run BEFORE the generic config-load path:
+/// `mcp inspect` and `a2a send` talk to a running instance (no config),
+/// `doctor` owns its config-load so parse failures surface as findings,
+/// `init` must work without an existing config, and `scaffold static`
+/// reads the config itself to DERIVE the agent-discovery files.
+/// Returns `None` for the serve path (`run`/`validate`/`routes`/default),
+/// which `async_main` handles with the loaded config.
+async fn dispatch_client_command(cli: &Cli) -> Option<anyhow::Result<()>> {
+    match &cli.command {
+        Some(Commands::Mcp {
+            cmd: McpCmd::Inspect { url, bearer },
+        }) => {
+            let token = resolve_bearer(bearer.as_ref());
+            Some(run_mcp_inspect(url, token.as_deref()).await)
+        }
+        Some(Commands::A2a {
+            cmd:
+                A2aCmd::Send {
+                    base,
+                    message,
+                    bearer,
+                },
+        }) => {
+            let token = resolve_bearer(bearer.as_ref());
+            Some(run_a2a_send(base, message, token.as_deref()).await)
+        }
+        Some(Commands::Doctor) => {
+            let config_path = effective_config_path(cli.dev, cli.config.as_deref());
+            Some(run_doctor(&config_path).await)
+        }
+        Some(Commands::Init {
+            spec,
+            dir,
+            r#ref,
+            list,
+            force,
+            git,
+        }) => Some(run_init_command(
+            spec.as_deref(),
+            dir.as_deref(),
+            r#ref.as_deref(),
+            *list,
+            *force,
+            *git,
+        )),
+        Some(Commands::Scaffold {
+            what:
+                ScaffoldCmd::Static {
+                    dir,
+                    mount,
+                    wire,
+                    force,
+                },
+        }) => {
+            let config_path = effective_config_path(cli.dev, cli.config.as_deref());
+            Some(run_scaffold_static(
+                &config_path,
+                dir.as_deref(),
+                mount,
+                *wire,
+                *force,
+            ))
+        }
+        _ => None,
+    }
+}
+
 async fn async_main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // `riz mcp inspect` doesn't load a config — it talks to a running
-    // instance. Handle it before the config-load path.
-    if let Some(Commands::Mcp {
-        cmd: McpCmd::Inspect { url, bearer },
-    }) = &cli.command
-    {
-        let token = bearer
-            .clone()
-            .or_else(|| std::env::var("RIZ_AUTH_BEARER_TOKEN").ok());
-        return run_mcp_inspect(url, token.as_deref()).await;
-    }
-
-    // `riz a2a send` talks to a running A2A server — no config needed.
-    if let Some(Commands::A2a {
-        cmd: A2aCmd::Send {
-            base,
-            message,
-            bearer,
-        },
-    }) = &cli.command
-    {
-        let token = bearer
-            .clone()
-            .or_else(|| std::env::var("RIZ_AUTH_BEARER_TOKEN").ok());
-        return run_a2a_send(base, message, token.as_deref()).await;
-    }
-
-    // `riz doctor` has its own config-load path that surfaces parse failures
-    // as findings instead of aborting the process. Handle it before the
-    // generic config-load below.
-    if matches!(cli.command, Some(Commands::Doctor)) {
-        let config_path = effective_config_path(cli.dev, cli.config.as_deref());
-        return run_doctor(&config_path).await;
-    }
-
-    // `riz init` doesn't need (and shouldn't require) an existing config.
-    // Handle it before the config-load path.
-    if let Some(Commands::Init {
-        spec,
-        dir,
-        r#ref,
-        list,
-        force,
-        git,
-    }) = &cli.command
-    {
-        if *list {
-            print_template_list();
-            return Ok(());
-        }
-        let spec = spec.as_deref().ok_or_else(|| {
-            anyhow::anyhow!(
-                "template spec required. Run `riz init --list` to see official templates."
-            )
-        })?;
-        return run_init(spec, dir.as_deref(), r#ref.as_deref(), *git, *force);
-    }
-
-    // `riz scaffold static` reads the project config and DERIVES the
-    // agent-discovery files from it. Handle before the generic run path.
-    if let Some(Commands::Scaffold {
-        what:
-            ScaffoldCmd::Static {
-                dir,
-                mount,
-                wire,
-                force,
-            },
-    }) = &cli.command
-    {
-        let config_path = effective_config_path(cli.dev, cli.config.as_deref());
-        return run_scaffold_static(&config_path, dir.as_deref(), mount, *wire, *force);
+    // Client / scaffold / diagnostic subcommands run before the generic
+    // config-load path below.
+    if let Some(result) = dispatch_client_command(&cli).await {
+        return result;
     }
 
     let config_path = effective_config_path(cli.dev, cli.config.as_deref());
@@ -1161,6 +1253,138 @@ async fn async_main() -> anyhow::Result<()> {
     // in TUI mode — TuiLogLayer needs the sink set at registry time.
     let (log_tx, log_rx) = tokio::sync::mpsc::channel::<state::LogEntry>(10_000);
 
+    init_tracing(tui_enabled, filter, &log_tx);
+
+    let config = config::Config::from_file(&config_path)?;
+    config
+        .validate()
+        .map_err(|e| anyhow::anyhow!("invalid config: {e}"))?;
+
+    export_broker_resources(&config);
+
+    if let Some(result) = dispatch_config_report(&cli, &config) {
+        return result;
+    }
+
+    let port = cli.port.unwrap_or(config.server.port);
+    let host: std::net::IpAddr = config.server.host.parse()?;
+    let addr = SocketAddr::new(host, port);
+
+    let registry = Arc::new(process::runtime::RuntimeRegistry::new()?);
+    let cache = cache::CacheLayer::new(&config.cache);
+
+    let (mut telemetry_supervisor, telemetry) = start_telemetry(&config);
+    // log_tx / log_rx were already created earlier (before tracing init)
+    // so the TUI log layer's sink could be set at registry time. They're
+    // in scope from the outer let-binding.
+
+    let deploy_cfg = &config.deploy;
+    if config.effective_deploy_key().is_none() && deploy_cfg.allowed_cidrs.is_empty() {
+        tracing::error!("SECURITY: /deploy has no auth configured — endpoint will refuse all requests. Set RIZ_DEPLOY_KEY or deploy_key/allowed_cidrs in config.");
+    }
+
+    let riz_state = Arc::new(state::RizState::new());
+    register_function_states(&riz_state, &config).await;
+
+    let process_manager = Arc::new(process::ProcessManager::new(riz_state.clone()));
+
+    // Spawn one process pool per function. Each spawned process bumps
+    // cold_starts on the matching FunctionState.
+    process_manager
+        .spawn_all(&config.functions, &registry, log_tx.clone())
+        .await?;
+
+    let ws_connections = ws::ConnectionStore::new();
+    let router =
+        build_dispatch_router(&config, &riz_state, &process_manager, &ws_connections).await;
+
+    let app_state = Arc::new(state::AppState {
+        config: tokio::sync::RwLock::new(config.clone()),
+        router: tokio::sync::RwLock::new(router),
+        process_manager,
+        cache,
+        auth_cache: crate::auth::authorizer::AuthCache::new(),
+        telemetry,
+        runtime_registry: registry,
+        log_tx,
+        log_rx: tokio::sync::Mutex::new(log_rx),
+        riz_state,
+        ws_connections,
+    });
+
+    // tui_enabled was determined earlier (before tracing init) so the
+    // tracing-subscriber composition matches the actual TUI choice. The
+    // value is still in scope from the outer let-binding.
+    spawn_tui_or_log_drain(&app_state, tui_enabled);
+    spawn_hotreload_watchers(&app_state, &config_path);
+
+    log_startup_mode(cli.dev, addr);
+
+    // Serve until graceful shutdown drains inside `server::run` (its
+    // `with_graceful_shutdown`). Once this returns the process is done serving.
+    let serve_result = server::run(app_state, addr).await;
+
+    // Post-serve telemetry flush: gracefully shut down the supervisor so every
+    // span that was emitted (enqueued) before now is drained to the child and
+    // flushed to the sink/exporter — no span loss — within a bounded timeout.
+    // The `AppState.telemetry` handle clone may still exist; shutdown drains to
+    // empty by deadline rather than waiting for the channel to close, so it
+    // never deadlocks on that surviving sender.
+    if let Some(sup) = telemetry_supervisor.take() {
+        sup.shutdown().await;
+    }
+
+    serve_result
+}
+
+/// Resource broker: hand the [resources] definitions to wasm pool children
+/// through the process environment. Children inherit this plus the DSN env
+/// vars the resources name — grants travel per-function in argv (see
+/// WasmRuntime::spawn_command); credentials never appear in argv or config.
+fn export_broker_resources(config: &config::Config) {
+    if config
+        .functions
+        .values()
+        .any(|f| !f.capabilities.is_empty())
+    {
+        if let Ok(json) = serde_json::to_string(&config.resources) {
+            std::env::set_var("RIZ_BROKER_RESOURCES", json);
+        }
+    }
+}
+
+/// The config-report subcommands (`validate` / `routes`): they need the
+/// loaded config but no runtime. `None` means the serve path continues.
+fn dispatch_config_report(cli: &Cli, config: &config::Config) -> Option<anyhow::Result<()>> {
+    match &cli.command {
+        Some(Commands::Validate) => {
+            println!("Config OK: {} functions", config.functions.len());
+            Some(Ok(()))
+        }
+        Some(Commands::Routes) => {
+            print_routes_report(config);
+            Some(Ok(()))
+        }
+        _ => None,
+    }
+}
+
+/// One startup line, shaped for the mode: human text in --dev, structured
+/// fields headless.
+fn log_startup_mode(dev: bool, addr: SocketAddr) {
+    if dev {
+        info!("riz starting in [dev] mode on {addr}");
+    } else {
+        info!(mode = "production", addr = %addr, "riz starting");
+    }
+}
+
+/// Install the tracing subscriber matching the TUI choice.
+fn init_tracing(
+    tui_enabled: bool,
+    filter: EnvFilter,
+    log_tx: &tokio::sync::mpsc::Sender<state::LogEntry>,
+) {
     if tui_enabled {
         // TUI mode: route ALL tracing events into the TUI's log channel.
         // Writing to stdout while the TUI owns the alternate screen
@@ -1181,115 +1405,76 @@ async fn async_main() -> anyhow::Result<()> {
             .with_env_filter(filter)
             .init();
     }
+}
 
-    let config = config::Config::from_file(&config_path)?;
-    config
-        .validate()
-        .map_err(|e| anyhow::anyhow!("invalid config: {e}"))?;
-
-    // Resource broker: hand the [resources] definitions to wasm pool children
-    // through the process environment. Children inherit this plus the DSN env
-    // vars the resources name — grants travel per-function in argv (see
-    // WasmRuntime::spawn_command); credentials never appear in argv or config.
-    if config
-        .functions
-        .values()
-        .any(|f| !f.capabilities.is_empty())
-    {
-        if let Ok(json) = serde_json::to_string(&config.resources) {
-            std::env::set_var("RIZ_BROKER_RESOURCES", json);
-        }
+/// `riz routes` — two origins, obviously different: your functions, then the
+/// system surface riz itself mounts (from the same table the registry and
+/// --dev TUI report).
+fn print_routes_report(config: &config::Config) {
+    println!("user functions:");
+    for (name, f) in &config.functions {
+        let routes: Vec<String> = f
+            .effective_routes(name)
+            .into_iter()
+            .map(|r| format!("{} {}", r.method, r.path))
+            .collect();
+        println!(
+            "  {} [{}] {:?}  routes: {}",
+            name,
+            f.runtime.as_str(),
+            f.handler,
+            routes.join(", ")
+        );
     }
-
-    match &cli.command {
-        Some(Commands::Validate) => {
-            println!("Config OK: {} functions", config.functions.len());
-            return Ok(());
-        }
-        Some(Commands::Routes) => {
-            // Two origins, obviously different: your functions, then the
-            // system surface riz itself mounts (from the same table the
-            // registry and --dev TUI report).
-            println!("user functions:");
-            for (name, f) in &config.functions {
-                let routes: Vec<String> = f
-                    .effective_routes(name)
-                    .into_iter()
-                    .map(|r| format!("{} {}", r.method, r.path))
-                    .collect();
-                println!(
-                    "  {} [{}] {:?}  routes: {}",
-                    name,
-                    f.runtime.as_str(),
-                    f.handler,
-                    routes.join(", ")
-                );
-            }
-            println!("\nsystem surface (mounted by riz):");
-            for (name, routes) in system::system_surface(&config) {
-                println!("  {} [system]  routes: {}", name, routes.join(", "));
-            }
-            return Ok(());
-        }
-        _ => {}
+    println!("\nsystem surface (mounted by riz):");
+    for (name, routes) in system::system_surface(config) {
+        println!("  {} [system]  routes: {}", name, routes.join(", "));
     }
+}
 
-    let port = cli.port.unwrap_or(config.server.port);
-    let host: std::net::IpAddr = config.server.host.parse()?;
-    let addr = SocketAddr::new(host, port);
-
-    let registry = Arc::new(process::runtime::RuntimeRegistry::new()?);
-    let cache = cache::CacheLayer::new(&config.cache);
-
-    // Telemetry: when enabled, spawn the isolated `__telemetry` child and use
-    // its non-blocking handle; otherwise a disabled (drop-everything) handle so
-    // every emit call site stays unconditional. When an OTLP endpoint is
-    // configured the child exports OTLP/HTTP-JSON; otherwise it appends to a
-    // sink file. The supervisor is held (not leaked) so it can be gracefully
-    // shut down — flushing all enqueued spans — after the server drains.
-    let mut telemetry_supervisor: Option<observability::TelemetrySupervisor> = None;
-    let telemetry = if config.telemetry.enabled {
-        let sink = std::env::temp_dir().join("riz-telemetry.jsonl");
-        let target = observability::ExportTarget {
-            endpoint: config.telemetry.endpoint.clone(),
-            headers: config.telemetry.headers.clone(),
-        };
-        match observability::TelemetrySupervisor::spawn(
-            &sink,
-            config.telemetry.queue_capacity,
-            target,
-        ) {
-            Ok(sup) => {
-                let handle = sup.handle();
-                // Keep the supervisor (and its child) alive; shut it down
-                // gracefully after the server-run future returns.
-                telemetry_supervisor = Some(sup);
-                handle
-            }
-            Err(e) => {
-                tracing::warn!("telemetry: supervisor spawn failed: {e} — telemetry disabled");
-                observability::TelemetryHandle::disabled()
-            }
-        }
-    } else {
-        observability::TelemetryHandle::disabled()
+/// Telemetry: when enabled, spawn the isolated `__telemetry` child and use
+/// its non-blocking handle; otherwise a disabled (drop-everything) handle so
+/// every emit call site stays unconditional. When an OTLP endpoint is
+/// configured the child exports OTLP/HTTP-JSON; otherwise it appends to a
+/// sink file. The supervisor is returned (not leaked) so it can be gracefully
+/// shut down — flushing all enqueued spans — after the server drains.
+fn start_telemetry(
+    config: &config::Config,
+) -> (
+    Option<observability::TelemetrySupervisor>,
+    observability::TelemetryHandle,
+) {
+    if !config.telemetry.enabled {
+        return (None, observability::TelemetryHandle::disabled());
+    }
+    let sink = std::env::temp_dir().join("riz-telemetry.jsonl");
+    let target = observability::ExportTarget {
+        endpoint: config.telemetry.endpoint.clone(),
+        headers: config.telemetry.headers.clone(),
     };
-    // log_tx / log_rx were already created earlier (before tracing init)
-    // so the TUI log layer's sink could be set at registry time. They're
-    // in scope from the outer let-binding.
-
-    let deploy_cfg = &config.deploy;
-    if config.effective_deploy_key().is_none() && deploy_cfg.allowed_cidrs.is_empty() {
-        tracing::error!("SECURITY: /deploy has no auth configured — endpoint will refuse all requests. Set RIZ_DEPLOY_KEY or deploy_key/allowed_cidrs in config.");
+    match observability::TelemetrySupervisor::spawn(&sink, config.telemetry.queue_capacity, target)
+    {
+        Ok(sup) => {
+            let handle = sup.handle();
+            // Keep the supervisor (and its child) alive; shut it down
+            // gracefully after the server-run future returns.
+            (Some(sup), handle)
+        }
+        Err(e) => {
+            tracing::warn!("telemetry: supervisor spawn failed: {e} — telemetry disabled");
+            (None, observability::TelemetryHandle::disabled())
+        }
     }
+}
 
-    let riz_state = Arc::new(state::RizState::new());
+/// Register the ENTIRE system surface (probes, /_riz/* admin, and the
+/// conditional gateway/A2A endpoints) from the one shared table — the
+/// --dev TUI, /_riz/registry, and `riz routes` all report the same truth —
+/// then the user functions by name.
+async fn register_function_states(riz_state: &Arc<state::RizState>, config: &config::Config) {
     let stage = config.server.stage.clone();
     let default_ttl = config.cache.default_ttl_secs;
-    // Register the ENTIRE system surface (probes, /_riz/* admin, and the
-    // conditional gateway/A2A endpoints) from the one shared table — the
-    // --dev TUI, /_riz/registry, and `riz routes` all report the same truth.
-    for (name, routes) in system::system_surface(&config) {
+    for (name, routes) in system::system_surface(config) {
         riz_state
             .register(state::FunctionState::system(name, routes, &stage))
             .await;
@@ -1323,19 +1508,18 @@ async fn async_main() -> anyhow::Result<()> {
                 .await;
         }
     }
+}
 
-    let process_manager = Arc::new(process::ProcessManager::new(riz_state.clone()));
-
-    // Spawn one process pool per function. Each spawned process bumps
-    // cold_starts on the matching FunctionState.
-    process_manager
-        .spawn_all(&config.functions, &registry, log_tx.clone())
-        .await?;
-
-    // Build the handler list. System handlers mount FIRST so /_riz/* always
-    // beats any user attempt to shadow those paths.
+/// Build the handler list and the dispatch Router, wiring MCP's reentrant
+/// dependencies. System handlers mount FIRST so /_riz/* always beats any
+/// user attempt to shadow those paths.
+async fn build_dispatch_router(
+    config: &config::Config,
+    riz_state: &Arc<state::RizState>,
+    process_manager: &Arc<process::ProcessManager>,
+    ws_connections: &ws::ConnectionStore,
+) -> router::Router {
     let bearer = config.effective_bearer_token();
-    let ws_connections = ws::ConnectionStore::new();
     let mcp = Arc::new(system::mcp::McpHandler::new(
         riz_state.clone(),
         bearer.clone(),
@@ -1372,7 +1556,7 @@ async fn async_main() -> anyhow::Result<()> {
                 handlers.push(Arc::new(h));
             }
             config::Protocol::WebSocket => {
-                // Mounted in build_app below; no LambdaHandler instance.
+                // Mounted in build_app; no LambdaHandler instance.
             }
         }
     }
@@ -1390,25 +1574,12 @@ async fn async_main() -> anyhow::Result<()> {
         stage: config.server.stage.clone(),
     })
     .await;
-    let router = router::Router::new(handlers);
+    router::Router::new(handlers)
+}
 
-    let app_state = Arc::new(state::AppState {
-        config: tokio::sync::RwLock::new(config.clone()),
-        router: tokio::sync::RwLock::new(router),
-        process_manager,
-        cache,
-        auth_cache: crate::auth::authorizer::AuthCache::new(),
-        telemetry,
-        runtime_registry: registry,
-        log_tx,
-        log_rx: tokio::sync::Mutex::new(log_rx),
-        riz_state,
-        ws_connections,
-    });
-
-    // tui_enabled was determined earlier (before tracing init) so the
-    // tracing-subscriber composition matches the actual TUI choice. The
-    // value is still in scope from the outer let-binding.
+/// --dev: hand the terminal to the TUI on its own thread. Headless: drain
+/// logs to tracing so the bounded channel doesn't back up.
+fn spawn_tui_or_log_drain(app_state: &Arc<state::AppState>, tui_enabled: bool) {
     if tui_enabled {
         let tui_state = app_state.clone();
         let tui_handle = tokio::runtime::Handle::current();
@@ -1418,7 +1589,6 @@ async fn async_main() -> anyhow::Result<()> {
             }
         });
     } else {
-        // In headless mode, drain logs to tracing so the bounded channel doesn't back up.
         let state_for_drain = app_state.clone();
         tokio::spawn(async move {
             let mut rx = state_for_drain.log_rx.lock().await;
@@ -1432,42 +1602,21 @@ async fn async_main() -> anyhow::Result<()> {
             }
         });
     }
+}
 
+/// Watch riz.toml for config reloads, and each function's handler directory
+/// for source changes that hot-swap its pool.
+fn spawn_hotreload_watchers(app_state: &Arc<state::AppState>, config_path: &str) {
     let watch_state = app_state.clone();
-    let watch_config_path = config_path.clone();
+    let watch_config_path = config_path.to_string();
     tokio::spawn(async move {
         hotreload::watch_config(watch_config_path, watch_state).await;
     });
 
-    // Also watch each function's handler directory and hot-swap its pool
-    // when source files change. Non-recursive (one level only); deep imports
-    // need a manual touch on the handler file to trigger.
     let handler_watch_state = app_state.clone();
     tokio::spawn(async move {
         hotreload::watch_handler_sources(handler_watch_state).await;
     });
-
-    if cli.dev {
-        info!("riz starting in [dev] mode on {addr}");
-    } else {
-        info!(mode = "production", addr = %addr, "riz starting");
-    }
-
-    // Serve until graceful shutdown drains inside `server::run` (its
-    // `with_graceful_shutdown`). Once this returns the process is done serving.
-    let serve_result = server::run(app_state, addr).await;
-
-    // Post-serve telemetry flush: gracefully shut down the supervisor so every
-    // span that was emitted (enqueued) before now is drained to the child and
-    // flushed to the sink/exporter — no span loss — within a bounded timeout.
-    // The `AppState.telemetry` handle clone may still exist; shutdown drains to
-    // empty by deadline rather than waiting for the channel to close, so it
-    // never deadlocks on that surviving sender.
-    if let Some(sup) = telemetry_supervisor.take() {
-        sup.shutdown().await;
-    }
-
-    serve_result
 }
 
 #[cfg(test)]

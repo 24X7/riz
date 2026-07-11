@@ -286,8 +286,53 @@ async fn backoff_or_shutdown(
     shutdown
 }
 
+/// Outcome of one child-intake attempt (the spawn side of the supervise loop).
+enum ChildIntake {
+    /// A child is up and its stdin is ours to drain into.
+    Ready(tokio::process::Child, tokio::process::ChildStdin),
+    /// This attempt failed (spawn error after backoff, or no piped stdin):
+    /// try again.
+    Retry,
+    /// Shutdown was signalled while backing off — stop supervising.
+    Shutdown,
+}
+
+/// Intake phase of the supervise loop: spawn one telemetry child and take its
+/// piped stdin. A failed spawn backs off (shutdown-aware) before retrying; a
+/// child that comes up without a piped stdin is killed and retried.
+async fn acquire_child(
+    exe: &Path,
+    sink: &Path,
+    target: &ExportTarget,
+    headers_json: &str,
+    backoff: &mut Duration,
+    shutdown_rx: &mut oneshot::Receiver<()>,
+) -> ChildIntake {
+    let mut child = match spawn_telemetry_child(exe, sink, target, headers_json) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(error = %e, "telemetry: spawn failed; backing off");
+            // A shutdown while we're failing to spawn should still terminate
+            // the loop (nothing to flush to — the child never came up).
+            if backoff_or_shutdown(backoff, shutdown_rx).await {
+                return ChildIntake::Shutdown;
+            }
+            return ChildIntake::Retry;
+        }
+    };
+    match child.stdin.take() {
+        Some(stdin) => ChildIntake::Ready(child, stdin),
+        None => {
+            let _ = child.kill().await;
+            ChildIntake::Retry
+        }
+    }
+}
+
 /// The drain + respawn loop. Runs until the channel is closed (all handles
 /// dropped), the child needs respawning, or `shutdown()` is signalled.
+/// Child intake (spawn + stdin take + backoff) lives in [`acquire_child`];
+/// this loop owns the pid slot and the per-child drain/flush aggregation.
 async fn supervise_loop(
     mut rx: mpsc::Receiver<TelemetryEvent>,
     sink: PathBuf,
@@ -302,30 +347,24 @@ async fn supervise_loop(
 
     loop {
         // Spawn a fresh child.
-        let mut child = match spawn_telemetry_child(&exe, &sink, &target, &headers_json) {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!(error = %e, "telemetry: spawn failed; backing off");
-                // A shutdown while we're failing to spawn should still terminate
-                // the loop (nothing to flush to — the child never came up).
-                if backoff_or_shutdown(&mut backoff, &mut shutdown_rx).await {
-                    return;
-                }
-                continue;
-            }
+        let (mut child, mut stdin) = match acquire_child(
+            &exe,
+            &sink,
+            &target,
+            &headers_json,
+            &mut backoff,
+            &mut shutdown_rx,
+        )
+        .await
+        {
+            ChildIntake::Ready(child, stdin) => (child, stdin),
+            ChildIntake::Retry => continue,
+            ChildIntake::Shutdown => return,
         };
 
         *pid_slot.lock().await = child.id();
         // Successful spawn resets the backoff.
         backoff = RESPAWN_BACKOFF_MIN;
-
-        let mut stdin = match child.stdin.take() {
-            Some(s) => s,
-            None => {
-                let _ = child.kill().await;
-                continue;
-            }
-        };
 
         // Drain the channel into the child's stdin until the child dies, the
         // channel closes, or shutdown is signalled. The channel is the host's

@@ -42,9 +42,17 @@ is never "documented only" if a lint can carry it.
 | **ratchet** | `scripts/safety-check.sh` report — counts may only go down | safety review loop |
 | **review** | not mechanizable — criteria for code review + the recurring Power-of-10 assessment | every PR touching `src/` |
 
+**Status (2026-07-06): the ratchet tier is empty.** The 253 sites baselined on
+2026-07-03 are at zero (see "Ratchet baseline" below). Every lint that carried
+a rule now sits in the `enforced` or `gate` tier; the `review` tier remains
+permanently active for what lints cannot see.
+
 **Promotion protocol:** when a ratchet lint's count reaches zero, it moves to
-the CI gate; once test code also passes it (or a `clippy.toml`
-`allow-*-in-tests` option covers it), it moves to `[workspace.lints] deny`.
+the CI gate; once test code also passes it on `--all-targets` (or a
+`clippy.toml` `allow-*-in-tests` option fully covers it), it moves to
+`[workspace.lints] deny`. Most fail-loud lints stay in the `gate` tier: their
+`allow-*-in-tests` option covers `#[cfg(test)]` and `#[test]` functions but not
+integration-test *helper* functions, so `--all-targets` still flags test code.
 Counts must never go up: if a PR adds a violation site, it reverts or carries
 a justified `#[allow]` (see Deviations).
 
@@ -63,7 +71,8 @@ Rust has no goto and no longjmp, but it has two moral equivalents:
   `catch_unwind` only at task/request boundaries (supervisors), never to
   implement logic. — **gate** (`clippy::panic`)
 - `std::process::exit` only at the CLI top level (`main.rs` argument/startup
-  errors), never from library code. — **ratchet** (`clippy::exit`)
+  errors), never from library code. The three `doctor` verdict sites carry
+  statement-scoped `#[allow(clippy::exit)]`. — **enforced** (`clippy::exit`)
 - No recursion in request-handling paths. Recursion over *external* input
   (nested JSON, zip entries, directory trees) must either use the parser's
   depth limit or carry an explicit documented depth cap. — **review**
@@ -98,7 +107,7 @@ single input (or a slow consumer) cannot exhaust the process. Adaptation:
 
 - No unbounded queues: `tokio::sync::mpsc::channel` (bounded) over
   `unbounded_channel`; backpressure is handled explicitly, not deferred to
-  the allocator. — **ratchet** (`clippy::disallowed_methods`, list in
+  the allocator. — **enforced** (`clippy::disallowed_methods`, list in
   `clippy.toml`)
 - Every buffer that grows from remote input carries an explicit cap (body
   size limits, header caps, zip-extraction limits). — **review**
@@ -112,11 +121,11 @@ single input (or a slow consumer) cannot exhaust the process. Adaptation:
 
 > *NASA: no function longer than one printed page (~60 lines).*
 
-- Functions ≤ 100 lines (`too-many-lines-threshold` in `clippy.toml`);
-  the threshold ratchets 100 → 80 → 60 as the count burns down. —
-  **ratchet** (`clippy::too_many_lines`)
-- Cognitive complexity ≤ 25 per function, same ratchet plan. — **ratchet**
-  (`clippy::cognitive_complexity`)
+- Functions ≤ 100 lines (`too-many-lines-threshold` in `clippy.toml`).
+  All of `src/` is under the ceiling; a future tightening toward NASA's ~60
+  would re-open a ratchet. — **gate** (`clippy::too_many_lines`)
+- Cognitive complexity ≤ 25 per function (`cognitive-complexity-threshold`).
+  — **gate** (`clippy::cognitive_complexity`)
 
 ### Rule 5 — Assertion density
 
@@ -138,7 +147,7 @@ checks. The residue:
   is diagnosable; silent wraparound is corruption. — **enforced** (profile)
 - Arithmetic on values derived from external input uses
   `checked_*`/`saturating_*` forms so the *recovery* is explicit rather than
-  a panic. — **ratchet** (`clippy::arithmetic_side_effects`)
+  a panic. — **gate** (`clippy::arithmetic_side_effects`)
 
 ### Rule 6 — Smallest possible scope for data
 
@@ -165,12 +174,12 @@ are checked:
   discard. It should carry a short comment saying why discarding is correct
   (e.g. send-on-closed-channel during shutdown).
 - No `.unwrap()` in production paths — an unwrap is an unchecked return
-  value wearing a disguise. — **ratchet** (`clippy::unwrap_used`)
+  value wearing a disguise. — **gate** (`clippy::unwrap_used`)
 - `.expect()` only for init-phase impossibilities (before the server accepts
   traffic), with a message stating the invariant; request-path code returns
-  `Err`. — **ratchet** (`clippy::expect_used`)
+  `Err`. — **gate** (`clippy::expect_used`)
 - `unreachable!` requires a proof in the message or a refactor to an error
-  return. — **ratchet** (`clippy::unreachable`)
+  return. — **gate** (`clippy::unreachable`)
 - A dropped `Future` is not a discarded result — it is work that silently
   never ran. — **enforced** (`clippy::let_underscore_future`)
 
@@ -209,7 +218,7 @@ everything that *escapes* that analysis:
   `unsafe_op_in_unsafe_fn`)
 - No panicking access: `[]` indexing and slicing on runtime data are
   unchecked dereferences in spirit — use `.get()` and handle `None`. —
-  **ratchet** (`clippy::indexing_slicing`)
+  **gate** (`clippy::indexing_slicing`)
 - **Stated divergence:** function pointers and closures are permitted. The
   C rule exists because function pointers defeat C static analyzers; rustc
   type-checks them completely.
@@ -246,25 +255,37 @@ Any `#[allow]` of a safety lint in `src/` must:
 3. survive review as an exception, not a convenience.
 
 `grep -rn "#\[allow(" src/` is the deviation register; the review loop audits
-it.
+it. The safety-lint entries as of 2026-07-06:
 
-## Ratchet baseline
+| Lint | Sites | Where | Justification |
+|---|---|---|---|
+| `unsafe_code` | 5 | `process/safety.rs` (4), `process/pool.rs` (1) | `pre_exec` sandbox hooks (setrlimit/prctl/landlock between fork and exec); each carries a `// SAFETY:` proof |
+| `clippy::exit` | 3 | `main.rs` doctor verdicts | top-level CLI contract: summary on stdout + exit code; an `anyhow::Err` would duplicate the verdict on stderr |
 
-Unique violation sites in production code (`scripts/safety-check.sh`),
-2026-07-03, total **239**:
+(`clippy::too_many_arguments` in `system/openai_compat.rs` is outside this
+policy — it is not a Power-of-10 lint.)
 
-| Lint | Rule | Sites |
-|---|---|---|
-| `clippy::indexing_slicing` | 9 | 98 |
-| `clippy::arithmetic_side_effects` | 5 | 67 |
-| `clippy::expect_used` | 7 | 20 |
-| `clippy::unwrap_used` | 7 | 15 |
-| `clippy::too_many_lines` | 4 | 15 |
-| `clippy::cognitive_complexity` | 4 | 13 |
-| `clippy::unreachable` | 7 | 6 |
-| `clippy::exit` | 1 | 3 |
-| `clippy::disallowed_methods` (unbounded channels) | 3 | 2 |
+## Ratchet baseline — closed 2026-07-06
 
-Hot modules by count: `llm` (47), `system` (39), `static_files` (33), `tui`
-(17), `process` (20), `main` (17). Run the script for the live per-module
-breakdown; assessments in `docs/assessments/` track burn-down over time.
+The burn-down is complete: **253 unique production-code sites → 0**. The
+baseline was first measured at 239 on 2026-07-03; new A2A code (PRs #24/#26)
+landing on top raised it to 253 before the sweep cleared it.
+
+| Lint | Rule | Baseline sites | Final tier |
+|---|---|---|---|
+| `clippy::indexing_slicing` | 9 | 98 | gate |
+| `clippy::arithmetic_side_effects` | 5 | 67 | gate |
+| `clippy::expect_used` | 7 | 20 | gate |
+| `clippy::unwrap_used` | 7 | 15 | gate |
+| `clippy::too_many_lines` | 4 | 15 | gate |
+| `clippy::cognitive_complexity` | 4 | 13 | gate |
+| `clippy::unreachable` | 7 | 6 | gate |
+| `clippy::exit` | 1 | 3 | enforced |
+| `clippy::disallowed_methods` (unbounded channels) | 3 | 2 | enforced |
+
+Cleared risk-profile-first over eight PRs — request path (#30 system, #31
+static_files, #32 cors/router/auth/ws), sandbox (#33 process/broker/runtime),
+control plane (#37 llm, #41 config/deploy/etc.), then dev-only tui/main panic
+paths (#42) and the structure pass (this PR). Per-iteration counts, findings,
+and review-tier work are in `docs/assessments/2026-07-03-power-of-10.md`. The
+ratchet tier is now empty; `scripts/safety-check.sh` (no args) confirms it.
