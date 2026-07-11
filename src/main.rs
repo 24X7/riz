@@ -1526,9 +1526,12 @@ async fn build_dispatch_router(
     ));
     let mut handlers: Vec<Arc<dyn runtime::LambdaHandler>> = vec![
         Arc::new(system::health::HealthHandler::new(riz_state.clone())),
+        Arc::new(system::ready::ReadinessHandler::new()),
         Arc::new(system::metrics::MetricsHandler::new(
             riz_state.clone(),
+            process_manager.clone(),
             bearer.clone(),
+            config.metrics.enabled,
         )),
         Arc::new(system::registry::RegistryHandler::new(
             riz_state.clone(),

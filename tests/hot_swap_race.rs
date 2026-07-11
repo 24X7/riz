@@ -211,10 +211,7 @@ async fn hot_swap_under_load_no_5xx() {
         // Small delay so some batch-1 requests are in flight.
         tokio::time::sleep(Duration::from_millis(50)).await;
         let new_cfg = echo_fn(4); // same handler, new config object
-        let result = state_swap
-            .process_manager
-            .hot_swap("echo", new_cfg, &registry)
-            .await;
+        let result = state_swap.process_manager.hot_swap("echo", new_cfg).await;
         result.expect("hot_swap must succeed");
     });
 

@@ -15,7 +15,7 @@ use crate::gateway::{ApiGatewayV2httpRequest, ApiGatewayV2httpResponse};
 use crate::process::liveness::{handle_process_failure, spawn_liveness_watcher};
 pub use crate::process::pool::kill_process_group;
 use crate::process::pool::{
-    spawn_process, spawn_with_cold_start_record, HandleTransport, ProcessHandle, RoutePool,
+    spawn_with_cold_start_record, HandleTransport, ProcessHandle, RoutePool,
 };
 use crate::process::runtime::RuntimeRegistry;
 use crate::process::runtime_api::Invocation;
@@ -24,7 +24,7 @@ use crate::state::{LogEntry, RizState};
 use anyhow::Context;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
@@ -113,9 +113,17 @@ pub struct PoolStats {
     pub name: String,
     pub pids: Vec<u32>,
     pub restart_count: u32,
+    /// Crashes since the last successful invocation — proximity to the
+    /// crash-loop circuit breaker.
+    pub consecutive_crashes: u32,
+    /// Requests load-shed because the pool was at its concurrency limit.
+    pub admission_rejected: u64,
     pub healthy: bool,
-    #[allow(dead_code)]
+    /// Configured concurrency limit (semaphore permits).
     pub concurrency: usize,
+    /// Permits currently held — the saturation signal. `in_use / concurrency`
+    /// is utilization; at 1.0 the next request is shed.
+    pub concurrency_in_use: usize,
     pub memory_rss_mb: f64,
     pub cpu_percent: f32,
 }
@@ -191,7 +199,11 @@ async fn acquire_worker(
     let permit = match pool.semaphore.clone().try_acquire_owned() {
         Ok(p) => p,
         Err(tokio::sync::TryAcquireError::NoPermits) => {
-            return Err(PoolError::SemaphoreExhausted(function_name.into()))
+            // Load-shed: count it so saturation is observable (rising rate ⇒
+            // raise concurrency or add instances).
+            pool.admission_rejected
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Err(PoolError::SemaphoreExhausted(function_name.into()));
         }
         Err(tokio::sync::TryAcquireError::Closed) => {
             return Err(PoolError::SemaphoreClosed(function_name.into()))
@@ -430,6 +442,7 @@ impl ProcessManager {
             semaphore: Arc::new(Semaphore::new(cfg.concurrency)),
             restart_count: AtomicU32::new(0),
             consecutive_crashes: AtomicU32::new(0),
+            admission_rejected: AtomicU64::new(0),
             healthy: AtomicBool::new(true),
             runtime_registry: registry.clone(),
             log_tx: log_tx.clone(),
@@ -640,52 +653,67 @@ impl ProcessManager {
 
     /// Replace a function's process pool in-place with a new FunctionConfig.
     /// Drains the semaphore (waits for in-flight invocations), kills the old
-    /// processes, spawns a fresh pool matching the new config.
+    /// processes, and **rebuilds** the pool entry from `new_config`.
+    ///
+    /// Rebuilding rather than respawning into the existing pool is what keeps
+    /// admission correct across a concurrency change: a `RoutePool`'s
+    /// `semaphore` and `config` are immutable fields behind an `Arc`, so a swap
+    /// that only replaced the worker handles would leave the semaphore sized to
+    /// the *old* concurrency (under- or over-admitting against the new worker
+    /// count) and `config` reporting stale values. `build_pool_into` installs a
+    /// fresh semaphore sized to `new_config.concurrency`, the new config, fresh
+    /// workers, and reset health/crash counters.
     pub async fn hot_swap(
         &self,
         function_name: &str,
         new_config: FunctionConfig,
-        registry: &RuntimeRegistry,
     ) -> anyhow::Result<u32> {
-        let pools = self.pools.read().await;
-        let pool = pools
-            .get(function_name)
-            .ok_or_else(|| anyhow::anyhow!("unknown function {function_name}"))?
-            .clone();
-        drop(pools);
+        let pool = {
+            let pools = self.pools.read().await;
+            pools
+                .get(function_name)
+                .ok_or_else(|| anyhow::anyhow!("unknown function {function_name}"))?
+                .clone()
+        };
 
-        let concurrency = pool.config.concurrency as u32;
-        let _drain = pool.semaphore.acquire_many(concurrency).await?;
-
-        let mut handles = pool.handles.write().await;
-        for h in handles.iter() {
-            if let Ok(g) = h.try_lock() {
-                kill_process_group(g.pid);
+        // Drain in-flight invocations against the OLD semaphore, then kill the
+        // old workers. The drained permits belong to the pool we are about to
+        // replace; holding them only blocks new admissions during the swap.
+        let old_concurrency = pool.config.concurrency as u32;
+        let _drain = pool.semaphore.acquire_many(old_concurrency).await?;
+        {
+            let mut handles = pool.handles.write().await;
+            for h in handles.iter() {
+                if let Ok(g) = h.try_lock() {
+                    kill_process_group(g.pid);
+                }
             }
-        }
-        handles.clear();
-
-        let mut first_pid = 0;
-        for _ in 0..new_config.concurrency {
-            let h = spawn_process(&new_config, function_name, registry, &pool.log_tx).await?;
-            pool.riz_state.note_cold_start(function_name).await;
-            if first_pid == 0 {
-                first_pid = h.pid;
-            }
-            let handle_arc = Arc::new(Mutex::new(h));
-            let pid = handle_arc.lock().await.pid;
-            spawn_liveness_watcher(
-                pid,
-                handle_arc.clone(),
-                pool.clone(),
-                function_name.to_string(),
-            );
-            handles.push(handle_arc);
+            handles.clear();
         }
 
-        pool.healthy.store(true, Ordering::Relaxed);
-        pool.consecutive_crashes.store(0, Ordering::Relaxed);
+        // Reuse the pool's own registry/log/state Arcs — they are the same
+        // shared instances a caller would pass, and the pool already holds them.
+        let mut pools = self.pools.write().await;
+        Self::build_pool_into(
+            &mut pools,
+            function_name,
+            &new_config,
+            &pool.runtime_registry,
+            &pool.log_tx,
+            &pool.riz_state,
+        )
+        .await?;
 
+        let first_pid = match pools.get(function_name) {
+            Some(new_pool) => {
+                let handles = new_pool.handles.read().await;
+                match handles.first() {
+                    Some(h) => h.lock().await.pid,
+                    None => 0,
+                }
+            }
+            None => 0,
+        };
         Ok(first_pid)
     }
 
@@ -726,6 +754,7 @@ impl ProcessManager {
             semaphore: Arc::new(Semaphore::new(cfg.concurrency)),
             restart_count: AtomicU32::new(0),
             consecutive_crashes: AtomicU32::new(0),
+            admission_rejected: AtomicU64::new(0),
             healthy: AtomicBool::new(true),
             runtime_registry: registry.clone(),
             log_tx: log_tx.clone(),
@@ -782,8 +811,11 @@ impl ProcessManager {
             name: String,
             pids: Vec<u32>,
             restarts: u32,
+            consecutive_crashes: u32,
+            admission_rejected: u64,
             healthy: bool,
             concurrency: usize,
+            in_use: usize,
         }
         let mut raw: Vec<RawStat> = Vec::new();
         for (name, pool) in pools.iter() {
@@ -792,12 +824,19 @@ impl ProcessManager {
                 .iter()
                 .filter_map(|h| h.try_lock().ok().map(|g| g.pid))
                 .collect();
+            let concurrency = pool.config.concurrency;
+            // in_use = limit − free permits (saturating: a resize race can
+            // briefly leave available > limit; clamp to 0 rather than wrap).
+            let in_use = concurrency.saturating_sub(pool.semaphore.available_permits());
             raw.push(RawStat {
                 name: name.clone(),
                 pids,
                 restarts: pool.restart_count.load(Ordering::Relaxed),
+                consecutive_crashes: pool.consecutive_crashes.load(Ordering::Relaxed),
+                admission_rejected: pool.admission_rejected.load(Ordering::Relaxed),
                 healthy: pool.healthy.load(Ordering::Relaxed),
-                concurrency: pool.config.concurrency,
+                concurrency,
+                in_use,
             });
         }
         drop(pools);
@@ -835,8 +874,11 @@ impl ProcessManager {
                     name: r.name,
                     pids: r.pids,
                     restart_count: r.restarts,
+                    consecutive_crashes: r.consecutive_crashes,
+                    admission_rejected: r.admission_rejected,
                     healthy: r.healthy,
                     concurrency: r.concurrency,
+                    concurrency_in_use: r.in_use,
                     memory_rss_mb: mem_bytes as f64 / (1024.0 * 1024.0),
                     cpu_percent: cpu,
                 }

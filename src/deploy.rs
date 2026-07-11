@@ -191,7 +191,7 @@ pub async fn deploy_handler(
 
     match state
         .process_manager
-        .hot_swap(&body.lambda, function_cfg, &state.runtime_registry)
+        .hot_swap(&body.lambda, function_cfg)
         .await
     {
         Ok(pid) => confirm_swap_health(&state, &body.lambda, pid).await,

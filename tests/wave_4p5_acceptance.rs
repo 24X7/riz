@@ -66,7 +66,12 @@ fn riz_metrics_returns_401_without_auth_when_token_configured() {
     assert_eq!(bearer.as_deref(), Some("secret-token"));
 
     let s = Arc::new(riz::state::RizState::new());
-    let h = riz::system::metrics::MetricsHandler::new(s, bearer);
+    let h = riz::system::metrics::MetricsHandler::new(
+        s.clone(),
+        Arc::new(riz::process::ProcessManager::new(s)),
+        bearer,
+        true,
+    );
     let event = riz::test_helpers::make_event("GET", "/_riz/metrics");
     let rt = tokio::runtime::Runtime::new().unwrap();
     let resp = rt
@@ -85,7 +90,12 @@ fn riz_metrics_returns_200_with_correct_bearer_token() {
     let bearer = config.effective_bearer_token();
 
     let s = Arc::new(riz::state::RizState::new());
-    let h = riz::system::metrics::MetricsHandler::new(s, bearer);
+    let h = riz::system::metrics::MetricsHandler::new(
+        s.clone(),
+        Arc::new(riz::process::ProcessManager::new(s)),
+        bearer,
+        true,
+    );
     let event = make_event_with_token("GET", "/_riz/metrics", "secret-token");
     let rt = tokio::runtime::Runtime::new().unwrap();
     let resp = rt

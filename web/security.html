@@ -314,6 +314,52 @@
   </div>
 </section>
 
+<!-- PRODUCTION HARDENING -->
+<section id="hardening">
+  <div class="wrap">
+    <div class="sec-kicker">production hardening</div>
+    <h2 class="sec">Degrade, don't fall over —<br/>and <em>prove</em> each hardening.</h2>
+    <p class="sec-sub">
+      The request path holds no reachable panic on runtime data, queues are bounded with
+      backpressure, and the supervisor is built to answer bad input by shedding one request — never
+      the fleet. Each line below is a fix with a named test, not a posture.
+    </p>
+    <div class="duo">
+      <div>
+        <p><b>Auth &amp; edge.</b> Reflected-origin credentialed CORS is rejected at config time;
+        the JWKS authorizer is cached per issuer so a stream of invalid tokens can't amplify into an
+        IdP fetch each; the authorizer returns an error on every hostile token instead of panicking
+        the request task.</p>
+      </div>
+      <div>
+        <p><b>Supervision &amp; ops.</b> A config hot-swap rebuilds the pool so a concurrency change
+        actually resizes admission; a readiness probe sheds traffic the instant a drain starts; and
+        the metrics endpoint exposes saturation (utilization, load-shed) — the signal a warm-pool
+        runtime lives or dies by. Off Linux, an unenforceable filesystem sandbox warns loudly
+        instead of running silently unconfined.</p>
+      </div>
+    </div>
+    <div class="ledger">
+      <span class="tag">proof</span>
+      <span><code>validate_rejects_wildcard_origin_with_credentials</code> ·
+      <code>jwks_authorizer_cache_fetches_once_within_cooldown</code> ·
+      <code>authorizer_rejects_arbitrary_tokens_without_panic</code> ·
+      <code>hot_swap_resizes_concurrency</code> ·
+      <code>ready_when_serving_draining_after_shutdown_signal</code> ·
+      <code>metrics_emit_saturation_reliability_and_build_info</code> ·
+      <code>allowed_paths_sandbox_enforcement_matches_platform</code> —
+      seven hardenings, seven tests, in CI.</span>
+    </div>
+    <div class="ledger">
+      <span class="tag">source</span>
+      <span><a href="https://github.com/24X7/riz/blob/main/docs/SAFETY.md" target="_blank">SAFETY.md</a> ·
+      <a href="https://github.com/24X7/riz/blob/main/docs/PRODUCTION-READINESS.md" target="_blank">PRODUCTION-READINESS.md</a> ·
+      <a href="https://github.com/24X7/riz/blob/main/docs/METRICS.md" target="_blank">METRICS.md</a> —
+      the NASA Power-of-10 policy (253 ratchet sites to zero), the roadmap, and the metrics design.</span>
+    </div>
+  </div>
+</section>
+
 <!-- REPORT -->
 <section id="report">
   <div class="wrap">

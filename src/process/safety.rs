@@ -12,6 +12,18 @@
 //! PR_SET_PDEATHSIG(SIGKILL) and PR_SET_NO_NEW_PRIVS. Opt-in per-function
 //! caps (memory_mb, cpu_time_secs, allowed_paths) layer on top elsewhere.
 
+/// Whether the per-function filesystem allowlist (`allowed_paths`) is actually
+/// enforced on this build's target OS.
+///
+/// The allowlist is implemented with Landlock, which is Linux-only. On
+/// macOS/BSD/non-Unix, `apply_filesystem_allowlist` is a no-op, so a config
+/// that sets `allowed_paths` runs with **no filesystem confinement** — the
+/// paths are ignored. Callers use this to refuse or loudly warn rather than
+/// imply a sandbox that isn't there (a silent security downgrade otherwise).
+pub const fn filesystem_allowlist_enforced() -> bool {
+    cfg!(target_os = "linux")
+}
+
 /// Apply the always-on safety profile to the current process. Called
 /// from the `pre_exec` closure that `Command` runs in the child after
 /// fork. Returns `io::Result` because `pre_exec` requires it.

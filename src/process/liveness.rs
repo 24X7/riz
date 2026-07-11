@@ -193,6 +193,7 @@ mod tests {
             semaphore: Arc::new(Semaphore::new(1)),
             restart_count: AtomicU32::new(0),
             consecutive_crashes: AtomicU32::new(0),
+            admission_rejected: std::sync::atomic::AtomicU64::new(0),
             healthy: AtomicBool::new(true),
             runtime_registry: registry,
             log_tx,
