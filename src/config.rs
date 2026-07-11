@@ -882,14 +882,41 @@ impl Config {
                  flow. Add at least one origin or set allow_credentials = false."
             );
         }
+        Self::validate_cors(&self.cors, "[cors]")?;
         for (name, func) in &self.functions {
             self.validate_function_basics(name, func)?;
             self.validate_function_auth(name, func)?;
             self.validate_function_mcp(name, func)?;
             self.validate_capability_grants(name, func)?;
+            if let Some(cors) = &func.cors {
+                Self::validate_cors(cors, &format!("[function.{name}.cors]"))?;
+            }
         }
         self.validate_gateway()?;
         self.validate_static()?;
+        Ok(())
+    }
+
+    /// Reject `allow_credentials = true` together with a `"*"` wildcard in
+    /// `allow_origins`. riz's CORS layer echoes the request Origin (not a
+    /// literal `*`) whenever the allow-list matches, so this combination sends
+    /// `Access-Control-Allow-Origin: <caller's origin>` *and*
+    /// `Access-Control-Allow-Credentials: true` — reflected-origin credentialed
+    /// CORS, which lets any site make credentialed cross-origin reads. Browsers
+    /// only block the literal-`*`-with-credentials form; reflecting the origin
+    /// bypasses that protection, so AWS API Gateway rejects the combination at
+    /// config time and riz does the same. (Empty `allow_origins` + credentials
+    /// is a separate, non-exploitable misconfiguration, warned about above.)
+    fn validate_cors(cors: &CorsConfig, scope: &str) -> Result<(), String> {
+        if cors.allow_credentials && cors.allow_origins.iter().any(|o| o == "*") {
+            return Err(format!(
+                "{scope} allow_credentials = true with a \"*\" wildcard in allow_origins is a \
+                 reflected-origin credentialed-CORS vulnerability: because the Origin is echoed \
+                 back rather than a literal \"*\", any website could make credentialed \
+                 cross-origin requests to your functions. List explicit origins, or set \
+                 allow_credentials = false."
+            ));
+        }
         Ok(())
     }
 
@@ -1523,6 +1550,81 @@ method = "GET"
 "#;
         let c: Config = toml::from_str(toml_str).unwrap();
         assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_wildcard_origin_with_credentials() {
+        // Reflected-origin credentialed CORS: `*` + credentials lets any site
+        // make credentialed cross-origin reads. Must be a hard error.
+        let toml_str = r#"
+[server]
+port = 8080
+
+[cors]
+allow_origins = ["*"]
+allow_credentials = true
+"#;
+        let c: Config = toml::from_str(toml_str).unwrap();
+        let err = c.validate().unwrap_err();
+        assert!(err.contains("[cors]"), "err names the scope: {err}");
+        assert!(
+            err.contains("credentialed") || err.contains("allow_credentials"),
+            "err explains the vulnerability: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_accepts_wildcard_origin_without_credentials() {
+        let toml_str = r#"
+[server]
+port = 8080
+
+[cors]
+allow_origins = ["*"]
+allow_credentials = false
+"#;
+        let c: Config = toml::from_str(toml_str).unwrap();
+        assert!(c.validate().is_ok(), "wildcard alone is fine");
+    }
+
+    #[test]
+    fn validate_accepts_explicit_origins_with_credentials() {
+        let toml_str = r#"
+[server]
+port = 8080
+
+[cors]
+allow_origins = ["https://app.example.com"]
+allow_credentials = true
+"#;
+        let c: Config = toml::from_str(toml_str).unwrap();
+        assert!(
+            c.validate().is_ok(),
+            "explicit origin + credentials is fine"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_wildcard_credentials_in_per_function_cors() {
+        // The per-function override must be validated too, not just [cors].
+        let toml_str = r#"
+[server]
+port = 8080
+
+[function.api]
+runtime = "bun"
+handler = "./h.ts"
+
+[function.api.cors]
+allow_origins = ["*"]
+allow_credentials = true
+"#;
+        let c: Config = toml::from_str(toml_str).unwrap();
+        let err = c.validate().unwrap_err();
+        assert!(
+            err.contains("[function.api.cors]"),
+            "err names the per-function scope: {err}"
+        );
     }
 
     #[test]
