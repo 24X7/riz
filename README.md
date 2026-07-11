@@ -5,11 +5,12 @@
 riz is a **runtime harness, not a framework**. Write a plain AWS-Lambda-shaped
 HTTP/WebSocket handler — no web framework to pick — and riz runs it on your own
 box, *unmodified*, and makes it production-grade for free: warm process pools (no
-per-request cold start), an always-on safety profile, supervised crash-respawn,
-graceful drain, hot-reload, and P50–P99 observability. Every function
-auto-becomes a typed **MCP tool** an agent can call the moment riz boots, and a
-built-in **OpenAI-compatible LLM gateway** routes, governs, and costs the model
-calls your handlers make. One ~35 MB Rust binary. Apache-2.0.
+per-request cold start), a layered worker sandbox, supervised crash-respawn,
+graceful drain with a Kubernetes-style readiness probe, hot-reload, and
+P50–P99 + Prometheus observability. Every function auto-becomes a typed **MCP
+tool** an agent can call the moment riz boots, and a built-in
+**OpenAI-compatible LLM gateway** routes, governs, and costs the model calls
+your handlers make. One ~35 MB Rust binary. Apache-2.0.
 
 **📖 Full docs, comparisons, and the agent layer live at [riz.dev](https://riz.dev).**
 This README is the short version.
@@ -63,8 +64,14 @@ Point an agent at it: `claude mcp add riz --transport http http://localhost:3000
   cold starts only at boot, respawn, or hot-swap.
 - **Typed MCP tools, zero glue** — path params become typed+required, `[function.x.mcp]`
   declares query/body schemas; `tools/call` validates and names the bad parameter.
-- **On-box safety** — always-on `RLIMIT_*` + `PR_SET_PDEATHSIG` + `NO_NEW_PRIVS`;
-  opt-in per-function memory / CPU / (Linux) Landlock filesystem caps.
+- **Layered worker sandbox** — every worker runs under always-on `RLIMIT_*` +
+  `PR_SET_PDEATHSIG` + `NO_NEW_PRIVS` + a **seccomp-BPF syscall blocklist**
+  (ptrace, mount, kexec, kernel-module/eBPF loading, the keyring, …); opt-in
+  per-function memory / CPU / (Linux) Landlock filesystem caps.
+- **Readiness + metrics** — `/_riz/health` (liveness) and `/_riz/ready` (sheds
+  traffic the instant a drain starts) for orchestrators, plus a Prometheus
+  `/_riz/metrics` endpoint with **saturation** (concurrency utilization,
+  load-shed), worker reliability, and latency.
 - **Capability-sandboxed WASM** — `runtime = "wasm"` runs a `wasm32-wasip1` module
   under wasmtime (deny-by-default fs/net), plus a resource broker and fail-closed
   `.wasm` guards for running untrusted / LLM-generated code.
@@ -109,13 +116,22 @@ Out of scope by decision, not omission:
   its own credentials, same as anywhere.
 - **Not an edge/CDN platform** — it's a runtime you self-host. No Windows.
 
-## Tested
+## Tested — and safety-gated
 
-**900+ tests** (`cargo nextest run`, ~960 today) — unit, integration, a
-cross-runtime parity matrix, and an end-to-end smoke harness that boots the real
-binary against every example across all six runtimes. Every public capability on
+**1,100+ tests** (`cargo nextest run`) — unit, integration, a cross-runtime
+parity matrix, and an end-to-end smoke harness that boots the real binary
+against every example across all six runtimes. Every public capability on
 [riz.dev](https://riz.dev) is pinned to a passing test via the claims registry,
 so the marketing and the code can't drift. CI runs the full suite on every PR.
+
+The runtime also holds to **[NASA's Power of 10](docs/SAFETY.md)**, adapted to
+Rust: **253 latent panic / overflow / unbounded-growth sites in the binary
+driven to zero** and kept there by CI lints — no reachable panic on the request
+path, bounded queues with backpressure, checked arithmetic (overflow panics
+loudly in release rather than wrapping), and every `unsafe` block justified with
+a proof. The security posture and roadmap toward larger-scale production are in
+[docs/SAFETY.md](docs/SAFETY.md), [docs/PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md),
+and [docs/METRICS.md](docs/METRICS.md).
 
 ```bash
 cargo nextest run --workspace        # the whole suite
