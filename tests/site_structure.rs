@@ -68,8 +68,12 @@ fn the_expected_pages_are_present() {
 #[test]
 fn every_page_shares_the_nav_and_stylesheet() {
     for (path, html) in site_pages() {
+        // Prefix match, not exact: pages cache-bust the stylesheet with a
+        // version query and carry a turbo-track attribute
+        // (`href="site.css?v=…" data-turbo-track="reload"`), so pin the shared
+        // `href="site.css` and let the query string / attributes vary.
         assert!(
-            html.contains(r#"<link rel="stylesheet" href="site.css"/>"#),
+            html.contains(r#"rel="stylesheet" href="site.css"#),
             "{} does not link the shared site.css",
             path.display()
         );

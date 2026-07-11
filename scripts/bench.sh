@@ -3,7 +3,7 @@
 #
 # Builds release, boots riz HEADLESS against a single Bun ping handler,
 # waits for /ping to return 200, warms up briefly, runs wrk, and tears the
-# server down on exit. Prints the honest req/s + p99 with a one-line
+# server down on exit. Prints the measured req/s + p99 with a one-line
 # methodology note.
 #
 # Usage:
@@ -102,4 +102,4 @@ else
 fi
 
 echo
-echo "methodology: release riz, single Bun ping handler, localhost loopback, concurrency=${CONNECTIONS}. The 'Requests/sec' line is the honest throughput; p99 is the '99%' row under Latency Distribution."
+echo "methodology: release riz, single Bun ping handler, localhost loopback, concurrency=${CONNECTIONS}. The 'Requests/sec' line is the measured throughput; p99 is the '99%' row under Latency Distribution."
