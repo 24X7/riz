@@ -158,6 +158,94 @@ pub(super) fn apply_filesystem_allowlist(_paths: &[std::path::PathBuf]) -> std::
     Ok(())
 }
 
+/// Syscalls a web-API worker never legitimately makes, but which are the levers
+/// of container/host escape and tampering: debugging into other processes,
+/// loading kernel modules or eBPF, mount/namespace manipulation, kexec, the
+/// kernel keyring, and clock/host mutation. Blocked with `EPERM`.
+///
+/// This is a **blocklist** (default-allow), not a strict allowlist: it hardens
+/// the escape surface without risking the six language runtimes' ordinary
+/// syscalls. `PR_SET_NO_NEW_PRIVS` (set in `apply_always_on_limits`) already
+/// blocks setuid/file-cap escalation across the `execve`; seccomp adds the
+/// syscall wall on top.
+#[cfg(target_os = "linux")]
+const SECCOMP_BLOCKED_SYSCALLS: [i64; 22] = [
+    libc::SYS_ptrace,
+    libc::SYS_mount,
+    libc::SYS_umount2,
+    libc::SYS_kexec_load,
+    libc::SYS_init_module,
+    libc::SYS_finit_module,
+    libc::SYS_delete_module,
+    libc::SYS_bpf,
+    libc::SYS_perf_event_open,
+    libc::SYS_reboot,
+    libc::SYS_swapon,
+    libc::SYS_swapoff,
+    libc::SYS_pivot_root,
+    libc::SYS_setns,
+    libc::SYS_add_key,
+    libc::SYS_keyctl,
+    libc::SYS_request_key,
+    libc::SYS_acct,
+    libc::SYS_settimeofday,
+    libc::SYS_clock_settime,
+    libc::SYS_adjtimex,
+    libc::SYS_sethostname,
+];
+
+/// Compile the deny-by-`EPERM` seccomp-BPF blocklist for this build's arch.
+/// Split from application so a unit test can validate the syscall numbers and
+/// the `seccompiler` API compile and build without filtering the test process.
+#[cfg(target_os = "linux")]
+pub(super) fn build_seccomp_bpf() -> std::io::Result<seccompiler::BpfProgram> {
+    use seccompiler::{SeccompAction, SeccompFilter};
+    use std::collections::BTreeMap;
+
+    #[cfg(target_arch = "x86_64")]
+    let arch = seccompiler::TargetArch::x86_64;
+    #[cfg(target_arch = "aarch64")]
+    let arch = seccompiler::TargetArch::aarch64;
+
+    let rules: BTreeMap<i64, Vec<seccompiler::SeccompRule>> = SECCOMP_BLOCKED_SYSCALLS
+        .iter()
+        .map(|&nr| (nr, Vec::new()))
+        .collect();
+
+    let filter = SeccompFilter::new(
+        rules,
+        SeccompAction::Allow,                     // default: allow
+        SeccompAction::Errno(libc::EPERM as u32), // blocked: fail with EPERM
+        arch,
+    )
+    .map_err(|e| std::io::Error::other(format!("seccomp filter build: {e}")))?;
+
+    filter
+        .try_into()
+        .map_err(|e| std::io::Error::other(format!("seccomp compile: {e}")))
+}
+
+/// Install the seccomp blocklist on the calling process. Called last in the
+/// `pre_exec` closure (after rlimits/prctl/landlock) so the setup syscalls
+/// themselves are never filtered. Irreversible for the process and inherited
+/// across `execve`.
+#[cfg(target_os = "linux")]
+pub(super) fn apply_seccomp_blocklist() -> std::io::Result<()> {
+    let bpf = build_seccomp_bpf()?;
+    seccompiler::apply_filter(&bpf)
+        .map_err(|e| std::io::Error::other(format!("seccomp apply: {e}")))
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+pub(super) fn apply_seccomp_blocklist() -> std::io::Result<()> {
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub(super) fn apply_seccomp_blocklist() -> std::io::Result<()> {
+    Ok(())
+}
+
 #[cfg(all(unix, test))]
 mod tests {
     use super::*;
@@ -197,6 +285,50 @@ mod tests {
         assert!(
             stdout.contains("NoNewPrivs:\t1"),
             "child must have NoNewPrivs=1 in /proc/self/status; got {stdout:?}"
+        );
+    }
+
+    /// The blocklist compiles into a non-empty BPF program on this arch —
+    /// validates the syscall numbers and the seccompiler API without filtering
+    /// the test process.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn seccomp_blocklist_builds() {
+        let bpf = build_seccomp_bpf().expect("seccomp blocklist must build");
+        assert!(!bpf.is_empty(), "compiled BPF program must be non-empty");
+    }
+
+    /// A spawned child runs under a seccomp filter (mode 2 = FILTER) — proven
+    /// by `/proc/self/status`, the same way the NoNewPrivs test proves its
+    /// prctl. This is the enforcement-installed proof; the blocklist contents
+    /// are reviewed in `SECCOMP_BLOCKED_SYSCALLS`.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn child_runs_under_seccomp_filter_on_linux() {
+        use std::os::unix::process::CommandExt;
+        use std::process::{Command, Stdio};
+
+        let mut cmd = Command::new("/bin/sh");
+        cmd.arg("-c").arg("grep -E '^Seccomp:' /proc/self/status");
+        cmd.stdout(Stdio::piped());
+        // SAFETY: mirror the real pre_exec chain — set NO_NEW_PRIVS (via
+        // apply_always_on_limits) before seccomp so seccomp() is permitted
+        // without CAP_SYS_ADMIN, exactly as workers run. Only syscalls
+        // (setrlimit/prctl/seccomp); building the filter allocates, the same
+        // attested tradeoff as landlock.
+        #[allow(unsafe_code)]
+        unsafe {
+            cmd.pre_exec(|| {
+                apply_always_on_limits()?;
+                apply_seccomp_blocklist()?;
+                Ok(())
+            });
+        }
+        let out = cmd.output().expect("spawn /bin/sh");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("Seccomp:\t2"),
+            "child must run under a seccomp filter (Seccomp: 2); got {stdout:?}"
         );
     }
 

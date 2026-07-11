@@ -157,11 +157,13 @@ pub(super) async fn spawn_process(
         let cpu_time_secs = cfg.cpu_time_secs;
         let allowed_paths = cfg.allowed_paths.clone();
         // SAFETY: apply_always_on_limits + apply_per_function_limits +
-        // apply_filesystem_allowlist are async-signal-safe enough for
-        // pre_exec — they make syscalls (setrlimit, prctl, landlock).
-        // The landlock crate allocates internally; widespread real-world
-        // use in pre_exec (systemd, container runtimes) attests this is
-        // safe in practice on modern glibc/musl.
+        // apply_filesystem_allowlist + apply_seccomp_blocklist are
+        // async-signal-safe enough for pre_exec — they make syscalls
+        // (setrlimit, prctl, landlock, seccomp). The landlock and seccompiler
+        // crates allocate internally; widespread real-world use in pre_exec
+        // (systemd, container runtimes) attests this is safe in practice on
+        // modern glibc/musl. seccomp is applied LAST so the earlier setup
+        // syscalls are never filtered.
         #[allow(unsafe_code)]
         unsafe {
             cmd.pre_exec(move || {
@@ -170,6 +172,7 @@ pub(super) async fn spawn_process(
                 if let Some(paths) = &allowed_paths {
                     crate::process::safety::apply_filesystem_allowlist(paths)?;
                 }
+                crate::process::safety::apply_seccomp_blocklist()?;
                 Ok(())
             });
         }
