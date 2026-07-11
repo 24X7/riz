@@ -892,9 +892,36 @@ impl Config {
                 Self::validate_cors(cors, &format!("[function.{name}.cors]"))?;
             }
         }
+        // Never let an unenforced filesystem sandbox be silent: Landlock is
+        // Linux-only, so on other platforms `allowed_paths` is ignored and the
+        // function runs unconfined. Warn loudly so an operator can't mistake it
+        // for confinement (P0.4).
+        for name in self.functions_without_enforced_sandbox() {
+            tracing::warn!(
+                "[function.{name}] allowed_paths is set but this build ({}) has NO filesystem \
+                 sandbox — Landlock is Linux-only, so the allowlist is ignored and the function \
+                 runs unconfined. Deploy on Linux for filesystem confinement.",
+                std::env::consts::OS
+            );
+        }
         self.validate_gateway()?;
         self.validate_static()?;
         Ok(())
+    }
+
+    /// Function names whose `allowed_paths` will NOT be enforced on this
+    /// build's platform, because the filesystem allowlist (Landlock) is
+    /// Linux-only. Empty on Linux. Drives the loud validation warning that
+    /// keeps an unenforced sandbox from being silent (P0.4).
+    pub fn functions_without_enforced_sandbox(&self) -> Vec<&str> {
+        if crate::process::safety::filesystem_allowlist_enforced() {
+            return Vec::new();
+        }
+        self.functions
+            .iter()
+            .filter(|(_, f)| f.allowed_paths.is_some())
+            .map(|(name, _)| name.as_str())
+            .collect()
     }
 
     /// Reject `allow_credentials = true` together with a `"*"` wildcard in
@@ -1550,6 +1577,54 @@ method = "GET"
 "#;
         let c: Config = toml::from_str(toml_str).unwrap();
         assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn allowed_paths_sandbox_enforcement_matches_platform() {
+        // A function requesting filesystem confinement.
+        let toml_str = r#"
+[server]
+port = 8080
+
+[function.sandboxed]
+runtime = "bun"
+handler = "./h.ts"
+allowed_paths = ["/tmp"]
+"#;
+        let c: Config = toml::from_str(toml_str).unwrap();
+        // Config still validates on every platform — the warning is non-fatal.
+        assert!(c.validate().is_ok());
+
+        let flagged = c.functions_without_enforced_sandbox();
+        if cfg!(target_os = "linux") {
+            assert!(
+                flagged.is_empty(),
+                "Landlock enforces allowed_paths on Linux — nothing flagged"
+            );
+        } else {
+            assert_eq!(
+                flagged,
+                vec!["sandboxed"],
+                "off Linux the unenforced sandbox must be flagged, not silent"
+            );
+        }
+    }
+
+    #[test]
+    fn no_allowed_paths_is_never_flagged() {
+        let toml_str = r#"
+[server]
+port = 8080
+
+[function.plain]
+runtime = "bun"
+handler = "./h.ts"
+"#;
+        let c: Config = toml::from_str(toml_str).unwrap();
+        assert!(
+            c.functions_without_enforced_sandbox().is_empty(),
+            "a function without allowed_paths is never flagged"
+        );
     }
 
     #[test]
