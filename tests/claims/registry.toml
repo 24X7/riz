@@ -270,3 +270,49 @@ id = "single-binary-apache"
 page_text = "One binary. Apache-2.0."
 status = "copy-only"
 note = "Positioning line in the footer/site copy. The single-binary build is the release artifact; Apache-2.0 is the LICENSE file. Registered copy-only because it is a packaging/licensing statement, not a runtime behavior with a unit test."
+
+# ─────────────────── Production hardening (Phase 1) ──────────────────────────
+# Each maps to a real test committed in this branch; page_text is the proof fn
+# name displayed in the security.html hardening ledger.
+
+[[claim]]
+id = "hardening-cors-credentialed-wildcard"
+page_text = "validate_rejects_wildcard_origin_with_credentials"
+status = "proven"
+proof = "validate_rejects_wildcard_origin_with_credentials"
+
+[[claim]]
+id = "hardening-jwks-amplification"
+page_text = "jwks_authorizer_cache_fetches_once_within_cooldown"
+status = "proven"
+proof = "jwks_authorizer_cache_fetches_once_within_cooldown"
+
+[[claim]]
+id = "hardening-authorizer-no-panic"
+page_text = "authorizer_rejects_arbitrary_tokens_without_panic"
+status = "proven"
+proof = "authorizer_rejects_arbitrary_tokens_without_panic"
+
+[[claim]]
+id = "hardening-hot-swap-admission"
+page_text = "hot_swap_resizes_concurrency"
+status = "proven"
+proof = "hot_swap_resizes_concurrency"
+
+[[claim]]
+id = "hardening-readiness-drain"
+page_text = "ready_when_serving_draining_after_shutdown_signal"
+status = "proven"
+proof = "ready_when_serving_draining_after_shutdown_signal"
+
+[[claim]]
+id = "hardening-metrics-saturation"
+page_text = "metrics_emit_saturation_reliability_and_build_info"
+status = "proven"
+proof = "metrics_emit_saturation_reliability_and_build_info"
+
+[[claim]]
+id = "hardening-macos-sandbox-gate"
+page_text = "allowed_paths_sandbox_enforcement_matches_platform"
+status = "proven"
+proof = "allowed_paths_sandbox_enforcement_matches_platform"

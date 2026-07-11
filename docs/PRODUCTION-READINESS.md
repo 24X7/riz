@@ -14,7 +14,20 @@ with backpressure, fail-closed auth, every `unsafe` justified.
 
 That is the floor, not the ceiling. "Bet your life on it" is a property of the
 **system**, and the system has real gaps. This roadmap closes them, ordered so
-each phase is independently shippable and truthfully demonstrable.
+each phase is independently shippable and demonstrable with a named test.
+
+**Phase 1 shipped** (each with a named test): the two known security findings
+(P1.1 JWKS-fetch amplification, P1.2 reflected-origin credentialed CORS), the
+hot_swap admission-resize fix (P1.4), the readiness/liveness split (P3.1), a
+production-grade metrics upgrade — saturation, worker reliability, cache,
+build-info, a disable control (P3.2, see [METRICS.md](METRICS.md)), the macOS
+sandbox hard-gate warning (P0.4), and a hostile-token fuzz-lite corpus for the
+authorizer (P4.1). **Staged next:** the hard-isolation work — seccomp + cgroups
+(P0.1/P0.2) — is Linux-only and needs dedicated Linux-CI iteration, so it lands
+in a follow-up rather than merged from a macOS host unvalidated; likewise the
+latency-histogram migration and HTTP status-class metrics (METRICS.md). The
+⚠️ items below (microVM, HA, KMS, external audit, load-at-scale) remain owned
+by humans + platform.
 
 **Integrity rule for this roadmap:** the website claims only capabilities that
 are shipped and tested. The `claims_truth` drift-guard test fails CI if a page
@@ -90,7 +103,7 @@ Some of "bet your life on it" is not code: an external security audit, an
 on-call rotation with runbooks and incident response, a load profile from real
 traffic, and the infra decisions behind microVM isolation, HA, and secret
 management. Those are marked ⚠️ above and are owned by humans + platform, not by
-this repo. The ✅ items are what ships autonomously and truthfully first.
+this repo. The ✅ items are what ships autonomously first, each with a real proof.
 
 ## Sequence
 
