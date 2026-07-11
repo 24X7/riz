@@ -341,3 +341,79 @@ async fn jwks_authorizer_cache_fails_closed_when_unreachable() {
         "a failed build must not be cached"
     );
 }
+
+// ── P4.1: parser assurance — the authorizer never panics on hostile input ──
+//
+// The Bearer token is fully attacker-controlled. Whatever bytes arrive, the
+// authorizer must reject them with an error — never panic (which would crash
+// the request task) and never accept an unsigned/garbage token. This is a
+// fuzz-lite corpus test: a batch of random and structurally-adversarial tokens
+// plus fixed edge cases, all fed through the real JWKS-backed authorizer.
+
+fn random_token(rng: &mut impl rand::Rng) -> String {
+    let len = rng.gen_range(0..512);
+    // Constrained to visible ASCII (0x21..=0x7E): the token reaches the
+    // authorizer only after passing the HTTP header-value grammar, so bytes
+    // that can't be a header value are rejected by the transport, never by us.
+    // Within that space we cover both "not a JWT at all" and (second branch)
+    // "JWT-shaped but bogus".
+    if rng.gen_bool(0.5) {
+        (0..len)
+            .map(|_| char::from(rng.gen_range(0x21u8..=0x7E)))
+            .collect()
+    } else {
+        let seg = |rng: &mut dyn rand::RngCore| -> String {
+            let n = (rng.next_u32() % 200) as usize;
+            (0..n)
+                .map(|_| {
+                    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+                        [(rng.next_u32() % 64) as usize] as char
+                })
+                .collect()
+        };
+        format!("{}.{}.{}", seg(rng), seg(rng), seg(rng))
+    }
+}
+
+#[tokio::test]
+async fn authorizer_rejects_arbitrary_tokens_without_panic() {
+    let key = TestKey::generate();
+    let jwks_uri = serve_jwks(key.jwks.clone());
+    let authorizer = riz::auth::jwt::JwtAuthorizer::new(workos_config(jwks_uri))
+        .await
+        .expect("construct authorizer");
+
+    // Fixed adversarial edge cases (all header-value-legal — the transport
+    // rejects anything else before the authorizer runs).
+    let oversized = "x".repeat(200_000);
+    let fixed = [
+        "",
+        ".",
+        "..",
+        "...",
+        "a.b.c",
+        "Bearer",
+        "~!@#$%^&*()",
+        "eyJhbGciOiJub25lIn0..", // alg=none, empty sig — the classic bypass
+        "eyJhbGciOiJub25lIn0.eyJzdWIiOiJhZG1pbiJ9.", // alg=none with a claims body
+        oversized.as_str(),
+    ];
+    for token in fixed {
+        let res = authorizer.authorize(&event_with_token(token)).await;
+        assert!(
+            res.is_err(),
+            "adversarial token {token:?} must be rejected, not accepted"
+        );
+    }
+
+    // Randomized corpus — reaching the assert at all proves no panic.
+    let mut rng = rand::thread_rng();
+    for _ in 0..500 {
+        let token = random_token(&mut rng);
+        let res = authorizer.authorize(&event_with_token(&token)).await;
+        assert!(
+            res.is_err(),
+            "random token must never be accepted: {token:?}"
+        );
+    }
+}
