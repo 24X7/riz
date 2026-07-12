@@ -272,7 +272,10 @@ fn render_host_strip(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_processes_table(frame: &mut Frame, app: &App, area: Rect) {
-    let header = Row::new(["", "Route", "PIDs", "Mem MB", "CPU%", "Restarts", "Health"]).style(
+    let header = Row::new([
+        "", "Route", "PIDs", "Mem MB", "CPU%", "Conc", "Restarts", "Health",
+    ])
+    .style(
         Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD),
@@ -296,6 +299,7 @@ fn render_processes_table(frame: &mut Frame, app: &App, area: Rect) {
             Cell::from("(host)").style(Style::default().fg(Color::DarkGray)),
             Cell::from("(host)").style(Style::default().fg(Color::DarkGray)),
             Cell::from("—").style(Style::default().fg(Color::DarkGray)),
+            Cell::from("—").style(Style::default().fg(Color::DarkGray)),
             Cell::from(if f.healthy { "ok" } else { "down" })
                 .style(Style::default().fg(health_color)),
         ]));
@@ -311,12 +315,35 @@ fn render_processes_table(frame: &mut Frame, app: &App, area: Rect) {
             format!("{:.1}", s.memory_rss_mb)
         };
         let cpu_str = format!("{:.1}%", s.cpu_percent);
+        // Saturation: in-use / limit, with a ⚠ shed count when the pool has
+        // load-shed. Colour rises with utilization so overload is visible at a
+        // glance — red at the limit or after any shed, yellow past ~75%.
+        let conc_str = if s.admission_rejected > 0 {
+            format!(
+                "{}/{} ⚠{}",
+                s.concurrency_in_use, s.concurrency, s.admission_rejected
+            )
+        } else {
+            format!("{}/{}", s.concurrency_in_use, s.concurrency)
+        };
+        let conc_color = if s.admission_rejected > 0
+            || (s.concurrency > 0 && s.concurrency_in_use >= s.concurrency)
+        {
+            Color::Red
+        } else if s.concurrency > 0
+            && s.concurrency_in_use.saturating_mul(4) >= s.concurrency.saturating_mul(3)
+        {
+            Color::Yellow
+        } else {
+            Color::Reset
+        };
         rows.push(Row::new([
             Cell::from(" "),
             Cell::from(s.name.as_str()),
             Cell::from(pids.join(", ")),
             Cell::from(mem_str),
             Cell::from(cpu_str),
+            Cell::from(conc_str).style(Style::default().fg(conc_color)),
             Cell::from(s.restart_count.to_string()),
             Cell::from(if s.healthy { "ok" } else { "down" })
                 .style(Style::default().fg(health_color)),
@@ -327,19 +354,20 @@ fn render_processes_table(frame: &mut Frame, app: &App, area: Rect) {
         rows,
         [
             Constraint::Length(2),
-            Constraint::Percentage(34),
-            Constraint::Percentage(18),
-            Constraint::Percentage(12),
+            Constraint::Percentage(28),
+            Constraint::Percentage(16),
+            Constraint::Percentage(10),
+            Constraint::Percentage(9),
+            Constraint::Percentage(13),
             Constraint::Percentage(10),
             Constraint::Percentage(12),
-            Constraint::Percentage(14),
         ],
     )
     .header(header)
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .title("Processes  ◆ = system (shares host)"),
+            .title("Processes  ◆ = system (shares host)  ·  Conc = in-use/limit (⚠ shed)"),
     );
 
     frame.render_widget(table, area);
