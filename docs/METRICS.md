@@ -42,21 +42,22 @@ reliability is trivial — not by what happened to exist first.
   circuit breaker.
 - `riz_function_healthy` (gauge) — 1 if the pool is serving.
 
+**Latency (both forms)**
+- `riz_request_duration_seconds` (**histogram**, per function) — `_bucket{le=…}`
+  + `_sum` + `_count`, cumulative monotonic counters. This is the aggregatable
+  form: a scraper computes a fleet-wide quantile from the buckets, which a
+  summary cannot.
+- `riz_latency_ms` (summary, per function) — pre-computed p50–p99 over a 5-min
+  window, the same numbers the TUI shows live. Kept for one release; prefer the
+  histogram for anything aggregated. Deprecation noted in its `# HELP`.
+
 **Efficiency / meta**
 `riz_cache_hits_total`, `riz_cache_misses_total` (counters),
 `riz_uptime_seconds`, `riz_build_info{version}` (gauges).
 
 ## Staged (designed, not yet emitted) — with rationale
 
-1. **Latency as a histogram, not a summary.** Today `riz_latency_ms` is a
-   Prometheus *summary* with pre-computed quantiles. Summaries **cannot be
-   aggregated across instances** — you can't get a fleet-wide p99 from
-   per-instance summaries. The production-correct form is a
-   `riz_request_duration_seconds` histogram with fixed buckets, so quantiles
-   are computed cluster-wide at query time. This is a real correctness upgrade,
-   staged because it requires the latency window to maintain bucket counts, not
-   just a rolling percentile sample.
-2. **HTTP status-class breakdown.** `riz_responses_total{function,
+1. **HTTP status-class breakdown.** `riz_responses_total{function,
    status_class="2xx|4xx|5xx"}`. `errors_total` doesn't separate client faults
    from server faults; RED dashboards need the split. Staged because it
    requires recording the class on the response path.

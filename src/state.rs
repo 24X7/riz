@@ -63,6 +63,29 @@ mod tests {
     }
 
     #[test]
+    fn latency_histogram_buckets_and_sum() {
+        let h = LatencyHistogram::new();
+        h.record(3.0); // 0.003s → le=0.005 (idx 0)
+        h.record(30.0); // 0.03s  → le=0.05  (idx 3)
+        h.record(20_000.0); // 20s → +Inf overflow (idx 11)
+
+        let (cumulative, total, sum_secs) = h.snapshot();
+        assert_eq!(total, 3, "three observations");
+        assert_eq!(cumulative.len(), 12, "11 bounds + Inf");
+        // Cumulative: ≤0.005 caught the 3ms; ≤0.05 caught 3ms+30ms; last = total.
+        assert_eq!(cumulative[0], 1, "le=0.005 has the 3ms observation");
+        assert_eq!(cumulative[3], 2, "le=0.05 has 3ms + 30ms");
+        assert_eq!(cumulative[11], 3, "+Inf has all three");
+        // Monotonic non-decreasing.
+        assert!(cumulative.windows(2).all(|w| w[0] <= w[1]));
+        // Sum ≈ 0.003 + 0.03 + 20.0 seconds.
+        assert!(
+            (sum_secs - 20.033).abs() < 0.01,
+            "sum_secs ≈ 20.033, got {sum_secs}"
+        );
+    }
+
+    #[test]
     fn log_entry_has_route_key_field() {
         let entry = LogEntry {
             timestamp: std::time::SystemTime::UNIX_EPOCH,
@@ -153,6 +176,78 @@ impl LatencyWindow {
     #[allow(dead_code)]
     pub fn raw_len(&self) -> usize {
         self.samples.len()
+    }
+}
+
+/// Cumulative latency histogram for Prometheus, alongside the rolling
+/// percentile window. Unlike `LatencyWindow` (a bounded sample the TUI reads
+/// for live p50–p99), these are **monotonic counters** — the only latency form
+/// a scraper can aggregate across instances into a fleet-wide quantile. Each
+/// observation lands in exactly one bucket (stored non-cumulative); the metrics
+/// endpoint emits the cumulative `le` series Prometheus expects.
+pub struct LatencyHistogram {
+    /// Per-bucket observation counts, aligned to `BUCKET_BOUNDS_SECS`; the final
+    /// slot is the `+Inf` overflow.
+    buckets: [AtomicU64; Self::N],
+    /// Sum of observed latencies in microseconds (exact integer, rendered as
+    /// seconds). Saturating so a pathological run can't wrap.
+    sum_micros: AtomicU64,
+}
+
+impl LatencyHistogram {
+    /// Bucket upper bounds in seconds (the `le` labels). Standard-ish spread
+    /// from 5ms to 10s; a `+Inf` overflow bucket is implied.
+    pub const BUCKET_BOUNDS_SECS: [f64; 11] = [
+        0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+    ];
+    /// The `le` label strings, parallel to `BUCKET_BOUNDS_SECS`, so rendering
+    /// needs no float→string formatting on the hot path.
+    pub const BUCKET_LABELS: [&'static str; 11] = [
+        "0.005", "0.01", "0.025", "0.05", "0.1", "0.25", "0.5", "1", "2.5", "5", "10",
+    ];
+    const N: usize = Self::BUCKET_BOUNDS_SECS.len() + 1;
+
+    pub fn new() -> Self {
+        Self {
+            buckets: std::array::from_fn(|_| AtomicU64::new(0)),
+            sum_micros: AtomicU64::new(0),
+        }
+    }
+
+    /// Record one observation (latency in milliseconds).
+    pub fn record(&self, latency_ms: f64) {
+        let secs = latency_ms / 1000.0;
+        let idx = Self::BUCKET_BOUNDS_SECS
+            .iter()
+            .position(|&b| secs <= b)
+            .unwrap_or(Self::N - 1);
+        if let Some(bucket) = self.buckets.get(idx) {
+            bucket.fetch_add(1, Ordering::Relaxed);
+        }
+        let micros = (latency_ms * 1000.0).round().max(0.0) as u64;
+        self.sum_micros.fetch_add(micros, Ordering::Relaxed);
+    }
+
+    /// `(cumulative counts aligned to BUCKET_BOUNDS_SECS then +Inf, total count,
+    /// sum in seconds)` — the exact numbers the Prometheus text format needs.
+    pub fn snapshot(&self) -> (Vec<u64>, u64, f64) {
+        let mut running = 0u64;
+        let cumulative: Vec<u64> = self
+            .buckets
+            .iter()
+            .map(|b| {
+                running = running.saturating_add(b.load(Ordering::Relaxed));
+                running
+            })
+            .collect();
+        let sum_secs = self.sum_micros.load(Ordering::Relaxed) as f64 / 1_000_000.0;
+        (cumulative, running, sum_secs)
+    }
+}
+
+impl Default for LatencyHistogram {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -305,6 +400,9 @@ pub struct FunctionState {
     pub healthy: AtomicBool,
     pub last_invoked: std::sync::Mutex<Option<Instant>>,
     pub latency: std::sync::Mutex<LatencyWindow>,
+    /// Cumulative latency histogram for `/_riz/metrics` (aggregatable across
+    /// instances, unlike the summary the rolling window feeds).
+    pub latency_hist: LatencyHistogram,
 }
 
 /// Plain-data view of one FunctionState — what the TUI renders.
@@ -411,6 +509,7 @@ impl FunctionState {
             healthy: AtomicBool::new(true),
             last_invoked: std::sync::Mutex::new(None),
             latency: std::sync::Mutex::new(LatencyWindow::new()),
+            latency_hist: LatencyHistogram::new(),
         }
     }
 
@@ -450,6 +549,7 @@ impl FunctionState {
             healthy: AtomicBool::new(true),
             last_invoked: std::sync::Mutex::new(None),
             latency: std::sync::Mutex::new(LatencyWindow::new()),
+            latency_hist: LatencyHistogram::new(),
         }
     }
 
@@ -638,6 +738,7 @@ impl RizState {
         if let Ok(mut w) = entry.latency.lock() {
             w.push(now, latency_ms);
         };
+        entry.latency_hist.record(latency_ms);
     }
 
     pub async fn note_cold_start(&self, function_name: &str) {
