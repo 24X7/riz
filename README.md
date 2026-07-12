@@ -16,7 +16,7 @@ your handlers make. One ~35 MB Rust binary. Apache-2.0.
 This README is the short version.
 
 ```bash
-cargo install --git https://github.com/24X7/riz
+curl -fsSL https://riz.dev/install | sh          # prebuilt binary (macOS/Linux)
 riz init typescript-http my-app && cd my-app && riz run
 # → curl 'localhost:3000/hello?name=alice'  →  {"message":"hello, alice", ...}
 ```
@@ -39,8 +39,9 @@ gateway, and no AI gateway runs your Lambda code.
 ## Quick start
 
 ```bash
-# Install (requires the Rust toolchain; GitHub release binaries are coming)
-cargo install --git https://github.com/24X7/riz
+# Install — prebuilt binary for macOS (Apple Silicon) and Linux (x86_64/arm64).
+curl -fsSL https://riz.dev/install | sh
+# From source instead: cargo install --git https://github.com/24X7/riz
 
 # A runtime needs its toolchain on PATH: bun (TS/JS), python3, node, go,
 # or a compiled Rust/Go binary. WASM handlers need the wasm32-wasip1 target.
