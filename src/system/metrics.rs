@@ -68,10 +68,48 @@ fn write_counter_section(
     }
 }
 
+/// Cumulative latency histogram — the aggregatable form (a scraper can compute
+/// a fleet-wide quantile from `_bucket`/`_sum`/`_count`, which the summary above
+/// cannot provide). See docs/METRICS.md; the summary is kept for one release.
+fn write_histogram_section(out: &mut String, functions: &FunctionsMap) {
+    use crate::state::LatencyHistogram;
+    let _ = writeln!(
+        out,
+        "# HELP riz_request_duration_seconds Request latency (histogram; aggregatable across instances)"
+    );
+    let _ = writeln!(out, "# TYPE riz_request_duration_seconds histogram");
+    for (_, f) in functions.iter() {
+        if matches!(f.kind, FunctionKind::System) {
+            continue;
+        }
+        let (cumulative, total, sum_secs) = f.latency_hist.snapshot();
+        let name = esc(&f.name);
+        for (i, label) in LatencyHistogram::BUCKET_LABELS.iter().enumerate() {
+            let v = cumulative.get(i).copied().unwrap_or(0);
+            let _ = writeln!(
+                out,
+                "riz_request_duration_seconds_bucket{{function=\"{name}\",le=\"{label}\"}} {v}"
+            );
+        }
+        let _ = writeln!(
+            out,
+            "riz_request_duration_seconds_bucket{{function=\"{name}\",le=\"+Inf\"}} {total}"
+        );
+        let _ = writeln!(
+            out,
+            "riz_request_duration_seconds_sum{{function=\"{name}\"}} {sum_secs}"
+        );
+        let _ = writeln!(
+            out,
+            "riz_request_duration_seconds_count{{function=\"{name}\"}} {total}"
+        );
+    }
+}
+
 fn write_latency_section(out: &mut String, functions: &FunctionsMap, now: std::time::Instant) {
     let _ = writeln!(
         out,
-        "# HELP riz_latency_ms Function latency percentiles over 5-min window"
+        "# HELP riz_latency_ms Function latency percentiles over 5-min window (summary; prefer riz_request_duration_seconds for aggregation)"
     );
     let _ = writeln!(out, "# TYPE riz_latency_ms summary");
     for (_, f) in functions.iter() {
@@ -182,6 +220,7 @@ impl LambdaHandler for MetricsHandler {
             |f| f.errors.load(Ordering::Relaxed),
         );
         write_latency_section(&mut out, &functions, now);
+        write_histogram_section(&mut out, &functions);
         write_counter_section(
             &mut out,
             &functions,
@@ -500,6 +539,30 @@ mod tests {
             "body was:\n{body}"
         );
         assert!(body.contains("riz_errors_total{function=\"api\"} 1"));
+    }
+
+    #[tokio::test]
+    async fn metrics_emits_latency_histogram() {
+        let s = Arc::new(RizState::new());
+        s.register(user_state()).await;
+        s.record_invocation("api", 5.0, true, false).await; // 0.005s → le=0.005
+        s.record_invocation("api", 10.0, true, false).await; // 0.01s → le=0.01
+        let h = mk(s, None);
+        let body = body_text(&h.invoke(evt()).await.unwrap());
+        assert!(
+            body.contains("# TYPE riz_request_duration_seconds histogram"),
+            "body:\n{body}"
+        );
+        assert!(
+            body.contains("riz_request_duration_seconds_bucket{function=\"api\",le=\"0.005\"} 1")
+        );
+        assert!(
+            body.contains("riz_request_duration_seconds_bucket{function=\"api\",le=\"0.01\"} 2")
+        );
+        assert!(
+            body.contains("riz_request_duration_seconds_bucket{function=\"api\",le=\"+Inf\"} 2")
+        );
+        assert!(body.contains("riz_request_duration_seconds_count{function=\"api\"} 2"));
     }
 
     #[tokio::test]
