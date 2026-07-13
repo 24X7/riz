@@ -2,6 +2,8 @@
 
 Reproducible perf snapshot. Numbers below come from `wrk` against a release-mode `riz` running a minimal Bun ping handler.
 
+> **Headline vs. guard.** The 91k figure below is a *bench recipe* — run it yourself with the steps here. It is not a CI test (it needs `wrk`, a release build, and a quiet machine). The regression *guard* is `tests/perf_http_floor.rs`: a deliberately conservative HTTP-dispatch throughput floor (~150 req/s, ~500x under the headline) that runs in the standard suite and only trips on a large structural regression — a serialization lock, a broken warm pool, or an order-of-magnitude dispatch slowdown. It never flakes on a slow CI box.
+
 ## Headline number (v0.1, single Bun handler, 20-process pool)
 
 ```
