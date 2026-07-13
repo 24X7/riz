@@ -6,7 +6,7 @@ use self::app::App;
 use self::snapshot::TuiSnapshot;
 use crate::state::AppState;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -267,45 +267,14 @@ fn run_loop<B: ratatui::backend::Backend>(
 
         if event::poll(tick)? {
             if let Event::Key(key) = event::read()? {
-                // In raw mode the terminal does NOT translate Ctrl-C to
-                // SIGINT — it arrives as a key event. We have to handle it
-                // ourselves or the user is trapped: every Ctrl-C they hit
-                // is silently intercepted and the process can't be killed
-                // from the controlling terminal. Same for Ctrl-D / Ctrl-\.
+                // In raw mode the terminal does NOT translate Ctrl-C to SIGINT
+                // — it arrives as a key event, handled inside App::on_key (with
+                // Ctrl-D / Ctrl-\) or the user is trapped and can't kill the
+                // process from the controlling terminal.
                 use crossterm::event::KeyModifiers;
                 let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-                if ctrl
-                    && matches!(
-                        key.code,
-                        KeyCode::Char('c') | KeyCode::Char('d') | KeyCode::Char('\\')
-                    )
-                {
+                if app.on_key(key.code, ctrl) == crate::tui::app::KeyOutcome::Quit {
                     break;
-                }
-                match key.code {
-                    KeyCode::Char('q') => break,
-                    KeyCode::Esc => {
-                        // Esc backs out one level: clear route filter if any,
-                        // otherwise quit. `q` always quits.
-                        if app.selected_route.is_some() {
-                            app.selected_route = None;
-                        } else {
-                            break;
-                        }
-                    }
-                    // `c` (without Ctrl) clears the route filter (mnemonic: "clear")
-                    KeyCode::Char('c') => {
-                        app.selected_route = None;
-                    }
-                    KeyCode::Tab | KeyCode::Right => app.next_tab(),
-                    KeyCode::BackTab | KeyCode::Left => app.prev_tab(),
-                    KeyCode::Down | KeyCode::Char('j') if app.selected_tab == 0 => {
-                        app.select_next_route();
-                    }
-                    KeyCode::Up | KeyCode::Char('k') if app.selected_tab == 0 => {
-                        app.select_prev_route();
-                    }
-                    _ => {}
                 }
             }
         }
