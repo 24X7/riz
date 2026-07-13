@@ -1,3 +1,4 @@
+mod audit;
 mod auth;
 mod broker;
 mod cache;

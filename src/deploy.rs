@@ -134,12 +134,17 @@ pub async fn deploy_handler(
     let expected_key = config.effective_deploy_key();
     drop(config);
 
+    // Artifact location for the audit trail (never the deploy key).
+    let source = format!("s3://{}/{}", body.s3_bucket, body.s3_key);
+    let principal = addr.ip().to_string();
+
     if let Some(resp) = deploy_auth_rejection(
         &deploy_cfg.allowed_cidrs,
         expected_key.as_deref(),
         addr.ip(),
         &headers,
     ) {
+        crate::audit::deploy(&principal, &body.lambda, &source, "rejected");
         return resp;
     }
 
@@ -194,9 +199,20 @@ pub async fn deploy_handler(
         .hot_swap(&body.lambda, function_cfg)
         .await
     {
-        Ok(pid) => confirm_swap_health(&state, &body.lambda, pid).await,
+        Ok(pid) => {
+            let resp = confirm_swap_health(&state, &body.lambda, pid).await;
+            // 200 = live and serving; anything else (422) = crashed on startup.
+            let outcome = if resp.status() == StatusCode::OK {
+                "applied"
+            } else {
+                "crashed"
+            };
+            crate::audit::deploy(&principal, &body.lambda, &source, outcome);
+            resp
+        }
         Err(e) => {
             error!("hot_swap failed for {}: {e}", body.lambda);
+            crate::audit::deploy(&principal, &body.lambda, &source, "failed");
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("swap failed: {e}"),

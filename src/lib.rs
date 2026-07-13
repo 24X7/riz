@@ -1,3 +1,4 @@
+pub mod audit;
 pub mod auth;
 pub mod broker;
 pub mod cache;
