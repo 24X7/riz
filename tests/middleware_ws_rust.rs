@@ -96,6 +96,7 @@ path = "/chat"
         log_rx: tokio::sync::Mutex::new(log_rx),
         riz_state,
         ws_connections,
+        rate_limiter: tokio::sync::RwLock::new(riz::auth::api_key::RateLimiter::default()),
     });
 
     tokio::spawn(async move {

@@ -1310,6 +1310,9 @@ async fn async_main() -> anyhow::Result<()> {
         log_rx: tokio::sync::Mutex::new(log_rx),
         riz_state,
         ws_connections,
+        rate_limiter: tokio::sync::RwLock::new(crate::auth::api_key::RateLimiter::from_config(
+            &config.api_keys,
+        )),
     });
 
     // tui_enabled was determined earlier (before tracing init) so the
@@ -1317,6 +1320,15 @@ async fn async_main() -> anyhow::Result<()> {
     // value is still in scope from the outer let-binding.
     spawn_tui_or_log_drain(&app_state, tui_enabled);
     spawn_hotreload_watchers(&app_state, &config_path);
+
+    // Surface the data-plane gate status once at boot so an operator can see
+    // whether [api_keys] took effect without reading the config back.
+    if app_state.rate_limiter.read().await.is_enforcing() {
+        tracing::info!(
+            keys = config.api_keys.len(),
+            "data-plane API-key gate active — non-/_riz/ requests require X-Api-Key"
+        );
+    }
 
     log_startup_mode(cli.dev, addr);
 

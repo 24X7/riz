@@ -68,6 +68,14 @@ fn write_counter_section(
     }
 }
 
+/// A single-series (unlabeled) counter — for process-global totals like the
+/// data-plane admission counters. Bounded cardinality: exactly one series.
+fn write_global_counter(out: &mut String, name: &str, help: &str, value: u64) {
+    let _ = writeln!(out, "# HELP {name} {help}");
+    let _ = writeln!(out, "# TYPE {name} counter");
+    let _ = writeln!(out, "{name} {value}");
+}
+
 /// Cumulative latency histogram — the aggregatable form (a scraper can compute
 /// a fleet-wide quantile from `_bucket`/`_sum`/`_count`, which the summary above
 /// cannot provide). See docs/METRICS.md; the summary is kept for one release.
@@ -249,6 +257,22 @@ impl LambdaHandler for MetricsHandler {
         // Saturation + worker reliability — the load-and-supervision signals a
         // warm-pool runtime lives or dies by (see docs/METRICS.md).
         write_pool_sections(&mut out, &self.process_manager.pool_stats().await);
+
+        // Data-plane API-key admission — global single-series counters (bounded
+        // cardinality). Distinct from `riz_admission_rejected_total` (pool
+        // load-shed): these count per-caller quota 429s and fail-closed 401s.
+        write_global_counter(
+            &mut out,
+            "riz_rate_limited_total",
+            "Requests rejected (429) at a caller's API-key rate limit",
+            self.riz_state.rate_limited.load(Ordering::Relaxed),
+        );
+        write_global_counter(
+            &mut out,
+            "riz_api_key_rejected_total",
+            "Requests rejected (401) for an unknown or absent API key when keys are configured",
+            self.riz_state.api_key_rejected.load(Ordering::Relaxed),
+        );
 
         let _ = writeln!(out, "# HELP riz_uptime_seconds Runtime uptime");
         let _ = writeln!(out, "# TYPE riz_uptime_seconds gauge");

@@ -530,6 +530,18 @@ pub(crate) async fn dispatch_lambda(
         return cors_preflight_response(&state, &meta).await;
     }
 
+    // ── Per-caller API key + rate-limit admission (data plane) ───────────────
+    // Gates every non-`/_riz/*` request (function invocations + colocated
+    // static) when `[api_keys]` is configured; the reserved `/_riz/*` admin +
+    // observability plane keeps its own `[auth] bearer_token`. No keys → open
+    // (returns None), so behavior is unchanged when the feature is unused.
+    // Placed ahead of static + cache so a rejected caller touches neither.
+    if !meta.path.starts_with("/_riz/") {
+        if let Some(resp) = enforce_api_key_admission(&state, &meta, req.headers()).await {
+            return resp;
+        }
+    }
+
     // ── Static file serving (GET/HEAD fallback) ──────────────────────────────
     if meta.method_typed == http::Method::GET || meta.method_typed == http::Method::HEAD {
         if let Some(resp) = try_serve_static(&state, &meta, req.headers()).await {
@@ -861,6 +873,90 @@ async fn read_event_body(req: Request<AxumBody>) -> Result<(Option<String>, bool
 /// RwLock (one lock acquisition per request on the auth path, none when no
 /// authorizer is configured for the matched function). Returns the (possibly
 /// context-enriched) event, or the 401/403/500 response to send instead.
+/// Per-caller API-key resolution + token-bucket rate limiting on the data
+/// plane. Reads the caller's secret from the `X-Api-Key` header, resolves it
+/// against `[api_keys]`, and spends one token from that caller's bucket.
+///
+/// Returns `None` to admit (no keys configured, or a valid key with budget);
+/// `Some(response)` to reject: `401` for an unknown/absent key when keys are
+/// configured (fail-closed), or `429` + `Retry-After` when the caller is over
+/// its rate limit. Both rejections bump a global metric and log a warning
+/// (with the caller name on the 429).
+async fn enforce_api_key_admission(
+    state: &AppState,
+    meta: &RequestMeta,
+    headers: &axum::http::HeaderMap,
+) -> Option<Response> {
+    use crate::auth::api_key::Admission;
+    let presented = headers.get("x-api-key").and_then(|v| v.to_str().ok());
+    let admission = state.rate_limiter.read().await.admit(presented);
+    match admission {
+        Admission::Open | Admission::Admitted => None,
+        Admission::Unauthorized => {
+            state
+                .riz_state
+                .api_key_rejected
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            // A rejected request never reaches dispatch's request_id; mint one
+            // here so the warning still carries req=/ip= correlation fields.
+            let request_id = Uuid::new_v4();
+            let source_ip = &meta.source_ip;
+            state.push_log(
+                "warn",
+                Some(&meta.route_key_for_logs),
+                format!(
+                    "api key rejected (unknown or absent X-Api-Key) req={request_id} ip={source_ip}"
+                ),
+            );
+            Some(api_key_error_response(
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                None,
+            ))
+        }
+        Admission::RateLimited {
+            caller,
+            retry_after_secs,
+        } => {
+            state
+                .riz_state
+                .rate_limited
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let request_id = Uuid::new_v4();
+            let source_ip = &meta.source_ip;
+            state.push_log(
+                "warn",
+                Some(&meta.route_key_for_logs),
+                format!(
+                    "rate limit exceeded for caller '{caller}' req={request_id} ip={source_ip} retry_after={retry_after_secs}s"
+                ),
+            );
+            Some(api_key_error_response(
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate limited",
+                Some(retry_after_secs),
+            ))
+        }
+    }
+}
+
+/// Build a JSON error response for the API-key gate, optionally carrying a
+/// `Retry-After` header (whole seconds) for the 429 case.
+fn api_key_error_response(
+    status: StatusCode,
+    error: &str,
+    retry_after_secs: Option<u64>,
+) -> Response {
+    let body = format!(r#"{{"error":"{error}"}}"#);
+    let mut resp = (status, [("content-type", "application/json")], body).into_response();
+    if let Some(secs) = retry_after_secs {
+        if let Ok(val) = axum::http::HeaderValue::from_str(&secs.to_string()) {
+            resp.headers_mut().insert(http::header::RETRY_AFTER, val);
+        }
+    }
+    resp
+}
+
 async fn enforce_authorizer_phase(
     state: &AppState,
     gw_request: ApiGatewayV2httpRequest,

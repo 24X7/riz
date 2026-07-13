@@ -36,6 +36,14 @@ reliability is trivial — not by what happened to exist first.
 - `riz_workers` (gauge) — live worker processes in the pool.
 - `riz_pool_memory_bytes` (gauge) — resident memory across the pool.
 
+**Access control — per-caller admission (global, one series each)**
+Distinct from pool load-shedding above: these count rejections at the edge
+`[api_keys]` gate, not at a function's concurrency limit.
+- `riz_rate_limited_total` (counter) — requests 429'd at a caller's token
+  bucket. A rising rate isolates a single noisy caller (the log line names it).
+- `riz_api_key_rejected_total` (counter) — requests 401'd for an unknown or
+  absent `X-Api-Key` when keys are configured (fail-closed).
+
 **Worker reliability (supervision)**
 - `riz_worker_restarts_total` (counter) — respawns (crash or timeout).
 - `riz_worker_consecutive_crashes` (gauge) — proximity to the crash-loop
