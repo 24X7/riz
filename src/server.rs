@@ -310,10 +310,28 @@ async fn a2a_rpc_response(
 /// off) and proceed to kill child processes.
 const SHUTDOWN_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// Turn a listener-bind `io::Error` into an actionable message. `AddrInUse` —
+/// the most common startup failure — names the port and the two ways to change
+/// it; everything else keeps the raw error with context.
+fn bind_error(e: std::io::Error, addr: SocketAddr) -> anyhow::Error {
+    if e.kind() == std::io::ErrorKind::AddrInUse {
+        anyhow::anyhow!(
+            "port {} is already in use — another process is bound to {addr}.\n  \
+             Change it with `riz run --port <PORT>` or the `[server] port` field in riz.toml, \
+             or free the port (`riz doctor` reports what's holding it).",
+            addr.port()
+        )
+    } else {
+        anyhow::Error::new(e).context(format!("failed to bind {addr}"))
+    }
+}
+
 pub async fn run(state: Arc<AppState>, addr: SocketAddr) -> anyhow::Result<()> {
     let app = build_app(state.clone()).into_make_service_with_connect_info::<SocketAddr>();
     info!("riz listening on {addr}");
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|e| bind_error(e, addr))?;
 
     // Channel from "shutdown signal observed inside the graceful-shutdown
     // future" to the outer task. We start the drain timeout clock ONLY
@@ -1395,6 +1413,30 @@ mod tests {
         // signal-handler installation side-effects; we don't await it
         // because there's no SIGINT in the test environment.
         let _fut = shutdown_signal();
+    }
+
+    #[test]
+    fn bind_error_addr_in_use_names_port_and_fix() {
+        let addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
+        let e = std::io::Error::new(std::io::ErrorKind::AddrInUse, "address in use");
+        let msg = format!("{}", bind_error(e, addr));
+        assert!(msg.contains("3000"), "names the port: {msg}");
+        assert!(msg.contains("--port"), "offers the --port fix: {msg}");
+        assert!(
+            msg.contains("[server] port"),
+            "offers the config fix: {msg}"
+        );
+    }
+
+    #[test]
+    fn bind_error_other_keeps_context() {
+        let addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
+        let e = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        let msg = format!("{}", bind_error(e, addr));
+        assert!(
+            msg.contains("failed to bind"),
+            "generic bind context: {msg}"
+        );
     }
 
     #[test]

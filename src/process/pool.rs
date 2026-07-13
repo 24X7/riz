@@ -12,6 +12,54 @@ use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
 
 pub(super) const CRASH_THRESHOLD: u32 = 5;
 
+/// Turn a process-spawn `io::Error` into an actionable message. A `NotFound`
+/// means the runtime program isn't where we expected: for interpreter runtimes
+/// (Bun/Node/Python) the interpreter isn't on PATH — name it and give an
+/// install hint; for compiled runtimes (Rust/Go/Wasm) the handler artifact
+/// hasn't been built. Everything else keeps the raw error with context.
+fn spawn_error(
+    e: std::io::Error,
+    runtime: &crate::config::RuntimeKind,
+    handler: &std::path::Path,
+) -> anyhow::Error {
+    use crate::config::RuntimeKind;
+    if e.kind() != std::io::ErrorKind::NotFound {
+        return anyhow::Error::new(e).context(format!(
+            "failed to spawn {} handler {}",
+            runtime.as_str(),
+            handler.display()
+        ));
+    }
+    match runtime {
+        RuntimeKind::Bun => anyhow::anyhow!(
+            "runtime 'bun' not found on PATH — the bun function needs it.\n  \
+             Install: curl -fsSL https://bun.sh/install | bash   (then restart your shell)\n  \
+             Check all runtimes with `riz doctor`."
+        ),
+        RuntimeKind::Node => anyhow::anyhow!(
+            "runtime 'node' not found on PATH — the nodejs function needs it.\n  \
+             Install Node.js from https://nodejs.org (or a version manager like nvm/fnm).\n  \
+             Check all runtimes with `riz doctor`."
+        ),
+        RuntimeKind::Python => anyhow::anyhow!(
+            "runtime 'python3' not found on PATH — the python function needs it.\n  \
+             Install Python 3 from https://python.org or your OS package manager.\n  \
+             Check all runtimes with `riz doctor`."
+        ),
+        RuntimeKind::Rust | RuntimeKind::Go => anyhow::anyhow!(
+            "handler binary not found: {}\n  \
+             Build it first — the {} artifact is missing (see the function's README), then `riz run`.",
+            handler.display(),
+            runtime.as_str()
+        ),
+        RuntimeKind::Wasm => anyhow::anyhow!(
+            "wasm handler not found: {}\n  \
+             Build it: cargo build --release --target wasm32-wasip1",
+            handler.display()
+        ),
+    }
+}
+
 pub(super) struct ProcessHandle {
     pub(super) pid: u32,
     #[allow(dead_code)]
@@ -180,7 +228,7 @@ pub(super) async fn spawn_process(
 
     let mut child = cmd
         .spawn()
-        .with_context(|| format!("failed to spawn {:?}", cfg.handler))?;
+        .map_err(|e| spawn_error(e, &cfg.runtime, &cfg.handler))?;
 
     let pid = child.id().unwrap_or(0);
 
@@ -343,6 +391,49 @@ pub fn kill_process_group(_pid: u32) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::RuntimeKind;
+    use std::path::Path;
+
+    #[test]
+    fn spawn_error_missing_interpreter_names_binary_and_install_hint() {
+        let e = std::io::Error::new(std::io::ErrorKind::NotFound, "not found");
+        let msg = format!(
+            "{}",
+            spawn_error(e, &RuntimeKind::Bun, Path::new("./index.ts"))
+        );
+        assert!(msg.contains("bun"), "names the runtime binary: {msg}");
+        assert!(msg.contains("PATH"), "explains it's not on PATH: {msg}");
+        assert!(msg.contains("bun.sh"), "gives an install hint: {msg}");
+        assert!(msg.contains("riz doctor"), "points at doctor: {msg}");
+    }
+
+    #[test]
+    fn spawn_error_missing_compiled_artifact_says_build_it() {
+        let e = std::io::Error::new(std::io::ErrorKind::NotFound, "not found");
+        let msg = format!(
+            "{}",
+            spawn_error(e, &RuntimeKind::Rust, Path::new("./target/release/hello"))
+        );
+        assert!(
+            msg.contains("handler binary not found"),
+            "names the miss: {msg}"
+        );
+        assert!(msg.contains("Build it"), "tells the user to build: {msg}");
+        assert!(msg.contains("hello"), "names the artifact path: {msg}");
+    }
+
+    #[test]
+    fn spawn_error_other_kind_keeps_generic_context() {
+        let e = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        let msg = format!(
+            "{}",
+            spawn_error(e, &RuntimeKind::Python, Path::new("./app.py"))
+        );
+        assert!(
+            msg.contains("failed to spawn"),
+            "generic context kept: {msg}"
+        );
+    }
 
     /// A stdio child spawned WITHOUT piped stdin must surface as a spawn
     /// error (failed pipe wiring), not a panic — the supervisor treats it
