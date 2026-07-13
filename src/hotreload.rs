@@ -95,7 +95,12 @@ async fn apply_config_reload(state: &Arc<AppState>, new_config: Config) {
     register_new_function_states(state, new_funcs, &new_stage, new_default_ttl).await;
 
     let new_router = Router::new(handlers);
+    // Rebuild the data-plane API-key gate from the new [api_keys] set. A fresh
+    // limiter resets every caller's token budget — benign, reload is a rare
+    // admin action — and keeps the caller set bounded to what config declares.
+    let new_rate_limiter = crate::auth::api_key::RateLimiter::from_config(&new_config.api_keys);
     *state.router.write().await = new_router;
+    *state.rate_limiter.write().await = new_rate_limiter;
     *state.config.write().await = new_config;
 }
 

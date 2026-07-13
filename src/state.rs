@@ -27,6 +27,9 @@ pub struct AppState {
     pub log_rx: Mutex<mpsc::Receiver<LogEntry>>,
     pub riz_state: Arc<RizState>,
     pub ws_connections: crate::ws::ConnectionStore,
+    /// Data-plane API-key admission gate. Rebuilt from `[api_keys]` on config
+    /// hot-reload (see `hotreload::apply_config_reload`). Empty → open.
+    pub rate_limiter: RwLock<crate::auth::api_key::RateLimiter>,
 }
 
 #[derive(Clone, Debug)]
@@ -681,6 +684,12 @@ pub struct RizState {
     pub version: &'static str,
     /// Global LLM token utilization read-model (per-model, not per-function).
     pub token_stats: TokenStats,
+    /// Data-plane API-key admission counters (global, single-series each —
+    /// bounded cardinality). `rate_limited` = requests 429'd at a caller's
+    /// token bucket; `api_key_rejected` = requests 401'd for an unknown/absent
+    /// key when keys are configured (fail-closed).
+    pub rate_limited: AtomicU64,
+    pub api_key_rejected: AtomicU64,
 }
 
 impl RizState {
@@ -690,6 +699,8 @@ impl RizState {
             start_time: Instant::now(),
             version: env!("CARGO_PKG_VERSION"),
             token_stats: TokenStats::new(),
+            rate_limited: AtomicU64::new(0),
+            api_key_rejected: AtomicU64::new(0),
         }
     }
 

@@ -21,6 +21,19 @@ endpoint = "http://127.0.0.1:4318"
 # [auth]
 # bearer_token = "changeme"   # prefer an env-templated secret in real deploys
 
+# Per-caller API keys for the DATA plane (function invocations). When any key
+# is set, every non-/_riz/ request must present a matching secret in the
+# `X-Api-Key` header; unknown/absent keys are rejected 401 (fail-closed). Each
+# key has its own token-bucket rate limit (429 + Retry-After on exceed), so one
+# noisy caller can't starve the others. Omit the whole block to leave the data
+# plane open (the default). The /_riz/* admin plane keeps its [auth] bearer.
+# [api_keys.mobile-app]
+# key = "changeme-mobile"       # prefer an env-templated secret
+# rate_per_sec = 200            # sustained req/s == burst; omit for unlimited
+# [api_keys.partner-batch]
+# key = "changeme-partner"
+# rate_per_sec = 20
+
 [deploy]
 # deploy_key = "changeme"   # prefer RIZ_DEPLOY_KEY env var
 allowed_cidrs = []

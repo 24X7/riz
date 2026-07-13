@@ -56,6 +56,19 @@ pub struct AuthConfig {
     pub bearer_token: Option<String>,
 }
 
+/// One per-caller API key (`[api_keys.<name>]`). The map key is the caller's
+/// name (for logs/audit); `key` is the secret it presents in the `X-Api-Key`
+/// header. `rate_per_sec` is the caller's independent token-bucket ceiling
+/// (sustained req/s == burst capacity); absent → identity only, no limit.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApiKeyEntry {
+    /// The secret presented via the `X-Api-Key` request header.
+    pub key: String,
+    /// Sustained rate and burst ceiling in requests/second. Absent → unlimited.
+    #[serde(default)]
+    pub rate_per_sec: Option<u32>,
+}
+
 /// CORS policy configuration. Can appear as a top-level `[cors]` block
 /// (applies to all user functions) or as a `[function.<name>.cors]` block
 /// (overrides the global policy for that function's routes only).
@@ -192,6 +205,17 @@ pub struct Config {
     pub aws: AwsConfig,
     #[serde(default)]
     pub auth: AuthConfig,
+    /// Per-caller API keys (`[api_keys.<name>]`). Absent/empty → the data
+    /// plane is ungated (pre-key behavior preserved). When at least one key is
+    /// configured, every non-`/_riz/*` request (function invocations and any
+    /// colocated static assets) must present a matching secret in the
+    /// `X-Api-Key` header; unknown/absent keys are rejected 401 (fail-closed),
+    /// and each key carries its own token-bucket rate limit (429 +
+    /// `Retry-After` on exceed). The `/_riz/*` admin/observability plane keeps
+    /// its separate `[auth] bearer_token`. Ordered for deterministic
+    /// resolution.
+    #[serde(default)]
+    pub api_keys: IndexMap<String, ApiKeyEntry>,
     /// Global CORS policy. Applied to every user function unless the function
     /// declares its own `[function.<name>.cors]` override.
     #[serde(default)]
@@ -887,6 +911,7 @@ impl Config {
                 );
             }
         }
+        self.validate_api_keys()?;
         self.validate_agent()?;
         // CORS spec violation (MDN): allow_credentials=true with an empty
         // allow_origins list means no origin will ever be echoed back, so
@@ -998,6 +1023,32 @@ impl Config {
             {
                 return Err(format!(
                     "[agent.peers] name '{peer}' must be alphanumeric/_/- (it becomes the tool name delegate_to_{peer})"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// `[api_keys]` sanity: no empty secrets, no rate of zero (a key that can
+    /// never be used), and no two callers sharing a secret (ambiguous
+    /// identity). A bounded, config-fixed set — the rate limiter builds one
+    /// bucket per entry (Power-of-10 rule 3).
+    fn validate_api_keys(&self) -> Result<(), String> {
+        let mut seen_secrets: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for (name, entry) in &self.api_keys {
+            if entry.key.is_empty() {
+                return Err(format!(
+                    "[api_keys.{name}] key must not be empty — supply the secret this caller presents in X-Api-Key"
+                ));
+            }
+            if entry.rate_per_sec == Some(0) {
+                return Err(format!(
+                    "[api_keys.{name}] rate_per_sec must be >= 1 (0 would reject every request) — remove the field for unlimited"
+                ));
+            }
+            if !seen_secrets.insert(entry.key.as_str()) {
+                return Err(format!(
+                    "[api_keys.{name}] shares its key with another caller — each secret must be unique so the caller resolves unambiguously"
                 ));
             }
         }
@@ -1663,6 +1714,68 @@ allow_credentials = true
         assert!(
             err.contains("credentialed") || err.contains("allow_credentials"),
             "err explains the vulnerability: {err}"
+        );
+    }
+
+    #[test]
+    fn api_keys_parse_and_validate() {
+        let toml_str = r#"
+[api_keys.alice]
+key = "secret-alice"
+rate_per_sec = 100
+
+[api_keys.svc]
+key = "secret-svc"
+"#;
+        let c: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(c.api_keys.len(), 2);
+        assert_eq!(c.api_keys["alice"].rate_per_sec, Some(100));
+        assert_eq!(c.api_keys["svc"].rate_per_sec, None, "absent → unlimited");
+        assert!(c.validate().is_ok());
+    }
+
+    #[test]
+    fn api_keys_reject_empty_secret() {
+        let toml_str = r#"
+[api_keys.alice]
+key = ""
+"#;
+        let c: Config = toml::from_str(toml_str).unwrap();
+        let err = c.validate().unwrap_err();
+        assert!(
+            err.contains("[api_keys.alice]"),
+            "err names the caller: {err}"
+        );
+        assert!(err.contains("empty"), "err explains: {err}");
+    }
+
+    #[test]
+    fn api_keys_reject_zero_rate() {
+        let toml_str = r#"
+[api_keys.alice]
+key = "s"
+rate_per_sec = 0
+"#;
+        let c: Config = toml::from_str(toml_str).unwrap();
+        let err = c.validate().unwrap_err();
+        assert!(err.contains("rate_per_sec"), "err names the field: {err}");
+    }
+
+    #[test]
+    fn api_keys_reject_duplicate_secrets() {
+        // Two callers sharing a secret would resolve ambiguously.
+        let toml_str = r#"
+[api_keys.alice]
+key = "shared"
+
+[api_keys.bob]
+key = "shared"
+"#;
+        let c: Config = toml::from_str(toml_str).unwrap();
+        let err = c.validate().unwrap_err();
+        assert!(
+            err.contains("shares its key"),
+            "err explains the clash: {err}"
         );
     }
 
