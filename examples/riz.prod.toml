@@ -34,6 +34,12 @@ endpoint = "http://127.0.0.1:4318"
 # key = "changeme-partner"
 # rate_per_sec = 20
 
+# Audit log (no config — always on). Deploy attempts, config hot-reloads, and
+# auth denials emit structured events on the `riz.audit` tracing target, with
+# no secret material. They flow to the normal log by default; route them to a
+# separate sink with a target filter, e.g. RUST_LOG=riz.audit=info or your log
+# pipeline's target match.
+
 [deploy]
 # deploy_key = "changeme"   # prefer RIZ_DEPLOY_KEY env var
 allowed_cidrs = []

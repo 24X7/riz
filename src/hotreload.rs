@@ -99,6 +99,23 @@ async fn apply_config_reload(state: &Arc<AppState>, new_config: Config) {
     // limiter resets every caller's token budget — benign, reload is a rare
     // admin action — and keeps the caller set bounded to what config declares.
     let new_rate_limiter = crate::auth::api_key::RateLimiter::from_config(&new_config.api_keys);
+
+    // Audit the applied change (counts only — never config contents). Computed
+    // here while both function maps are still borrowable, before new_config moves.
+    let removed = old_funcs
+        .keys()
+        .filter(|k| !new_funcs.contains_key(*k))
+        .count();
+    let added = new_funcs
+        .keys()
+        .filter(|k| !old_funcs.contains_key(*k))
+        .count();
+    let changed = new_funcs
+        .iter()
+        .filter(|(n, c)| old_funcs.get(*n).is_some_and(|o| function_changed(o, c)))
+        .count();
+    crate::audit::config_reload(added, removed, changed);
+
     *state.router.write().await = new_router;
     *state.rate_limiter.write().await = new_rate_limiter;
     *state.config.write().await = new_config;

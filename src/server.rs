@@ -908,6 +908,7 @@ async fn enforce_api_key_admission(
                     "api key rejected (unknown or absent X-Api-Key) req={request_id} ip={source_ip}"
                 ),
             );
+            crate::audit::auth_denied("api_key", source_ip, "unknown_or_absent_key");
             Some(api_key_error_response(
                 StatusCode::UNAUTHORIZED,
                 "unauthorized",
@@ -1041,6 +1042,7 @@ fn authorizer_error_response(
                 function = %function_name,
                 "authorizer: 401 Unauthorized — {msg}"
             );
+            crate::audit::auth_denied("authorizer", &meta.source_ip, "unauthorized");
             (401, "Unauthorized")
         }
         AuthError::Forbidden(msg) => {
@@ -1049,6 +1051,7 @@ fn authorizer_error_response(
                 function = %function_name,
                 "authorizer: 403 Forbidden — {msg}"
             );
+            crate::audit::auth_denied("authorizer", &meta.source_ip, "forbidden");
             (403, "Forbidden")
         }
         AuthError::Other(msg) => {
