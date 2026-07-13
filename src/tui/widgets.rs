@@ -1,10 +1,10 @@
 use crate::state::{FunctionKind, LogEntry};
-use crate::tui::app::App;
+use crate::tui::app::{App, LogLevelFilter};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table, Tabs, Wrap},
+    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Tabs, Wrap},
     Frame,
 };
 use std::collections::VecDeque;
@@ -30,6 +30,72 @@ pub fn render(frame: &mut Frame, app: &App) {
         3 => render_tokens(frame, app, body),
         _ => {}
     }
+
+    // Modal overlays paint last, on top of the tab body.
+    if app.show_help {
+        render_help_overlay(frame, frame.area());
+    }
+}
+
+/// A centered sub-rectangle `percent_x` × `percent_y` of `area`, for modal
+/// overlays. Panic-free: percentages are clamped and every split cell is
+/// accessed with a guard (falls back to the full area).
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let py = percent_y.min(100);
+    let px = percent_x.min(100);
+    let outer = (100u16.saturating_sub(py)) / 2;
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(outer),
+            Constraint::Percentage(py),
+            Constraint::Percentage(outer),
+        ])
+        .split(area);
+    let Some(&mid) = rows.get(1) else {
+        return area;
+    };
+    let side = (100u16.saturating_sub(px)) / 2;
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(side),
+            Constraint::Percentage(px),
+            Constraint::Percentage(side),
+        ])
+        .split(mid);
+    cols.get(1).copied().unwrap_or(area)
+}
+
+fn render_help_overlay(frame: &mut Frame, area: Rect) {
+    let popup = centered_rect(60, 60, area);
+    // Clear the region first so the overlay isn't painted over the tab body.
+    frame.render_widget(Clear, popup);
+    let head = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(Color::DarkGray);
+    let lines = vec![
+        Line::from(Span::styled("riz --dev — keybindings", head)),
+        Line::from(""),
+        Line::from("Tab / →        next tab"),
+        Line::from("BackTab / ←    previous tab"),
+        Line::from("↑ / k          select up (Routes)"),
+        Line::from("↓ / j          select down (Routes)"),
+        Line::from("/              search logs (type, Enter apply, Esc cancel)"),
+        Line::from("l              cycle log level filter (ALL/INFO/WARN/ERROR)"),
+        Line::from("c              clear all log filters"),
+        Line::from("Esc            back out one level (query → level → sel → quit)"),
+        Line::from("?              toggle this help"),
+        Line::from("q · Ctrl-C     quit"),
+        Line::from(""),
+        Line::from(Span::styled("press any key to close", dim)),
+    ];
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Help")
+        .border_style(head);
+    frame.render_widget(Paragraph::new(lines).block(block), popup);
 }
 
 fn render_tabs(frame: &mut Frame, app: &App, area: Rect) {
@@ -150,18 +216,40 @@ fn render_routes_table(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(table, area);
 }
 
+/// Compose the log-panel border title from the active filters: route
+/// selection, severity, and the live `/`-search buffer (with a block cursor
+/// while typing). Ends with a terse key hint.
+fn log_panel_title(app: &App, selected_key: Option<&str>) -> String {
+    let mut t = match selected_key {
+        Some(k) => format!("Logs — {k}"),
+        None => "Logs (all routes)".to_string(),
+    };
+    if app.log_level != LogLevelFilter::All {
+        t.push_str(&format!("  [{}]", app.log_level.label()));
+    }
+    if app.log_input_active {
+        // U+2588 FULL BLOCK as a caret so the operator sees the live query.
+        t.push_str(&format!("  /{}\u{2588}", app.log_query));
+    } else if !app.log_query.is_empty() {
+        t.push_str(&format!("  /{}", app.log_query));
+    }
+    t.push_str("  [/ search · l level · ? help]");
+    t
+}
+
 fn render_log_panel(frame: &mut Frame, app: &App, area: Rect) {
     let selected_key: Option<&str> = app
         .selected_route
         .and_then(|i| app.function_stats.get(i))
         .map(|s| s.name.as_str());
 
-    let title = match selected_key {
-        Some(k) => format!("Logs — {k}  [Esc / c to clear filter]"),
-        None => "Logs  (all routes)".into(),
-    };
-
-    let visible = filter_logs(&app.log_entries, selected_key);
+    let title = log_panel_title(app, selected_key);
+    let visible = filter_logs(
+        &app.log_entries,
+        selected_key,
+        &app.log_query,
+        app.log_level,
+    );
     let max_lines = area.height.saturating_sub(2) as usize;
     // Tail window without slicing: `start <= len` by construction
     // (saturating_sub), and `skip` cannot panic even if that drifts.
@@ -190,16 +278,24 @@ fn render_log_panel(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
+/// Filter log entries by (route selection, severity, free-text query) — all
+/// ANDed. `query` is matched case-insensitively against the message; empty =
+/// no text filter. A pure fn so the filter logic is unit-tested directly.
 pub fn filter_logs<'a>(
     entries: &'a VecDeque<LogEntry>,
     route_key: Option<&str>,
+    query: &str,
+    level: LogLevelFilter,
 ) -> Vec<&'a LogEntry> {
+    let needle = query.to_lowercase();
     entries
         .iter()
         .filter(|e| match route_key {
             Some(k) => e.route_key.as_deref() == Some(k),
             None => true,
         })
+        .filter(|e| level.matches(&e.level))
+        .filter(|e| needle.is_empty() || e.message.to_lowercase().contains(&needle))
         .collect()
 }
 
@@ -505,6 +601,15 @@ mod tests {
         }
     }
 
+    fn make_entry_lvl(level: &str, msg: &str) -> LogEntry {
+        LogEntry {
+            timestamp: SystemTime::UNIX_EPOCH,
+            level: level.into(),
+            message: msg.into(),
+            route_key: None,
+        }
+    }
+
     #[test]
     fn filter_by_route_key_returns_matching_entries() {
         let mut entries = VecDeque::new();
@@ -513,7 +618,7 @@ mod tests {
         entries.push_back(make_entry(Some("GET /ping"), "ping 2"));
         entries.push_back(make_entry(None, "system"));
 
-        let visible = filter_logs(&entries, Some("GET /ping"));
+        let visible = filter_logs(&entries, Some("GET /ping"), "", LogLevelFilter::All);
         assert_eq!(visible.len(), 2);
         assert_eq!(visible[0].message, "ping 1");
         assert_eq!(visible[1].message, "ping 2");
@@ -525,8 +630,57 @@ mod tests {
         entries.push_back(make_entry(Some("GET /ping"), "a"));
         entries.push_back(make_entry(None, "b"));
 
-        let visible = filter_logs(&entries, None);
+        let visible = filter_logs(&entries, None, "", LogLevelFilter::All);
         assert_eq!(visible.len(), 2);
+    }
+
+    #[test]
+    fn filter_by_query_is_case_insensitive_substring() {
+        let mut entries = VecDeque::new();
+        entries.push_back(make_entry(None, "GET /ping 200 3ms"));
+        entries.push_back(make_entry(None, "POST /orders 500 err"));
+        entries.push_back(make_entry(None, "GET /ping 200 4ms"));
+
+        let visible = filter_logs(&entries, None, "PING", LogLevelFilter::All);
+        assert_eq!(visible.len(), 2, "case-insensitive match on 'ping'");
+        assert!(visible.iter().all(|e| e.message.contains("/ping")));
+    }
+
+    #[test]
+    fn filter_by_level_keeps_only_that_level() {
+        let mut entries = VecDeque::new();
+        entries.push_back(make_entry_lvl("INFO", "info a"));
+        entries.push_back(make_entry_lvl("WARN", "warn a"));
+        entries.push_back(make_entry_lvl("ERROR", "error a"));
+        entries.push_back(make_entry_lvl("WARN", "warn b"));
+
+        let warn = filter_logs(&entries, None, "", LogLevelFilter::Warn);
+        assert_eq!(warn.len(), 2);
+        assert!(warn.iter().all(|e| e.level == "WARN"));
+
+        let err = filter_logs(&entries, None, "", LogLevelFilter::Error);
+        assert_eq!(err.len(), 1);
+        assert_eq!(err[0].message, "error a");
+    }
+
+    #[test]
+    fn filter_ands_route_query_and_level() {
+        let mut entries = VecDeque::new();
+        let mut mk = |rk: &str, lvl: &str, msg: &str| {
+            entries.push_back(LogEntry {
+                timestamp: SystemTime::UNIX_EPOCH,
+                level: lvl.into(),
+                message: msg.into(),
+                route_key: Some(rk.to_string()),
+            });
+        };
+        mk("GET /ping", "WARN", "slow ping");
+        mk("GET /ping", "INFO", "fast ping");
+        mk("GET /orders", "WARN", "slow orders");
+
+        let visible = filter_logs(&entries, Some("GET /ping"), "slow", LogLevelFilter::Warn);
+        assert_eq!(visible.len(), 1, "route AND query AND level all apply");
+        assert_eq!(visible[0].message, "slow ping");
     }
 
     use crate::state::{TokenCall, TokenStatsSnapshot};
@@ -674,5 +828,79 @@ mod tests {
         assert!(text.contains("demo-model"), "model not rendered: {text}");
         assert!(text.contains("42"), "input total not rendered");
         assert!(text.contains("Tokens"), "tab/title not rendered");
+    }
+
+    #[test]
+    fn help_overlay_renders_keybindings_on_top() {
+        let app = App {
+            show_help: true,
+            ..Default::default()
+        };
+        let backend = TestBackend::new(120, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+        let text = buffer_text(&terminal);
+        assert!(text.contains("keybindings"), "help title missing: {text}");
+        assert!(text.contains("search logs"), "search binding missing");
+        assert!(text.contains("quit"), "quit binding missing");
+    }
+
+    #[test]
+    fn help_overlay_renders_on_tiny_terminal_without_panic() {
+        let app = App {
+            show_help: true,
+            ..Default::default()
+        };
+        for (w, h) in [(3u16, 2u16), (1, 1), (10, 4), (200, 60)] {
+            let backend = TestBackend::new(w, h);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal
+                .draw(|f| render(f, &app))
+                .unwrap_or_else(|e| panic!("help at {w}x{h} failed: {e}"));
+        }
+    }
+
+    #[test]
+    fn log_panel_title_reflects_active_search_and_level() {
+        let mut app = App {
+            selected_tab: 0,
+            log_input_active: true,
+            log_query: "boom".into(),
+            log_level: LogLevelFilter::Error,
+            ..Default::default()
+        };
+        app.log_entries.push_back(make_entry(None, "some log"));
+        let backend = TestBackend::new(120, 16);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+        let text = buffer_text(&terminal);
+        assert!(
+            text.contains("/boom"),
+            "live query missing from title: {text}"
+        );
+        assert!(text.contains("ERROR"), "level indicator missing from title");
+    }
+
+    #[test]
+    fn log_panel_search_narrows_visible_lines() {
+        let mut app = App {
+            selected_tab: 0,
+            log_query: "keep".into(),
+            ..Default::default()
+        };
+        app.log_entries.push_back(make_entry(None, "keep this one"));
+        app.log_entries.push_back(make_entry(None, "drop that one"));
+        let backend = TestBackend::new(80, 16);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+        let text = buffer_text(&terminal);
+        assert!(
+            text.contains("keep this one"),
+            "matching line missing: {text}"
+        );
+        assert!(
+            !text.contains("drop that one"),
+            "non-matching line should be filtered out"
+        );
     }
 }
