@@ -1324,12 +1324,7 @@ async fn async_main() -> anyhow::Result<()> {
 
     // Surface the data-plane gate status once at boot so an operator can see
     // whether [api_keys] took effect without reading the config back.
-    if app_state.rate_limiter.read().await.is_enforcing() {
-        tracing::info!(
-            keys = config.api_keys.len(),
-            "data-plane API-key gate active — non-/_riz/ requests require X-Api-Key"
-        );
-    }
+    log_api_key_gate_status(&config, app_state.rate_limiter.read().await.is_enforcing());
 
     log_startup_mode(cli.dev, addr);
 
@@ -1384,6 +1379,27 @@ fn dispatch_config_report(cli: &Cli, config: &config::Config) -> Option<anyhow::
 
 /// One startup line, shaped for the mode: human text in --dev, structured
 /// fields headless.
+/// One-time boot log for the data-plane API-key gate, plus a loud warning for
+/// the sharp edge: keys gate the data plane but the `/_riz/*` plane (incl. MCP
+/// tool-calls that can invoke functions) keeps its own `[auth] bearer_token`,
+/// which defaults open.
+fn log_api_key_gate_status(config: &config::Config, is_enforcing: bool) {
+    if !is_enforcing {
+        return;
+    }
+    tracing::info!(
+        keys = config.api_keys.len(),
+        "data-plane API-key gate active — non-/_riz/ requests require X-Api-Key"
+    );
+    if config.effective_bearer_token().is_none() {
+        tracing::warn!(
+            "[api_keys] gates the data plane, but [auth] bearer_token is unset — the /_riz/* \
+             plane (incl. MCP tool-calls that invoke functions) is UNAUTHENTICATED. Set \
+             [auth] bearer_token (or RIZ_AUTH_BEARER_TOKEN) to close this path."
+        );
+    }
+}
+
 fn log_startup_mode(dev: bool, addr: SocketAddr) {
     if dev {
         info!("riz starting in [dev] mode on {addr}");
