@@ -1114,6 +1114,16 @@ async fn finalize_dispatch_success(
         .riz_state
         .record_invocation(&function_name, latency, healthy, false)
         .await;
+    state
+        .riz_state
+        .record_recent(
+            &function_name,
+            &meta.method_str,
+            &meta.path,
+            status_u16,
+            latency,
+        )
+        .await;
 
     let (method_str, path, source_ip) = (&meta.method_str, &meta.path, &meta.source_ip);
     state.push_log(
