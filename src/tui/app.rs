@@ -79,6 +79,8 @@ pub struct App {
     pub log_level: LogLevelFilter,
     /// `?` help overlay is showing.
     pub show_help: bool,
+    /// Enter-opened invocation inspector for the selected Routes function.
+    pub inspector_open: bool,
     #[allow(dead_code)]
     pub started_at: Option<Instant>,
 }
@@ -173,6 +175,15 @@ impl App {
             return KeyOutcome::Continue;
         }
 
+        // Inspector is modal: Esc / Enter / q close it; other keys pass through
+        // as no-ops so it stays open and refreshes live.
+        if self.inspector_open {
+            if matches!(code, KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q')) {
+                self.inspector_open = false;
+            }
+            return KeyOutcome::Continue;
+        }
+
         // Help overlay is modal: any key dismisses it.
         if self.show_help {
             self.show_help = false;
@@ -185,6 +196,10 @@ impl App {
             KeyCode::Char('/') => self.log_input_active = true,
             KeyCode::Char('l') => self.log_level = self.log_level.next(),
             KeyCode::Char('c') => self.clear_log_filters(),
+            // Enter drills into the selected Routes function's recent calls.
+            KeyCode::Enter if self.selected_tab == 0 && self.selected_route.is_some() => {
+                self.inspector_open = true;
+            }
             KeyCode::Esc => {
                 // Back out one level: query → level → selection → quit.
                 if !self.log_query.is_empty() {
@@ -372,6 +387,32 @@ mod tests {
         assert_eq!(app.selected_route, None);
         assert_eq!(app.log_query, "");
         assert_eq!(app.log_level, LogLevelFilter::All);
+    }
+
+    #[test]
+    fn enter_opens_inspector_only_with_a_selection() {
+        let mut app = app_with_routes(2);
+        // No selection → Enter is a no-op.
+        assert_eq!(app.on_key(KeyCode::Enter, false), KeyOutcome::Continue);
+        assert!(!app.inspector_open);
+        // With a selection on the Routes tab → Enter opens the inspector.
+        app.selected_route = Some(1);
+        app.on_key(KeyCode::Enter, false);
+        assert!(app.inspector_open);
+    }
+
+    #[test]
+    fn inspector_is_modal_and_closes_on_esc() {
+        let mut app = app_with_routes(2);
+        app.selected_route = Some(0);
+        app.inspector_open = true;
+        // A normally-navigating key is swallowed while the inspector is open.
+        app.on_key(KeyCode::Char('j'), false);
+        assert!(app.inspector_open, "nav key does not close the inspector");
+        assert_eq!(app.selected_route, Some(0), "and does not move selection");
+        // Esc closes it (and does not quit).
+        assert_eq!(app.on_key(KeyCode::Esc, false), KeyOutcome::Continue);
+        assert!(!app.inspector_open);
     }
 
     #[test]

@@ -31,10 +31,69 @@ pub fn render(frame: &mut Frame, app: &App) {
         _ => {}
     }
 
-    // Modal overlays paint last, on top of the tab body.
-    if app.show_help {
+    // Modal overlays paint last, on top of the tab body. The inspector wins
+    // over help if both are somehow set (help dismisses on any key first).
+    if app.inspector_open {
+        render_inspector(frame, app, frame.area());
+    } else if app.show_help {
         render_help_overlay(frame, frame.area());
     }
+}
+
+/// HTTP status → colour by class: 2xx green, 3xx cyan, 4xx yellow, else red.
+fn status_color(status: u16) -> Color {
+    match status {
+        200..=299 => Color::Green,
+        300..=399 => Color::Cyan,
+        400..=499 => Color::Yellow,
+        _ => Color::Red,
+    }
+}
+
+/// Invocation inspector: a modal listing the selected Routes function's recent
+/// HTTP invocations (newest first) with method, status, latency, and path.
+fn render_inspector(frame: &mut Frame, app: &App, area: Rect) {
+    let Some(func) = app.selected_route.and_then(|i| app.function_stats.get(i)) else {
+        return;
+    };
+    let popup = centered_rect(70, 70, area);
+    frame.render_widget(Clear, popup);
+    let head = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+
+    let mut lines: Vec<Line> = Vec::new();
+    if func.recent_invocations.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "no invocations recorded yet",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        // Newest first.
+        for rec in func.recent_invocations.iter().rev() {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("{:<6} ", rec.method),
+                    Style::default().fg(Color::White),
+                ),
+                Span::styled(
+                    format!("{:>3} ", rec.status),
+                    Style::default().fg(status_color(rec.status)),
+                ),
+                Span::styled(
+                    format!("{:>8.1}ms  ", rec.latency_ms),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::raw(rec.path.clone()),
+            ]));
+        }
+    }
+    let title = format!("Inspector — {}  [Esc to close]", func.name);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(head);
+    frame.render_widget(Paragraph::new(lines).block(block), popup);
 }
 
 /// A centered sub-rectangle `percent_x` × `percent_y` of `area`, for modal
@@ -82,6 +141,7 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from("BackTab / ←    previous tab"),
         Line::from("↑ / k          select up (Routes)"),
         Line::from("↓ / j          select down (Routes)"),
+        Line::from("Enter          inspect selected function's recent calls"),
         Line::from("/              search logs (type, Enter apply, Esc cancel)"),
         Line::from("l              cycle log level filter (ALL/INFO/WARN/ERROR)"),
         Line::from("c              clear all log filters"),
@@ -210,7 +270,7 @@ fn render_routes_table(frame: &mut Frame, app: &App, area: Rect) {
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .title("Routes  [↑↓ / j k] ◆ = system"),
+            .title("Routes  [↑↓/jk · Enter inspect · ? help] ◆ = system"),
     );
 
     frame.render_widget(table, area);
@@ -588,7 +648,7 @@ pub fn render_tokens_panel(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::LogEntry;
+    use crate::state::{FunctionStateSnapshot, LogEntry};
     use std::collections::VecDeque;
     use std::time::SystemTime;
 
@@ -857,6 +917,72 @@ mod tests {
             terminal
                 .draw(|f| render(f, &app))
                 .unwrap_or_else(|e| panic!("help at {w}x{h} failed: {e}"));
+        }
+    }
+
+    fn app_with_recent(records: Vec<crate::state::InvocationRecord>) -> App {
+        let func = FunctionStateSnapshot {
+            name: "orders".into(),
+            recent_invocations: records,
+            ..Default::default()
+        };
+        App {
+            selected_tab: 0,
+            selected_route: Some(0),
+            inspector_open: true,
+            function_stats: vec![func],
+            ..Default::default()
+        }
+    }
+
+    fn rec(method: &str, path: &str, status: u16, ms: f64) -> crate::state::InvocationRecord {
+        crate::state::InvocationRecord {
+            method: method.into(),
+            path: path.into(),
+            status,
+            latency_ms: ms,
+            at: SystemTime::UNIX_EPOCH,
+        }
+    }
+
+    #[test]
+    fn inspector_renders_recent_invocations_newest_first() {
+        let app = app_with_recent(vec![
+            rec("GET", "/orders/1", 200, 3.4),
+            rec("POST", "/orders", 500, 12.1),
+        ]);
+        let backend = TestBackend::new(120, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+        let text = buffer_text(&terminal);
+        assert!(text.contains("Inspector — orders"), "title missing: {text}");
+        assert!(text.contains("/orders/1"), "recent path missing");
+        assert!(text.contains("500"), "error status shown");
+        assert!(text.contains("POST"), "method shown");
+    }
+
+    #[test]
+    fn inspector_with_no_records_shows_placeholder() {
+        let app = app_with_recent(vec![]);
+        let backend = TestBackend::new(100, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+        let text = buffer_text(&terminal);
+        assert!(
+            text.contains("no invocations recorded yet"),
+            "empty placeholder missing: {text}"
+        );
+    }
+
+    #[test]
+    fn inspector_renders_on_tiny_terminal_without_panic() {
+        let app = app_with_recent(vec![rec("GET", "/x", 200, 1.0)]);
+        for (w, h) in [(3u16, 2u16), (1, 1), (12, 5), (200, 60)] {
+            let backend = TestBackend::new(w, h);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal
+                .draw(|f| render(f, &app))
+                .unwrap_or_else(|e| panic!("inspector at {w}x{h} failed: {e}"));
         }
     }
 

@@ -406,6 +406,24 @@ pub struct FunctionState {
     /// Cumulative latency histogram for `/_riz/metrics` (aggregatable across
     /// instances, unlike the summary the rolling window feeds).
     pub latency_hist: LatencyHistogram,
+    /// Bounded ring of the most-recent HTTP invocations, for the `--dev` TUI
+    /// invocation inspector. Capped at `RECENT_INVOCATIONS_CAP` (rule 3);
+    /// populated only on the main HTTP dispatch path via `record_recent`.
+    pub recent_invocations: std::sync::Mutex<VecDeque<InvocationRecord>>,
+}
+
+/// One recorded HTTP invocation, for the TUI inspector's recent-calls list.
+/// Plain, cloneable data — no secret material (method/path/status/latency only).
+#[derive(Clone, Debug)]
+pub struct InvocationRecord {
+    pub method: String,
+    pub path: String,
+    pub status: u16,
+    pub latency_ms: f64,
+    /// Wall-clock completion time. Carried for future "x s ago" rendering;
+    /// not yet displayed (mirrors `TokenCall::at`).
+    #[allow(dead_code)]
+    pub at: SystemTime,
 }
 
 /// Plain-data view of one FunctionState — what the TUI renders.
@@ -428,6 +446,8 @@ pub struct FunctionStateSnapshot {
     pub p99_ms: f64,
     #[allow(dead_code)]
     pub last_invoked_secs_ago: Option<f64>,
+    /// Most-recent HTTP invocations (newest last), for the inspector overlay.
+    pub recent_invocations: Vec<InvocationRecord>,
 }
 
 impl FunctionStateSnapshot {
@@ -444,6 +464,28 @@ impl FunctionStateSnapshot {
 }
 
 impl FunctionState {
+    /// Keep the most-recent N HTTP invocations for the TUI inspector.
+    pub const RECENT_INVOCATIONS_CAP: usize = 20;
+
+    /// Push one HTTP invocation onto the bounded recent-calls ring. Lock-light
+    /// and non-blocking: `try_lock` so a contended render never stalls the
+    /// response path (a dropped record is acceptable — this feeds a live view,
+    /// not accounting). Called only from the main HTTP dispatch finalizers.
+    pub fn record_recent(&self, method: &str, path: &str, status: u16, latency_ms: f64) {
+        if let Ok(mut ring) = self.recent_invocations.try_lock() {
+            ring.push_back(InvocationRecord {
+                method: method.to_string(),
+                path: path.to_string(),
+                status,
+                latency_ms,
+                at: SystemTime::now(),
+            });
+            while ring.len() > Self::RECENT_INVOCATIONS_CAP {
+                ring.pop_front();
+            }
+        }
+    }
+
     /// Capture an immutable snapshot.
     pub fn snapshot(&self, now: Instant) -> FunctionStateSnapshot {
         let (p50, p75, p90, p95, p99) = self
@@ -456,6 +498,11 @@ impl FunctionState {
             .lock()
             .ok()
             .and_then(|l| l.map(|t| now.duration_since(t).as_secs_f64()));
+        let recent_invocations = self
+            .recent_invocations
+            .lock()
+            .map(|r| r.iter().cloned().collect())
+            .unwrap_or_default();
         FunctionStateSnapshot {
             name: self.name.clone(),
             routes: self.routes.clone(),
@@ -472,6 +519,7 @@ impl FunctionState {
             p95_ms: p95,
             p99_ms: p99,
             last_invoked_secs_ago,
+            recent_invocations,
         }
     }
 
@@ -513,6 +561,7 @@ impl FunctionState {
             last_invoked: std::sync::Mutex::new(None),
             latency: std::sync::Mutex::new(LatencyWindow::new()),
             latency_hist: LatencyHistogram::new(),
+            recent_invocations: std::sync::Mutex::new(VecDeque::new()),
         }
     }
 
@@ -553,6 +602,7 @@ impl FunctionState {
             last_invoked: std::sync::Mutex::new(None),
             latency: std::sync::Mutex::new(LatencyWindow::new()),
             latency_hist: LatencyHistogram::new(),
+            recent_invocations: std::sync::Mutex::new(VecDeque::new()),
         }
     }
 
@@ -752,6 +802,29 @@ impl RizState {
         entry.latency_hist.record(latency_ms);
     }
 
+    /// Push one HTTP invocation onto a function's recent-calls ring (TUI
+    /// inspector). Separate from `record_invocation` so the many non-HTTP
+    /// callers (WS, MCP) don't pay for it and their signatures stay unchanged;
+    /// invoked only from the main dispatch finalizers where method/path/status
+    /// are in scope.
+    pub async fn record_recent(
+        &self,
+        function_name: &str,
+        method: &str,
+        path: &str,
+        status: u16,
+        latency_ms: f64,
+    ) {
+        let entry = {
+            let functions = self.functions.read().await;
+            match functions.get(function_name) {
+                Some(e) => e.clone(),
+                None => return,
+            }
+        };
+        entry.record_recent(method, path, status, latency_ms);
+    }
+
     pub async fn note_cold_start(&self, function_name: &str) {
         let entry = {
             let functions = self.functions.read().await;
@@ -801,6 +874,53 @@ mod riz_state_tests {
             guard_in: None,
             guard_out: None,
         }
+    }
+
+    #[test]
+    fn recent_invocations_ring_is_bounded_and_newest_last() {
+        let f = FunctionState::user("api", make_function_config(), "$default", 0);
+        let over = FunctionState::RECENT_INVOCATIONS_CAP + 5;
+        for i in 0..over {
+            f.record_recent("GET", &format!("/p{i}"), 200, i as f64);
+        }
+        let snap = f.snapshot(Instant::now());
+        assert_eq!(
+            snap.recent_invocations.len(),
+            FunctionState::RECENT_INVOCATIONS_CAP,
+            "ring is capped"
+        );
+        // The oldest were evicted; the newest is retained (at the back).
+        let last = snap.recent_invocations.last().expect("non-empty");
+        assert_eq!(last.path, format!("/p{}", over - 1));
+        let first = snap.recent_invocations.first().expect("non-empty");
+        assert_eq!(
+            first.path,
+            format!("/p{}", over - FunctionState::RECENT_INVOCATIONS_CAP),
+            "oldest kept entry is exactly cap-behind the newest"
+        );
+    }
+
+    #[tokio::test]
+    async fn record_recent_via_riz_state_populates_ring() {
+        let state = RizState::new();
+        state
+            .register(FunctionState::user(
+                "api",
+                make_function_config(),
+                "$default",
+                0,
+            ))
+            .await;
+        state.record_recent("api", "POST", "/api", 201, 4.2).await;
+        state
+            .record_recent("unknown-fn", "GET", "/x", 200, 1.0)
+            .await; // no-op
+        let functions = state.functions.read().await;
+        let api = functions.get("api").expect("registered");
+        let snap = api.snapshot(Instant::now());
+        assert_eq!(snap.recent_invocations.len(), 1);
+        assert_eq!(snap.recent_invocations[0].status, 201);
+        assert_eq!(snap.recent_invocations[0].method, "POST");
     }
 
     #[tokio::test]
