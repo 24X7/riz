@@ -36,6 +36,12 @@ pub const BUILTINS: &[(&str, &str, &str, &str)] = &[
     ("nodejs-http", "templates/nodejs-http", "HTTP", "Node.js"),
     ("go-http", "templates/go-http", "HTTP", "Go"),
     (
+        "wasm-http",
+        "templates/wasm-http",
+        "HTTP",
+        "Rust → wasm32-wasip1 (WASI sandbox)",
+    ),
+    (
         "typescript-websocket",
         "templates/typescript-websocket",
         "WebSocket",

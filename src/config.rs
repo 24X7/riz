@@ -861,8 +861,17 @@ impl Config {
                 anyhow::anyhow!("cannot read {}: {e}", path.display())
             }
         })?;
-        let config: Config = toml::from_str(&text)
-            .map_err(|e| anyhow::anyhow!("invalid config in {}: {e}", path.display()))?;
+        let config: Config = toml::from_str(&text).map_err(|e| {
+            // The toml error already carries the line/column + a caret span at
+            // the offending token; lead with the file and follow with a pointer
+            // to a known-good reference so the user can diff their way out.
+            anyhow::anyhow!(
+                "invalid riz.toml at {}:\n\n{e}\n\
+                 Compare against a working config: `riz init --list` then scaffold one, \
+                 or see examples/riz.all.toml. Every field is documented there.",
+                path.display()
+            )
+        })?;
         Ok(config)
     }
 
@@ -1714,6 +1723,26 @@ allow_credentials = true
         assert!(
             err.contains("credentialed") || err.contains("allow_credentials"),
             "err explains the vulnerability: {err}"
+        );
+    }
+
+    #[test]
+    fn malformed_toml_error_names_file_and_points_at_a_reference() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("riz.toml");
+        // `port` should be an integer — a string is a type error toml reports
+        // with a line/column caret.
+        std::fs::write(&path, "[server]\nport = \"not-a-number\"\n").unwrap();
+        let err = Config::from_file(&path).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("invalid riz.toml"),
+            "leads with the problem: {msg}"
+        );
+        assert!(msg.contains("riz.toml"), "names the file: {msg}");
+        assert!(
+            msg.contains("riz init --list") || msg.contains("riz.all.toml"),
+            "points at a known-good reference: {msg}"
         );
     }
 

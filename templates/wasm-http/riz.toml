@@ -1,0 +1,21 @@
+[server]
+port = 3000
+host = "127.0.0.1"
+
+[function.hello]
+runtime = "wasm"
+# Point at the wasm32-wasip1 module. Build it first:
+#   rustup target add wasm32-wasip1
+#   cargo build --release --target wasm32-wasip1
+handler = "./target/wasm32-wasip1/release/hello.wasm"
+timeout_ms = 5000
+concurrency = 2
+
+# WASM runs deny-by-default under wasmtime + WASI: stdio only, no filesystem,
+# network, or host env. Grant filesystem access with `allowed_paths`, guest env
+# with `[function.hello.stage_variables]`, and brokered resources with
+# `[function.hello.capabilities]` — see examples/riz.all.toml.
+
+[[function.hello.routes]]
+path = "/hello"
+method = "GET"

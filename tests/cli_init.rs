@@ -57,6 +57,7 @@ fn builtin_templates_scaffold_from_the_git_location() {
         ("python-http", "main.py"),
         ("rust-http", "Cargo.toml"),
         ("nodejs-http", "index.mjs"),
+        ("wasm-http", "src/main.rs"),
     ] {
         let tmp = tempfile::TempDir::new().unwrap();
         let target = tmp.path().join("app");
@@ -80,6 +81,48 @@ fn builtin_templates_scaffold_from_the_git_location() {
             toml::from_str(&cfg_src).unwrap_or_else(|e| panic!("{name} riz.toml parses: {e}"));
         assert!(!cfg.functions.is_empty(), "{name}: no functions declared");
     }
+}
+
+#[test]
+fn wasm_http_template_is_a_valid_wasm_scaffold() {
+    assert_riz_available();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let target = tmp.path().join("app");
+    let out = init(&["wasm-http", target.to_str().unwrap()]);
+    assert!(
+        out.status.success(),
+        "init wasm-http failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Scaffold shape: an independent wasm crate + config + docs.
+    assert!(target.join("Cargo.toml").is_file(), "Cargo.toml missing");
+    assert!(target.join("src/main.rs").is_file(), "handler missing");
+    assert!(target.join("README.md").is_file(), "README missing");
+
+    // The Cargo.toml is an independent workspace (so it builds outside the
+    // host workspace) targeting a small stripped release artifact.
+    let cargo = std::fs::read_to_string(target.join("Cargo.toml")).unwrap();
+    assert!(
+        cargo.contains("[workspace]"),
+        "must be an independent workspace"
+    );
+    assert!(
+        cargo.contains("opt-level"),
+        "release profile tuned for wasm size"
+    );
+
+    // The config declares the wasm runtime, points at a .wasm module, and
+    // passes full riz validation.
+    let cfg_src = std::fs::read_to_string(target.join("riz.toml")).unwrap();
+    let cfg: riz::config::Config = toml::from_str(&cfg_src).expect("riz.toml parses");
+    let hello = cfg.functions.get("hello").expect("hello function declared");
+    assert_eq!(hello.runtime, riz::config::RuntimeKind::Wasm);
+    assert!(
+        hello.handler.to_string_lossy().ends_with(".wasm"),
+        "handler points at a wasm module: {:?}",
+        hello.handler
+    );
+    cfg.validate().expect("scaffolded wasm config validates");
 }
 
 #[test]
