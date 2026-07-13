@@ -193,7 +193,9 @@ pub struct LatencyHistogram {
     /// slot is the `+Inf` overflow.
     buckets: [AtomicU64; Self::N],
     /// Sum of observed latencies in microseconds (exact integer, rendered as
-    /// seconds). Saturating so a pathological run can't wrap.
+    /// seconds). A u64 of microseconds only wraps after ~584,000 years, so the
+    /// atomic `fetch_add` accumulator needs no saturation; the per-scrape
+    /// cumulative in `snapshot` uses `saturating_add` defensively.
     sum_micros: AtomicU64,
 }
 

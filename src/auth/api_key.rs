@@ -243,4 +243,51 @@ mod tests {
         assert!(matches!(rl.admit(Some("a")), Admission::RateLimited { .. })); // alice now limited
         assert_eq!(rl.admit(Some("b")), Admission::Admitted); // bob is unaffected
     }
+
+    #[test]
+    fn bucket_refills_over_time() {
+        // The behavior that makes this a token bucket, not a hard quota: after
+        // draining, elapsed time replenishes tokens. Deterministic — we rewind
+        // `last` instead of sleeping.
+        let mut b = TokenBucket::new(10);
+        for _ in 0..10 {
+            assert!(b.try_take().is_ok(), "burst of 10 all admitted");
+        }
+        assert!(b.try_take().is_err(), "bucket now empty");
+
+        // Simulate 1 full second elapsing → refill_per_sec (10) tokens, clamped
+        // to capacity (10).
+        b.last = std::time::Instant::now()
+            .checked_sub(std::time::Duration::from_secs(1))
+            .expect("test clock rewind");
+        for _ in 0..10 {
+            assert!(b.try_take().is_ok(), "refilled to capacity after 1s");
+        }
+        assert!(
+            b.try_take().is_err(),
+            "and empty again — capacity is the cap"
+        );
+    }
+
+    #[test]
+    fn partial_refill_grants_partial_budget() {
+        // Half a second at rate 10 → ~5 tokens, not the full capacity.
+        let mut b = TokenBucket::new(10);
+        for _ in 0..10 {
+            let _ = b.try_take();
+        }
+        b.last = std::time::Instant::now()
+            .checked_sub(std::time::Duration::from_millis(500))
+            .expect("test clock rewind");
+        let mut granted = 0;
+        for _ in 0..10 {
+            if b.try_take().is_ok() {
+                granted += 1;
+            }
+        }
+        assert!(
+            (4..=6).contains(&granted),
+            "~5 tokens refilled in 0.5s at rate 10, got {granted}"
+        );
+    }
 }

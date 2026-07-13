@@ -568,9 +568,13 @@ pub(crate) async fn dispatch_lambda(
         }
     }
 
-    // BUG-12: skip cache for authenticated/personalized requests.
-    let has_auth =
-        req.headers().contains_key("authorization") || req.headers().contains_key("cookie");
+    // BUG-12: skip cache for authenticated/personalized requests. `x-api-key`
+    // counts as auth: with `[api_keys]` configured the response can vary per
+    // caller, and the cache key is method+path+query only — without this, one
+    // caller could be served another caller's cached response.
+    let has_auth = req.headers().contains_key("authorization")
+        || req.headers().contains_key("cookie")
+        || req.headers().contains_key("x-api-key");
 
     // Cache check — only when no auth headers present. The cache is keyed
     // by raw method+path+query (a cached response is the request's response,
@@ -905,6 +909,20 @@ async fn enforce_api_key_admission(
     meta: &RequestMeta,
     headers: &axum::http::HeaderMap,
 ) -> Option<Response> {
+    api_key_admission(state, headers, &meta.source_ip, &meta.route_key_for_logs).await
+}
+
+/// The reusable core of the data-plane API-key gate. Both the HTTP dispatch
+/// path and the WebSocket upgrade path call this so a single `[api_keys]`
+/// config gates every function-invocation surface uniformly. `source_ip` /
+/// `route_key` are supplied by the caller (they differ per surface). Returns
+/// `None` to admit, `Some(response)` (401/429) to reject.
+pub(crate) async fn api_key_admission(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+    source_ip: &str,
+    route_key: &str,
+) -> Option<Response> {
     use crate::auth::api_key::Admission;
     let presented = headers.get("x-api-key").and_then(|v| v.to_str().ok());
     let admission = state.rate_limiter.read().await.admit(presented);
@@ -918,10 +936,9 @@ async fn enforce_api_key_admission(
             // A rejected request never reaches dispatch's request_id; mint one
             // here so the warning still carries req=/ip= correlation fields.
             let request_id = Uuid::new_v4();
-            let source_ip = &meta.source_ip;
             state.push_log(
                 "warn",
-                Some(&meta.route_key_for_logs),
+                Some(route_key),
                 format!(
                     "api key rejected (unknown or absent X-Api-Key) req={request_id} ip={source_ip}"
                 ),
@@ -942,10 +959,9 @@ async fn enforce_api_key_admission(
                 .rate_limited
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let request_id = Uuid::new_v4();
-            let source_ip = &meta.source_ip;
             state.push_log(
                 "warn",
-                Some(&meta.route_key_for_logs),
+                Some(route_key),
                 format!(
                     "rate limit exceeded for caller '{caller}' req={request_id} ip={source_ip} retry_after={retry_after_secs}s"
                 ),

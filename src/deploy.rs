@@ -150,6 +150,7 @@ pub async fn deploy_handler(
 
     // Validate lambda name is a safe identifier
     if body.lambda.contains('/') || body.lambda.contains('.') {
+        crate::audit::deploy(&principal, &body.lambda, &source, "rejected");
         return error_response(StatusCode::BAD_REQUEST, "invalid lambda name");
     }
 
@@ -160,6 +161,7 @@ pub async fn deploy_handler(
         config.functions.get(&body.lambda).cloned()
     };
     let Some(mut function_cfg) = function_cfg else {
+        crate::audit::deploy(&principal, &body.lambda, &source, "rejected");
         return error_response(
             StatusCode::NOT_FOUND,
             format!("no function found for '{}'", body.lambda),
@@ -177,6 +179,7 @@ pub async fn deploy_handler(
         download_and_unpack_s3(&body.s3_bucket, &body.s3_key, &staging_dir, &aws_region).await
     {
         error!("deploy download failed for {}: {e}", body.lambda);
+        crate::audit::deploy(&principal, &body.lambda, &source, "failed");
         return error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("download failed: {e}"),
@@ -184,6 +187,7 @@ pub async fn deploy_handler(
     }
 
     let Some(handler_name) = function_cfg.handler.file_name().map(|n| n.to_os_string()) else {
+        crate::audit::deploy(&principal, &body.lambda, &source, "failed");
         return error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!(

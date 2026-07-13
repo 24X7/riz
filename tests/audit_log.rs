@@ -116,8 +116,64 @@ async fn deploy_rejection_emits_audit_event() {
     );
 }
 
+#[tokio::test]
+async fn api_key_rejection_emits_auth_denied_audit_event() {
+    let events = Arc::new(Mutex::new(Vec::<AuditRecord>::new()));
+    let subscriber = tracing_subscriber::registry().with(CaptureLayer {
+        events: events.clone(),
+    });
+    tracing::subscriber::set_global_default(subscriber)
+        .expect("no other subscriber in this test process");
+
+    // Data plane gated by one key; hit a data-plane path with no X-Api-Key.
+    let mut config = riz::config::Config::default();
+    config.api_keys.insert(
+        "alice".to_string(),
+        riz::config::ApiKeyEntry {
+            key: "secret-a".into(),
+            rate_per_sec: Some(100),
+        },
+    );
+    let state = build_state_from(config);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let app = riz::server::build_app(state).into_make_service_with_connect_info::<SocketAddr>();
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let resp = reqwest::get(format!("http://{addr}/data")).await.unwrap();
+    assert_eq!(resp.status(), 401, "no key → 401");
+
+    let captured = events.lock().unwrap().clone();
+    let denied: Vec<_> = captured
+        .iter()
+        .filter(|r| r.fields.get("event").map(String::as_str) == Some("auth_denied"))
+        .collect();
+    assert_eq!(
+        denied.len(),
+        1,
+        "one auth_denied audit event (got {captured:?})"
+    );
+    let f = &denied[0].fields;
+    assert_eq!(f.get("boundary").map(String::as_str), Some("api_key"));
+    assert_eq!(
+        f.get("reason").map(String::as_str),
+        Some("unknown_or_absent_key")
+    );
+    // The presented (here absent) credential must never appear.
+    let joined = f.values().cloned().collect::<Vec<_>>().join("|");
+    assert!(
+        !joined.contains("secret-a"),
+        "no key material in audit: {joined}"
+    );
+}
+
 fn build_state() -> Arc<riz::state::AppState> {
-    let config = riz::config::Config::default();
+    build_state_from(riz::config::Config::default())
+}
+
+fn build_state_from(config: riz::config::Config) -> Arc<riz::state::AppState> {
     let registry = Arc::new(riz::process::runtime::RuntimeRegistry::new().unwrap());
     let cache = riz::cache::CacheLayer::new(&config.cache);
     let telemetry = riz::observability::TelemetryHandle::disabled();

@@ -37,11 +37,26 @@ const WRITER_FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
 /// Captures the function name in the wrapper closure (see main.rs).
 pub async fn ws_upgrade_handler(
     State((state, function_name)): State<(Arc<AppState>, String)>,
-    ConnectInfo(_peer): ConnectInfo<SocketAddr>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     ws: WebSocketUpgrade,
     headers: axum::http::HeaderMap,
     RawQuery(raw_query): RawQuery,
 ) -> Response {
+    // Per-caller API-key gate — a WebSocket function is a data-plane surface too,
+    // so the handshake must pass the same `[api_keys]` admission as an HTTP
+    // invocation (no keys configured → open). Reject before upgrading; the
+    // client sees the 401/429 as the handshake response.
+    if let Some(resp) = crate::server::api_key_admission(
+        &state,
+        &headers,
+        &peer.ip().to_string(),
+        &format!("WS {function_name}"),
+    )
+    .await
+    {
+        return resp;
+    }
+
     let stage = state.config.read().await.server.stage.clone();
     // Parse queryStringParameters from the upgrade request URI so $connect
     // events carry them, matching the AWS WebSocket event shape + the HTTP path.
