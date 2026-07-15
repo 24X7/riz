@@ -4,6 +4,82 @@ All notable changes to riz are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and riz aims to follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.0 - 2026-07-13
+
+Agents, edge controls, and a safety-critical rewrite of the whole binary. riz
+is now an agent2agent-protocol server in its own right, gates the data plane
+per caller, and every line compiled into the binary is held to NASA's Power of
+10 rules.
+
+### Added
+
+- **A2A built-in agent** — set `[agent]` and this instance becomes an
+  agent2agent-protocol server: an Agent Card at
+  `/.well-known/agent-card.json` and a JSON-RPC endpoint at `/_riz/a2a` where
+  peers delegate tasks. It reasons through the LLM gateway with this instance's
+  own functions as tools, streams live task events over SSE
+  (`SendStreamingMessage`), and forms a mesh via `[agent.peers]` with
+  hop-capped delegation (`riz a2a send`).
+- **Per-caller API keys + token-bucket rate limiting** — `[api_keys.<name>]`
+  maps a caller to a secret + rate ceiling. Non-`/_riz/*` requests (function
+  invocations, WebSocket handshakes, colocated static) must present a matching
+  `X-Api-Key`; unknown/absent keys fail closed (401) and each caller has its
+  own bucket (429 + `Retry-After`). No keys → open, unchanged.
+- **Structured audit log** — deploy, config-reload, and auth-denial events on
+  the `riz.audit` tracing target, scrubbed of secret material; route them with
+  `RUST_LOG=riz.audit=info`.
+- **Production metrics** — the four golden signals plus worker supervision and
+  cache efficiency at `/_riz/metrics`, including saturation
+  (`riz_concurrency_in_use`/`_limit`, `riz_admission_rejected_total`) and a
+  cross-instance-aggregatable `riz_request_duration_seconds` histogram. A
+  `/_riz/ready` readiness probe; `[metrics] enabled` off switch. See
+  `docs/METRICS.md`.
+- **LLM gateway upgrades** — OpenAI function-calling across every provider,
+  token-level streaming passthrough for OpenAI-compatible upstreams, and
+  Anthropic-native streaming translated to OpenAI chunks on the fly.
+- **MCP** — resources (a live instance describes itself to agents) and
+  WebSocket functions exposed as tools via ephemeral sessions.
+- **`--dev` TUI** — live log search (`/`) + severity filter (`l`), a `?` help
+  overlay, an Enter-to-open invocation inspector (recent calls per function),
+  and a saturation column in the Processes tab.
+- **Runtimes & scaffolding** — per-function environment variables
+  (`[function.<name>.env]`); a `wasm-http` `init` template (a `wasm32-wasip1`
+  handler in the WASI sandbox); the full-stack `ai-chat` template (React chat
+  UI + a server-side agent loop through the gateway).
+- **Per-worker seccomp-BPF** — a deny-EPERM blocklist of 22 escape/tamper
+  syscalls in `pre_exec`, stacked on rlimits + `prctl` + Landlock.
+- **Actionable startup errors** — bad `riz.toml` (points at the field), missing
+  runtime binary (names it + install hint), and port-in-use (names the port +
+  how to change it) now say how to fix themselves.
+- **CI throughput floor** — a conservative, non-flaky regression tripwire for
+  HTTP dispatch (the 91k req/s headline stays a `wrk` bench recipe).
+
+### Changed
+
+- **Safety-critical posture** — NASA's Power of 10, adapted to Rust
+  (`docs/SAFETY.md`), is now binding for everything compiled into the binary:
+  no `unwrap`/`expect`/`panic`/indexing/unchecked-arithmetic on runtime data,
+  bounded channels, supervised loops. 253 flagged sites were driven to zero and
+  the lints promoted to a three-tier enforced gate (workspace deny + a
+  `--lib --bins` CI gate + a ratchet that only decreases).
+- **Supply chain** — a `cargo-deny` CI gate, a CycloneDX SBOM, and keyless
+  GitHub build-provenance attestations (SLSA via Actions OIDC) on every release
+  artifact.
+- **Static serving** streams file bodies (flat per-connection memory, no HEAD
+  reads).
+- **Production hardening (Phase 1)** — JWKS authorizer cache, reflected-origin
+  credentialed-CORS rejection, and a hot-swap pool rebuild that resizes
+  admission.
+
+### Fixed
+
+- WebSocket function routes now pass the per-caller API-key gate (they
+  previously bypassed it via explicit route mounting); keyed requests bypass
+  the response cache (no cross-caller serving); a startup warning fires when
+  `[api_keys]` is set but `[auth] bearer_token` is unset (the `/_riz/*` plane,
+  including MCP tool-calls, stays open otherwise).
+- MCP no longer advertises WebSocket functions as directly callable tools.
+
 ## 0.1.0 - 2026-06-29
 
 First public release. A self-hosted AWS Lambda + API Gateway v2 runtime in one

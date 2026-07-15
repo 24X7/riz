@@ -52,7 +52,7 @@ exit = "deny"
 
 [package]
 name = "riz"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 repository = "https://github.com/24X7/riz"
 homepage = "https://riz.dev"
