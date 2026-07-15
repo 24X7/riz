@@ -84,6 +84,48 @@ fn builtin_templates_scaffold_from_the_git_location() {
 }
 
 #[test]
+fn init_without_a_dir_scaffolds_into_a_named_subdir() {
+    // Regression: `riz init <template>` with no dir must create ./<template>/
+    // (like `cargo new` / `git clone`), NOT scatter files into the cwd — which
+    // failed in any non-empty dir and left nothing to `cd` into.
+    assert_riz_available();
+    let tmp = tempfile::TempDir::new().unwrap();
+    // A pre-existing file makes the cwd non-empty: the old cwd-default would
+    // have errored here; the named-subdir default must succeed.
+    std::fs::write(tmp.path().join("keep.txt"), "mine").unwrap();
+
+    let out = Command::new(riz_binary())
+        .arg("init")
+        .arg("rust-http") // no target dir
+        .current_dir(tmp.path())
+        .env("RIZ_TEMPLATE_REPO", repo_root())
+        .output()
+        .expect("spawn riz init");
+    assert!(
+        out.status.success(),
+        "init with no dir failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let scaffold = tmp.path().join("rust-http");
+    assert!(
+        scaffold.join("riz.toml").is_file(),
+        "expected ./rust-http/riz.toml — a subdir named after the template"
+    );
+    // Must NOT have scaffolded into the cwd itself.
+    assert!(
+        !tmp.path().join("riz.toml").is_file(),
+        "must not scatter the scaffold into the current directory"
+    );
+    // The next-steps hint should point at the created subdir.
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("cd rust-http"),
+        "next steps should say `cd rust-http`: {stdout}"
+    );
+}
+
+#[test]
 fn wasm_http_template_is_a_valid_wasm_scaffold() {
     assert_riz_available();
     let tmp = tempfile::TempDir::new().unwrap();

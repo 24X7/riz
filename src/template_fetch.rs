@@ -120,6 +120,27 @@ fn split_ref(s: &str) -> (&str, Option<String>) {
     }
 }
 
+/// The default target directory for `riz init <spec>` when no explicit dir is
+/// given: a folder named after the template — like `cargo new` / `git clone` —
+/// so `riz init ai-chat` scaffolds into `./ai-chat`, not the current directory.
+///
+/// Derived from the spec's last path segment, dropping a trailing `#ref`,
+/// trailing slashes, and a `.git` suffix. Handles built-in names (`ai-chat`),
+/// `owner/repo[/subdir]`, git URLs (incl. scp-style `git@host:owner/repo`), and
+/// local paths. Falls back to `riz-app` when no usable segment remains.
+pub fn default_dir_name(spec: &str) -> String {
+    let (head, _) = split_ref(spec);
+    let head = head.trim_end_matches('/');
+    // Last segment after any `/` or scp-style `:` (git@host:owner/repo.git).
+    let last = head.rsplit(['/', ':']).next().unwrap_or(head);
+    let last = last.strip_suffix(".git").unwrap_or(last);
+    if last.is_empty() || last == "." || last == ".." {
+        "riz-app".to_string()
+    } else {
+        last.to_string()
+    }
+}
+
 /// Resolve a `riz init` spec into a [`Source`]. `cli_ref` (from `--ref`)
 /// overrides any `#ref` embedded in the spec.
 pub fn resolve(spec: &str, cli_ref: Option<&str>) -> anyhow::Result<Source> {
@@ -419,6 +440,38 @@ fn copy_dir_at(src: &Path, dst: &Path, depth: usize) -> anyhow::Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_dir_name_derives_from_the_spec_basename() {
+        // Built-in name → itself (the common case: `riz init ai-chat`).
+        assert_eq!(default_dir_name("ai-chat"), "ai-chat");
+        assert_eq!(default_dir_name("typescript-http"), "typescript-http");
+        // owner/repo[/subdir] → last segment.
+        assert_eq!(default_dir_name("acme/widgets"), "widgets");
+        assert_eq!(default_dir_name("acme/widgets/templates/api"), "api");
+        // A trailing #ref is dropped before deriving.
+        assert_eq!(default_dir_name("acme/widgets/api#v2"), "api");
+        // git URLs — https and scp-style, with/without .git.
+        assert_eq!(
+            default_dir_name("https://github.com/acme/widgets.git"),
+            "widgets"
+        );
+        assert_eq!(
+            default_dir_name("https://github.com/acme/widgets"),
+            "widgets"
+        );
+        assert_eq!(
+            default_dir_name("git@github.com:acme/widgets.git"),
+            "widgets"
+        );
+        // Local paths, incl. trailing slash.
+        assert_eq!(default_dir_name("./my/templates/thing"), "thing");
+        assert_eq!(default_dir_name("/abs/path/thing/"), "thing");
+        // Degenerate specs fall back to a safe name (never empty / traversal).
+        assert_eq!(default_dir_name("."), "riz-app");
+        assert_eq!(default_dir_name(""), "riz-app");
+        assert_eq!(default_dir_name("/"), "riz-app");
+    }
 
     #[test]
     fn builtin_name_resolves_to_repo_subdir() {
