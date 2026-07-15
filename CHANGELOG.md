@@ -4,6 +4,18 @@ All notable changes to riz are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and riz aims to follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.1 - 2026-07-15
+
+### Fixed
+
+- `riz init <template>` with no target directory now scaffolds into a **new
+  directory named after the template** (like `cargo new` / `git clone`), not
+  the current directory. `riz init ai-chat && cd ai-chat` works as expected;
+  the previous behavior failed in any non-empty directory and, when it did
+  succeed, left nothing to `cd` into. Pass `.` as the directory to scaffold in
+  place. The dir name is derived from the spec's basename, so
+  `owner/repo/tmpl`, git URLs, and local paths all get a sensible default too.
+
 ## 0.2.0 - 2026-07-13
 
 Agents, edge controls, and a safety-critical rewrite of the whole binary. riz

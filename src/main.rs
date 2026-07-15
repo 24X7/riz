@@ -110,8 +110,10 @@ enum Commands {
     ///     repo or subdirectory, so you can use your own;
     ///   - a git URL (`https://…`, `git@…`, `file://…`) or a local path.
     ///
-    /// Files are written into <dir> (defaults to the current directory). E.g.:
-    /// `riz init typescript-todo my-app && cd my-app && riz run`.
+    /// Files are written into <dir>. With no <dir>, riz creates a new directory
+    /// named after the template (like `cargo new` / `git clone`), so
+    /// `riz init ai-chat && cd ai-chat` works; pass `.` to scaffold in place.
+    /// E.g.: `riz init typescript-todo my-app && cd my-app && riz run`.
     ///
     /// `riz init --list` prints the official templates. Set `RIZ_TEMPLATE_REPO`
     /// to fetch the official names from a fork.
@@ -119,7 +121,8 @@ enum Commands {
         /// Template spec (name / owner/repo[/subdir] / git URL / local path).
         /// Required unless --list is given.
         spec: Option<String>,
-        /// Target directory (defaults to current dir).
+        /// Target directory. Default: a new dir named after the template
+        /// (pass `.` to scaffold into the current directory instead).
         dir: Option<String>,
         /// git ref (branch / tag) to fetch. Overrides any `#ref` in the spec.
         #[arg(long)]
@@ -232,9 +235,14 @@ fn run_init(
     force: bool,
 ) -> anyhow::Result<()> {
     let source = template_fetch::resolve(spec, reference)?;
+    // No explicit dir → scaffold into a NEW directory named after the template
+    // (like `cargo new` / `git clone`), not the current directory. Scaffolding
+    // a fetched template into the cwd is a footgun: it fails in any non-empty
+    // dir and, when it succeeds, leaves nothing to `cd` into. Pass `.` to opt
+    // into in-place scaffolding.
     let target = match dir {
         Some(d) => std::path::PathBuf::from(d),
-        None => std::env::current_dir()?,
+        None => std::path::PathBuf::from(template_fetch::default_dir_name(spec)),
     };
 
     println!("Fetching template {spec:?} → {}", target.display());
