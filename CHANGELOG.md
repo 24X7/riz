@@ -4,6 +4,17 @@ All notable changes to riz are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and riz aims to follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.2 - 2026-07-18
+
+### Fixed
+
+- `riz --dev` no longer leaves the terminal broken (stuck in raw mode + mouse
+  capture, spewing escape codes) when startup fails because the port is already
+  in use. The listener is now bound **before** the TUI takes over the terminal,
+  so a port-in-use (or any bind) failure prints the actionable error on a normal
+  terminal instead of after the console has been put into raw mode. If your
+  terminal is ever left in this state by an older build, `reset` restores it.
+
 ## 0.2.1 - 2026-07-15
 
 ### Fixed
