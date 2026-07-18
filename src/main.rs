@@ -1324,6 +1324,12 @@ async fn async_main() -> anyhow::Result<()> {
         )),
     });
 
+    // Bind the port BEFORE the TUI takes over the terminal. A port-in-use (or
+    // any bind) failure then surfaces on a normal terminal instead of leaving
+    // the `--dev` console stuck in raw mode + mouse capture — the TUI never
+    // started, so there is nothing to restore.
+    let listener = server::bind(addr).await?;
+
     // tui_enabled was determined earlier (before tracing init) so the
     // tracing-subscriber composition matches the actual TUI choice. The
     // value is still in scope from the outer let-binding.
@@ -1338,7 +1344,7 @@ async fn async_main() -> anyhow::Result<()> {
 
     // Serve until graceful shutdown drains inside `server::run` (its
     // `with_graceful_shutdown`). Once this returns the process is done serving.
-    let serve_result = server::run(app_state, addr).await;
+    let serve_result = server::run(app_state, listener).await;
 
     // Post-serve telemetry flush: gracefully shut down the supervisor so every
     // span that was emitted (enqueued) before now is drained to the child and

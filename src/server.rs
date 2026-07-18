@@ -326,12 +326,23 @@ fn bind_error(e: std::io::Error, addr: SocketAddr) -> anyhow::Error {
     }
 }
 
-pub async fn run(state: Arc<AppState>, addr: SocketAddr) -> anyhow::Result<()> {
-    let app = build_app(state.clone()).into_make_service_with_connect_info::<SocketAddr>();
-    info!("riz listening on {addr}");
-    let listener = tokio::net::TcpListener::bind(addr)
+/// Bind the listener. Kept separate from [`run`] so the caller can bind BEFORE
+/// handing the terminal to the `--dev` TUI — a port-in-use (or any bind)
+/// failure then surfaces on a normal terminal instead of leaving the dev
+/// console stuck in raw mode + mouse capture (the TUI never started).
+pub async fn bind(addr: SocketAddr) -> anyhow::Result<tokio::net::TcpListener> {
+    tokio::net::TcpListener::bind(addr)
         .await
-        .map_err(|e| bind_error(e, addr))?;
+        .map_err(|e| bind_error(e, addr))
+}
+
+pub async fn run(state: Arc<AppState>, listener: tokio::net::TcpListener) -> anyhow::Result<()> {
+    let app = build_app(state.clone()).into_make_service_with_connect_info::<SocketAddr>();
+    let addr = listener
+        .local_addr()
+        .map(|a| a.to_string())
+        .unwrap_or_else(|_| "127.0.0.1".to_string());
+    info!("riz listening on {addr}");
 
     // Channel from "shutdown signal observed inside the graceful-shutdown
     // future" to the outer task. We start the drain timeout clock ONLY
@@ -1442,6 +1453,30 @@ mod tests {
             msg.contains("[server] port"),
             "offers the config fix: {msg}"
         );
+    }
+
+    /// `bind` is a separable step so main can bind BEFORE the `--dev` TUI grabs
+    /// the terminal: a port-in-use failure must surface here (returning the
+    /// actionable AddrInUse message) rather than after the terminal is in raw
+    /// mode. This guards the terminal-restore regression.
+    #[tokio::test]
+    async fn bind_fails_cleanly_on_a_taken_port() {
+        let held = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = held.local_addr().unwrap();
+        let err = bind(addr).await.unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains(&addr.port().to_string()),
+            "names the taken port: {msg}"
+        );
+        assert!(msg.contains("already in use"), "actionable message: {msg}");
+    }
+
+    #[tokio::test]
+    async fn bind_succeeds_on_a_free_port() {
+        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let listener = bind(addr).await.expect("bind a free port");
+        assert!(listener.local_addr().is_ok(), "bound listener has an addr");
     }
 
     #[test]
