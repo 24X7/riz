@@ -17,7 +17,7 @@
 //! wire skew can never desync the pipe.
 //!
 //! Capability calls go through [`cap`] — typed wrappers over the host's
-//! `riz_broker` imports. Authors never write an event loop, touch stdin, or
+//! `riz_capability` imports. Authors never write an event loop, touch stdin, or
 //! declare `unsafe extern` blocks.
 
 use std::io::{BufRead, Write};
@@ -177,7 +177,7 @@ fn error_line(status: i64, message: &str) -> String {
     .to_string()
 }
 
-/// Brokered host capabilities — typed wrappers over the `riz_broker` imports.
+/// Brokered host capabilities — typed wrappers over the `riz_capability` imports.
 pub mod cap {
     /// Postgres through the host broker (`pg`-type capability grants).
     pub mod pg {
@@ -233,15 +233,21 @@ pub mod cap {
         }
 
         /// Run one parameterized query against a named capability grant.
+        ///
+        /// Speaks capability ABI v2: ONE dispatcher import
+        /// (`riz_capability.call`) carrying the verb string — new
+        /// capabilities are new verbs, never new imports.
         #[cfg(target_arch = "wasm32")]
         pub fn query(
             grant: &str,
             sql: &str,
             params: &[serde_json::Value],
         ) -> Result<Vec<serde_json::Value>, CapError> {
-            #[link(wasm_import_module = "riz_broker")]
+            #[link(wasm_import_module = "riz_capability")]
             extern "C" {
-                fn pg_query(
+                fn call(
+                    verb_ptr: *const u8,
+                    verb_len: usize,
                     grant_ptr: *const u8,
                     grant_len: usize,
                     req_ptr: *const u8,
@@ -249,10 +255,20 @@ pub mod cap {
                 ) -> i32;
                 fn read_response(dst_ptr: *mut u8, dst_cap: usize) -> i32;
             }
+            const VERB: &str = "pg.query";
             let req = serde_json::json!({ "sql": sql, "params": params }).to_string();
             // The host bounds-checks every (ptr,len) pair; -1 signals an ABI
             // fault, any other value is the stashed response length.
-            let n = unsafe { pg_query(grant.as_ptr(), grant.len(), req.as_ptr(), req.len()) };
+            let n = unsafe {
+                call(
+                    VERB.as_ptr(),
+                    VERB.len(),
+                    grant.as_ptr(),
+                    grant.len(),
+                    req.as_ptr(),
+                    req.len(),
+                )
+            };
             if n < 0 {
                 return Err(local_err("bad_request", "broker ABI fault"));
             }

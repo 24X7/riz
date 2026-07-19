@@ -1,6 +1,6 @@
 [package]
 name = "riz-wasm"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Author AWS-Lambda-shaped handlers for riz's WASM runtime — the shim owns the event loop and the capability ABI"
 license = "MIT"
