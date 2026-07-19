@@ -263,3 +263,34 @@ async fn wasm_orders_rejects_invalid_quantity() {
         "error should explain the bad qty; got {body}"
     );
 }
+
+// ---------- riz-wasm ABI marker ----------
+
+/// Every guest built on the riz-wasm shim exports the `riz_abi_v1` marker
+/// symbol — the artifact-level half of the R1 conformance guarantee and the
+/// host's future load-time wire handshake (spec 2026-07-19, PR10).
+#[test]
+fn shim_built_guests_export_the_abi_marker() {
+    let modules = [
+        orders_wasm_module(),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("examples/lambdas/echo-wasm/target/wasm32-wasip1/release/echo-wasm.wasm"),
+    ];
+    let engine = wasmtime::Engine::default();
+    let mut checked = 0;
+    for path in modules {
+        if !path.exists() {
+            eprintln!("SKIP marker check: {} not built", path.display());
+            continue;
+        }
+        let module = wasmtime::Module::from_file(&engine, &path)
+            .unwrap_or_else(|e| panic!("{} should parse as wasm: {e}", path.display()));
+        assert!(
+            module.exports().any(|e| e.name() == "riz_abi_v1"),
+            "{} lacks the riz_abi_v1 export — was it built on riz-wasm?",
+            path.display()
+        );
+        checked += 1;
+    }
+    assert!(checked > 0, "no wasm module was built — nothing verified");
+}

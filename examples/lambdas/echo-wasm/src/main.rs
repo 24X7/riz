@@ -1,53 +1,22 @@
 //! echo-wasm — the WASM member of the echo parity set.
 //!
-//! Compiled to `wasm32-wasip1` and run by `riz __wasm-host` inside wasmtime's
-//! WASI capability sandbox. It reads the same line-delimited JSON envelope from
-//! stdin and writes the same canonical echo response to stdout as the
-//! bun / node / python / rust echo handlers — proving a `.wasm` handler is a
-//! first-class riz runtime.
-//!
-//! Pure sync std — no tokio, no networking — so it compiles to wasm cleanly.
+//! Authored as a pure Lambda handler on `riz-wasm`: APIGW v2 event in, Lambda
+//! proxy response out. The shim owns the wire; this file owns nothing but the
+//! handler. Compiled to `wasm32-wasip1` and run by `riz __wasm-host` inside
+//! wasmtime's WASI capability sandbox, it returns the same canonical echo
+//! response as the bun / node / python / rust echo handlers — proving a
+//! `.wasm` handler is a first-class riz runtime.
 
-use std::io::{self, BufRead, Write};
-use std::time::{SystemTime, UNIX_EPOCH};
+use riz_wasm::{Context, Error, Event, Response};
 
 fn main() {
-    let stdin = io::stdin();
-    let mut stdout = io::stdout();
-    for line in stdin.lock().lines() {
-        let line = match line {
-            Ok(l) => l,
-            Err(_) => break,
-        };
-        if line.trim().is_empty() {
-            continue;
-        }
-        let _ = writeln!(stdout, "{}", handle(&line));
-        let _ = stdout.flush();
-    }
+    riz_wasm::run(handler)
 }
 
-fn handle(line: &str) -> String {
-    let parsed: serde_json::Value = match serde_json::from_str(line) {
-        Ok(v) => v,
-        Err(_) => return error_400(),
-    };
-    // Envelope: { event, __riz_deadline_ms, __riz_function_name } — fall back to
-    // a bare event for manual invocations.
-    let event = parsed.get("event").unwrap_or(&parsed);
-    let function_name = parsed
-        .get("__riz_function_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown");
-    let deadline_ms = parsed
-        .get("__riz_deadline_ms")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0);
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
-    let remaining = (deadline_ms - now_ms).max(0);
+fn handler(event: Event, ctx: Context) -> Result<Response, Error> {
+    let event = event.raw();
+    let function_name = ctx.function_name();
+    let remaining = ctx.remaining_time().as_millis() as i64;
 
     // Honor ?status=NNN for the error-status parity test.
     let status = event
@@ -58,13 +27,10 @@ fn handle(line: &str) -> String {
         .unwrap_or(200);
 
     let arn = format!("arn:riz:lambda:local:000000000000:function:{function_name}");
-    let request_id = match event
-        .get("requestContext")
-        .and_then(|rc| rc.get("requestId"))
-        .and_then(|v| v.as_str())
-    {
-        Some(id) if !id.is_empty() => id.to_string(),
-        _ => format!("req-{deadline_ms}"),
+    let request_id = if ctx.request_id().is_empty() {
+        format!("req-{}", ctx.deadline_ms())
+    } else {
+        ctx.request_id().to_string()
     };
     let method = event
         .get("requestContext")
@@ -90,25 +56,12 @@ fn handle(line: &str) -> String {
         "authorizer": event.get("requestContext").and_then(|rc| rc.get("authorizer")).cloned().unwrap_or(serde_json::Value::Null),
     });
 
-    serde_json::json!({
+    Ok(Response::from(serde_json::json!({
         "statusCode": status,
         "headers": { "content-type": "application/json", "x-riz-echo": "ok" },
         "multiValueHeaders": {},
         "body": body.to_string(),
         "isBase64Encoded": false,
         "cookies": ["sid=abc; Path=/"],
-    })
-    .to_string()
-}
-
-fn error_400() -> String {
-    serde_json::json!({
-        "statusCode": 400,
-        "headers": { "content-type": "application/json" },
-        "multiValueHeaders": {},
-        "body": "{\"message\":\"bad event json\"}",
-        "isBase64Encoded": false,
-        "cookies": [],
-    })
-    .to_string()
+    })))
 }

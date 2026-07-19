@@ -1,6 +1,7 @@
 [workspace]
 members = [
     ".",
+    "crates/riz-wasm",
     "examples/lambdas/echo-rust",
     "examples/lambdas/chat-rust",
 ]
