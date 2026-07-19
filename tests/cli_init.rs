@@ -1,4 +1,4 @@
-//! `riz init <spec>` — scaffolds a project by FETCHING a template from git,
+//! `riz new <spec>` — scaffolds a project by FETCHING a template from git,
 //! never from embedded strings.
 //!
 //! These tests are hermetic: built-in names resolve through `RIZ_TEMPLATE_REPO`
@@ -31,12 +31,12 @@ fn assert_riz_available() {
     );
 }
 
-/// Run `riz init <args>` with the local template repo override. A git identity
+/// Run `riz new <args>` with the local template repo override. A git identity
 /// is provided via env so the `--git` path's `git commit` succeeds even on a
 /// host with no global git config (e.g. CI runners).
 fn init(args: &[&str]) -> Output {
     Command::new(riz_binary())
-        .arg("init")
+        .arg("new")
         .args(args)
         .env("RIZ_TEMPLATE_REPO", repo_root())
         .env("GIT_AUTHOR_NAME", "riz test")
@@ -44,7 +44,7 @@ fn init(args: &[&str]) -> Output {
         .env("GIT_COMMITTER_NAME", "riz test")
         .env("GIT_COMMITTER_EMAIL", "test@riz.dev")
         .output()
-        .expect("spawn riz init")
+        .expect("spawn riz new")
 }
 
 // ─────────────────────────── built-in templates ─────────────────────────────
@@ -53,11 +53,12 @@ fn init(args: &[&str]) -> Output {
 fn builtin_templates_scaffold_from_the_git_location() {
     assert_riz_available();
     for (name, must_have) in [
-        ("typescript-http", "index.ts"),
-        ("python-http", "main.py"),
-        ("rust-http", "Cargo.toml"),
-        ("nodejs-http", "index.mjs"),
-        ("wasm-http", "src/main.rs"),
+        ("typescript-bun", "index.ts"),
+        ("typescript-node", "index.ts"),
+        ("python", "main.py"),
+        ("rust", "Cargo.toml"),
+        ("go", "go.mod"),
+        ("wasm-rust", "src/main.rs"),
     ] {
         let tmp = tempfile::TempDir::new().unwrap();
         let target = tmp.path().join("app");
@@ -84,8 +85,8 @@ fn builtin_templates_scaffold_from_the_git_location() {
 }
 
 #[test]
-fn init_without_a_dir_scaffolds_into_a_named_subdir() {
-    // Regression: `riz init <template>` with no dir must create ./<template>/
+fn new_without_a_dir_scaffolds_into_a_named_subdir() {
+    // Regression: `riz new <template>` with no dir must create ./<template>/
     // (like `cargo new` / `git clone`), NOT scatter files into the cwd — which
     // failed in any non-empty dir and left nothing to `cd` into.
     assert_riz_available();
@@ -95,22 +96,22 @@ fn init_without_a_dir_scaffolds_into_a_named_subdir() {
     std::fs::write(tmp.path().join("keep.txt"), "mine").unwrap();
 
     let out = Command::new(riz_binary())
-        .arg("init")
-        .arg("rust-http") // no target dir
+        .arg("new")
+        .arg("rust") // no target dir
         .current_dir(tmp.path())
         .env("RIZ_TEMPLATE_REPO", repo_root())
         .output()
-        .expect("spawn riz init");
+        .expect("spawn riz new");
     assert!(
         out.status.success(),
-        "init with no dir failed: {}",
+        "new with no dir failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let scaffold = tmp.path().join("rust-http");
+    let scaffold = tmp.path().join("rust");
     assert!(
         scaffold.join("riz.toml").is_file(),
-        "expected ./rust-http/riz.toml — a subdir named after the template"
+        "expected ./rust/riz.toml — a subdir named after the template"
     );
     // Must NOT have scaffolded into the cwd itself.
     assert!(
@@ -120,20 +121,20 @@ fn init_without_a_dir_scaffolds_into_a_named_subdir() {
     // The next-steps hint should point at the created subdir.
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("cd rust-http"),
-        "next steps should say `cd rust-http`: {stdout}"
+        stdout.contains("cd rust"),
+        "next steps should say `cd rust`: {stdout}"
     );
 }
 
 #[test]
-fn wasm_http_template_is_a_valid_wasm_scaffold() {
+fn wasm_rust_template_is_a_valid_wasm_scaffold() {
     assert_riz_available();
     let tmp = tempfile::TempDir::new().unwrap();
     let target = tmp.path().join("app");
-    let out = init(&["wasm-http", target.to_str().unwrap()]);
+    let out = init(&["wasm-rust", target.to_str().unwrap()]);
     assert!(
         out.status.success(),
-        "init wasm-http failed: {}",
+        "new wasm-rust failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
     // Scaffold shape: an independent wasm crate + config + docs.
@@ -204,11 +205,11 @@ fn refuses_nonempty_dir_without_force_then_overwrites_with_force() {
     std::fs::create_dir_all(&target).unwrap();
     std::fs::write(target.join("keep.txt"), "mine").unwrap();
 
-    let out = init(&["typescript-http", target.to_str().unwrap()]);
+    let out = init(&["typescript-bun", target.to_str().unwrap()]);
     assert!(!out.status.success(), "must refuse a non-empty dir");
     assert!(String::from_utf8_lossy(&out.stderr).contains("--force"));
 
-    let out = init(&["typescript-http", target.to_str().unwrap(), "--force"]);
+    let out = init(&["typescript-bun", target.to_str().unwrap(), "--force"]);
     assert!(
         out.status.success(),
         "--force should scaffold into a non-empty dir: {}",
@@ -226,17 +227,27 @@ fn list_enumerates_official_templates_including_full_stack() {
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     for name in [
-        "typescript-http",
-        "python-http",
-        "rust-http",
-        "nodejs-http",
-        "typescript-websocket",
-        "python-websocket",
-        "rust-websocket",
+        "typescript-bun",
+        "typescript-node",
+        "python",
+        "rust",
+        "go",
+        "wasm-rust",
         "typescript-todo",
+        "ai-chat",
     ] {
         assert!(stdout.contains(name), "--list missing {name}");
     }
+    // The websocket trio is no longer a scaffold target (examples/chat is the
+    // WS showcase) and must not resurface in the list.
+    for gone in ["typescript-websocket", "python-websocket", "rust-websocket"] {
+        assert!(!stdout.contains(gone), "--list must not offer {gone}");
+    }
+    // Two sections: per-runtime templates vs full example starters.
+    assert!(
+        stdout.contains("Example starters"),
+        "expected the example-starters section"
+    );
     // It must advertise the bring-your-own-repo path.
     assert!(stdout.contains("owner") && stdout.contains("repo"));
 }
@@ -266,8 +277,8 @@ fn git_flag_creates_initial_commit() {
     }
     let tmp = tempfile::TempDir::new().unwrap();
     let target = tmp.path().join("app");
-    let out = init(&["typescript-http", target.to_str().unwrap(), "--git"]);
-    assert!(out.status.success(), "init --git failed");
+    let out = init(&["typescript-bun", target.to_str().unwrap(), "--git"]);
+    assert!(out.status.success(), "new --git failed");
 
     let log = Command::new("git")
         .args(["log", "--oneline"])
@@ -275,8 +286,8 @@ fn git_flag_creates_initial_commit() {
         .output()
         .expect("git log");
     assert!(
-        String::from_utf8_lossy(&log.stdout).contains("riz init"),
-        "expected an initial 'riz init' commit"
+        String::from_utf8_lossy(&log.stdout).contains("riz new"),
+        "expected an initial 'riz new' commit"
     );
 }
 
@@ -323,9 +334,9 @@ fn clones_a_template_from_a_real_git_repo() {
     let url = format!("file://{}", src.path().display());
     // No RIZ_TEMPLATE_REPO override here — this is a direct git URL spec.
     let out = Command::new(riz_binary())
-        .args(["init", &url, target.to_str().unwrap()])
+        .args(["new", &url, target.to_str().unwrap()])
         .output()
-        .expect("spawn riz init <git-url>");
+        .expect("spawn riz new <git-url>");
     assert!(
         out.status.success(),
         "git clone init failed: {}",

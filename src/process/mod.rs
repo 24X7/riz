@@ -78,6 +78,37 @@ pub fn build_envelope_payload<E: Serialize>(
     serde_json::to_string(&envelope)
 }
 
+/// Normalize a Lambda proxy response object to the tolerant wire contract.
+///
+/// Real AWS accepts `cookies` / `headers` / `multiValueHeaders` as `null` or
+/// absent (aws-lambda-go marshals nil slices and maps as `null`; hand-rolled
+/// guests simply omit them), but `aws_lambda_events`' serde demands them.
+/// Filling the defaults before deserializing keeps the "handlers written for
+/// real AWS run here unchanged" contract true for every runtime. Non-object
+/// values pass through untouched and fail deserialization as before.
+fn normalize_lambda_response(value: &mut serde_json::Value) {
+    let Some(obj) = value.as_object_mut() else {
+        return;
+    };
+    let defaults: [(&str, serde_json::Value); 4] = [
+        ("cookies", serde_json::Value::Array(Vec::new())),
+        ("headers", serde_json::Value::Object(serde_json::Map::new())),
+        (
+            "multiValueHeaders",
+            serde_json::Value::Object(serde_json::Map::new()),
+        ),
+        ("isBase64Encoded", serde_json::Value::Bool(false)),
+    ];
+    for (key, default) in defaults {
+        match obj.get(key) {
+            None | Some(serde_json::Value::Null) => {
+                obj.insert(key.to_string(), default);
+            }
+            Some(_) => {}
+        }
+    }
+}
+
 /// Typed error variants for pool-level invocation failures.
 ///
 /// Returned by [`ProcessManager::invoke`] and [`ProcessManager::invoke_generic`]
@@ -496,9 +527,15 @@ impl ProcessManager {
             return match outcome {
                 RtOutcome::Response(bytes) => {
                     pool.consecutive_crashes.store(0, Ordering::Relaxed);
-                    serde_json::from_slice(&bytes).map_err(|e| {
-                        PoolError::InvalidResponse(function_name.into(), e.to_string())
-                    })
+                    serde_json::from_slice(&bytes)
+                        .map(|mut v: serde_json::Value| {
+                            normalize_lambda_response(&mut v);
+                            v
+                        })
+                        .and_then(serde_json::from_value)
+                        .map_err(|e| {
+                            PoolError::InvalidResponse(function_name.into(), e.to_string())
+                        })
                 }
                 RtOutcome::HandlerError(msg) => {
                     pool.consecutive_crashes.store(0, Ordering::Relaxed);
@@ -525,7 +562,13 @@ impl ProcessManager {
             + "\n";
 
         match stdio_roundtrip(&mut handle, function_name, &payload, timeout_ms).await? {
-            StdioOutcome::Line(line) => match serde_json::from_str(line.trim()) {
+            StdioOutcome::Line(line) => match serde_json::from_str(line.trim())
+                .map(|mut v: serde_json::Value| {
+                    normalize_lambda_response(&mut v);
+                    v
+                })
+                .and_then(serde_json::from_value)
+            {
                 Ok(resp) => {
                     pool.consecutive_crashes.store(0, Ordering::Relaxed);
                     Ok(resp)
@@ -1059,6 +1102,42 @@ mod tests {
         let empty_result =
             serde_json::from_str::<crate::gateway::ApiGatewayV2httpResponse>("".trim());
         assert!(empty_result.is_err(), "empty string also fails to parse");
+    }
+
+    #[test]
+    fn normalize_fills_null_and_missing_optional_response_fields() {
+        // aws-lambda-go marshals nil slices/maps as null; hand-rolled guests
+        // omit the fields entirely. Both must deserialize like real AWS.
+        let mut null_fields = serde_json::json!({
+            "statusCode": 200, "cookies": null, "headers": null,
+            "multiValueHeaders": null, "body": "x"
+        });
+        normalize_lambda_response(&mut null_fields);
+        let resp: crate::gateway::ApiGatewayV2httpResponse =
+            serde_json::from_value(null_fields).expect("null fields normalize");
+        assert_eq!(resp.status_code, 200);
+        assert!(resp.cookies.is_empty());
+
+        let mut missing_fields = serde_json::json!({ "statusCode": 201, "body": "y" });
+        normalize_lambda_response(&mut missing_fields);
+        let resp: crate::gateway::ApiGatewayV2httpResponse =
+            serde_json::from_value(missing_fields).expect("missing fields normalize");
+        assert_eq!(resp.status_code, 201);
+    }
+
+    #[test]
+    fn normalize_preserves_populated_fields_and_non_objects() {
+        let mut populated = serde_json::json!({
+            "statusCode": 200, "cookies": ["sid=abc"], "isBase64Encoded": true
+        });
+        normalize_lambda_response(&mut populated);
+        assert_eq!(populated["cookies"], serde_json::json!(["sid=abc"]));
+        assert_eq!(populated["isBase64Encoded"], serde_json::json!(true));
+
+        // Non-objects pass through and still fail deserialization downstream.
+        let mut not_an_object = serde_json::json!("nope");
+        normalize_lambda_response(&mut not_an_object);
+        assert_eq!(not_an_object, serde_json::json!("nope"));
     }
 
     #[test]

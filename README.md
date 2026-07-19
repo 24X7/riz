@@ -17,7 +17,7 @@ This README is the short version.
 
 ```bash
 curl -fsSL https://riz.dev/install | sh          # prebuilt binary (macOS/Linux)
-riz init typescript-http my-app && cd my-app && riz run
+riz new typescript-bun my-app && cd my-app && riz run
 # → curl 'localhost:3000/hello?name=alice'  →  {"message":"hello, alice", ...}
 ```
 
@@ -47,7 +47,7 @@ curl -fsSL https://riz.dev/install | sh
 # or a compiled Rust/Go binary. WASM handlers need the wasm32-wasip1 target.
 curl -fsSL https://bun.sh/install | bash
 
-riz init typescript-http my-app    # scaffold (see `riz init --list` for templates)
+riz new typescript-bun my-app      # scaffold (see `riz new --list` for templates)
 cd my-app
 riz run                            # headless JSON logs; add --dev for the live TUI
 

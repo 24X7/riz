@@ -44,24 +44,24 @@ fn doctor_fails_when_riz_toml_missing() {
         "stdout must explain the missing config; got: {stdout}"
     );
     assert!(
-        stdout.contains("riz init"),
-        "stdout must hint at `riz init`; got: {stdout}"
+        stdout.contains("riz new"),
+        "stdout must hint at `riz new`; got: {stdout}"
     );
 }
 
 #[test]
 fn doctor_passes_on_valid_scaffold() {
-    // Scaffold a TS project via `riz init`, then doctor it.
+    // Scaffold a TS project via `riz new`, then doctor it.
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let target = tmp.path().join("app");
     let scaffold = Command::new(riz_binary())
-        .args(["init", "typescript-http"])
+        .args(["new", "typescript-bun"])
         .arg(&target)
-        // `riz init` loads templates from a git location; point it at this
+        // `riz new` loads templates from a git location; point it at this
         // checkout so the test stays hermetic (no network).
         .env("RIZ_TEMPLATE_REPO", env!("CARGO_MANIFEST_DIR"))
         .output()
-        .expect("spawn riz init");
+        .expect("spawn riz new");
     assert!(scaffold.status.success(), "init must succeed");
 
     let out = Command::new(riz_binary())
@@ -72,7 +72,7 @@ fn doctor_passes_on_valid_scaffold() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
 
-    // bun is required for typescript-http; if it's missing we expect a
+    // bun is required for typescript-bun; if it's missing we expect a
     // failure rather than a pass — that's still correct doctor behavior.
     let bun_present = std::process::Command::new("bun")
         .arg("--version")

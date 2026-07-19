@@ -1,8 +1,9 @@
-# python-http riz template
+# typescript-bun riz template
 
-A minimal AWS API Gateway v2 HTTP Lambda handler in Python, ready to run
-on riz (https://riz.dev) via the embedded Python adapter. No dependencies
-beyond the standard library.
+A minimal AWS API Gateway v2 HTTP Lambda handler in TypeScript, ready to
+run on riz (https://riz.dev) via the embedded Bun runtime. No build step —
+Bun runs `index.ts` directly.
+Typed with `@types/aws-lambda` (editor-only devDependency).
 
 ## Run
 
@@ -12,19 +13,18 @@ riz --dev          # or headless: riz run
 #   {"message":"hello, alice","method":"GET", ...}
 ```
 
-Requires `python3` on PATH. `riz doctor` checks this for you.
+Requires `bun` on PATH (https://bun.sh). `riz doctor` checks this for you.
 
 ## Layout
 
-- `main.py` — the handler: `def lambda_handler(event, context): ...`,
+- `index.ts` — the handler: `export const handler = async (event, context) => ...`,
   the exact AWS Lambda shape. Handlers written for real AWS run here unchanged.
-- `riz.toml` — `handler = "./main.lambda_handler"`. The leading `./` loads
-  `main.py` as a file from the project dir (both forms are valid AWS syntax;
-  the file-path form is what works in single-file riz layouts).
+- `riz.toml` — `handler = "index.handler"` (AWS-style `file.export`), one
+  `GET /hello` route.
 
 ## Customizing
 
-- Edit `main.py`, save — hot reload means the next request hits the new
+- Edit `index.ts`, save — hot reload means the next request hits the new
   code, no restart.
 - Add routes: more `[[function.hello.routes]]` blocks in `riz.toml`.
   `{id}` and `{proxy+}` path params work exactly like AWS.
@@ -32,6 +32,11 @@ Requires `python3` on PATH. `riz doctor` checks this for you.
   file and warm process pool.
 - Serve a frontend on the same origin: point `[static]` at a build dir
   (see the `typescript-todo` template for a full React + API example).
+
+
+**WebSocket variant:** WS handlers ($connect/$disconnect/$default +
+@connections push) live as a showcase in `examples/chat`; scaffold any repo
+subdir with `riz new <owner>/<repo>/<subdir>`.
 
 ## Your function is already an agent tool
 

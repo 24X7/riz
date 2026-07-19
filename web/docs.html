@@ -89,19 +89,19 @@ $ riz doctor                                      <span class="c"># pre-flight c
     </div>
 
     <h2 id="scaffold">Scaffold a project</h2>
-    <p><code>riz init</code> <b>always fetches templates from a git location — nothing is embedded in the binary.</b>
-    Pass an official name (<code>riz init --list</code>), any <code>owner/repo</code>, a subdirectory of a repo, a git URL, or a local path —
+    <p><code>riz new</code> <b>always fetches templates from a git location — nothing is embedded in the binary.</b>
+    Pass an official name (<code>riz new --list</code>), any <code>owner/repo</code>, a subdirectory of a repo, a git URL, or a local path —
     so teams can publish and use their own templates. Set <code>RIZ_TEMPLATE_REPO</code> to resolve official names from a fork.</p>
     <div class="well">
       <div class="well-hd"><b>shell</b><span>templates load from git, never include_str!</span></div>
-      <pre>$ riz init typescript-todo my-app              <span class="c"># official name → riz repo (full-stack demo)</span>
-$ riz init owner/repo my-app                   <span class="c"># any GitHub repo</span>
-$ riz init owner/repo/path/to/tmpl#v2 my-app   <span class="c"># a subdirectory, at a ref/tag</span>
-$ riz init https://host/o/r.git my-app         <span class="c"># any git URL (incl. file://)</span>
-$ riz init ./local/template my-app             <span class="c"># a local path (offline)</span></pre>
+      <pre>$ riz new typescript-todo my-app               <span class="c"># official name → riz repo (full-stack demo)</span>
+$ riz new owner/repo my-app                    <span class="c"># any GitHub repo</span>
+$ riz new owner/repo/path/to/tmpl#v2 my-app    <span class="c"># a subdirectory, at a ref/tag</span>
+$ riz new https://host/o/r.git my-app          <span class="c"># any git URL (incl. file://)</span>
+$ riz new ./local/template my-app              <span class="c"># a local path (offline)</span></pre>
     </div>
-    <p>Official templates: <code>typescript-http</code> · <code>nodejs-http</code> · <code>python-http</code> · <code>rust-http</code> · <code>go-http</code> · <code>wasm-http</code> ·
-    the three WebSocket variants · and <code>typescript-todo</code> — a full-stack sample (Bun API + React/Vite client served on one binary).
+    <p>Official templates, one per runtime: <code>typescript-bun</code> · <code>typescript-node</code> · <code>python</code> · <code>rust</code> · <code>go</code> · <code>wasm-rust</code> (a wasm32-wasip1 handler on the riz-wasm shim) —
+    plus example starters <code>typescript-todo</code> (full-stack: Bun API + React/Vite client on one binary) and <code>ai-chat</code>. The WebSocket showcase lives in <code>examples/chat</code>.
     Flags: <code>--ref &lt;branch|tag&gt;</code>, <code>--force</code> (write into a non-empty dir), <code>--git</code> (init a repo + first commit).</p>
 
     <h2 id="config">riz.toml</h2>
@@ -254,7 +254,7 @@ endpoint = "http://localhost:4318"   <span class="c"># any OTLP/HTTP collector o
     <table>
       <tr><th>command</th><th>does</th></tr>
       <tr><td><code>riz run</code> · <code>riz --dev</code></td><td>boot headless · boot with the live Ratatui dashboard (<code>--dev</code> goes before any subcommand; <code>run</code> is the default)</td></tr>
-      <tr><td><code>riz init &lt;spec&gt; [dir] [--ref r] [--git]</code></td><td>scaffold from git — an official name (<code>--list</code>), <code>owner/repo[/subdir]</code>, a git URL, or a local path (never embedded)</td></tr>
+      <tr><td><code>riz new &lt;spec&gt; [dir] [--ref r] [--git]</code></td><td>scaffold from git — an official name (<code>--list</code>), <code>owner/repo[/subdir]</code>, a git URL, or a local path (never embedded)</td></tr>
       <tr><td><code>riz scaffold static [dir] [--wire] [--force]</code></td><td>generate <code>llms.txt</code> + <code>.well-known/riz.json</code> from your functions; <code>--wire</code> adds a <code>[static]</code> block</td></tr>
       <tr><td><code>riz validate</code> · <code>riz routes</code></td><td>config check · route table</td></tr>
       <tr><td><code>riz deploy &lt;fn&gt; &lt;bucket&gt; &lt;key&gt;</code></td><td>S3 hot-swap from the CLI</td></tr>

@@ -1,9 +1,9 @@
-//! `riz init` template fetching — ALWAYS from a git location, never embedded.
+//! `riz new` template fetching — ALWAYS from a git location, never embedded.
 //!
-//! Templates are not baked into the binary. `riz init <spec>` resolves `<spec>`
+//! Templates are not baked into the binary. `riz new <spec>` resolves `<spec>`
 //! to a source and copies it into the target directory:
 //!
-//!   * a built-in name (`typescript-http`, `typescript-todo`, …) → a subdir of
+//!   * a built-in name (`typescript-bun`, `typescript-todo`, …) → a subdir of
 //!     the official riz repo, fetched by a shallow `git clone`;
 //!   * `owner/repo`, `owner/repo/sub/dir`, optionally `#ref` → any GitHub repo
 //!     or subdirectory, so anyone can publish and use their own templates;
@@ -22,42 +22,38 @@ use std::path::{Path, PathBuf};
 const DEFAULT_REPO: &str = "https://github.com/24X7/riz";
 
 /// Built-in templates: (name, subdir-in-repo, scenario, language). These are
-/// the "out of the box" set `riz init --list` shows — still fetched from git,
-/// never embedded. Anyone can also point `riz init` at their own `owner/repo`.
+/// the "out of the box" set `riz new --list` shows — still fetched from git,
+/// never embedded. Anyone can also point `riz new` at their own `owner/repo`.
+/// Templates are starting points; examples are proof. The first six rows are
+/// the per-runtime scaffold set (one per `RuntimeKind` variant — a lockstep
+/// asserted by tests/lambda_shape_conformance.rs); rows under `examples/` are
+/// full example starters, listed in their own section.
 pub const BUILTINS: &[(&str, &str, &str, &str)] = &[
     (
-        "typescript-http",
-        "templates/typescript-http",
+        "typescript-bun",
+        "templates/typescript-bun",
         "HTTP",
-        "TypeScript / Bun",
+        "TypeScript on Bun",
     ),
-    ("python-http", "templates/python-http", "HTTP", "Python"),
-    ("rust-http", "templates/rust-http", "HTTP", "Rust"),
-    ("nodejs-http", "templates/nodejs-http", "HTTP", "Node.js"),
-    ("go-http", "templates/go-http", "HTTP", "Go"),
     (
-        "wasm-http",
-        "templates/wasm-http",
+        "typescript-node",
+        "templates/typescript-node",
         "HTTP",
-        "Rust → wasm32-wasip1 (WASI sandbox)",
+        "TypeScript on Node.js (native type stripping, node >= 22.18)",
     ),
+    ("python", "templates/python", "HTTP", "Python"),
     (
-        "typescript-websocket",
-        "templates/typescript-websocket",
-        "WebSocket",
-        "TypeScript / Bun",
+        "rust",
+        "templates/rust",
+        "HTTP",
+        "Rust (official lambda_runtime)",
     ),
+    ("go", "templates/go", "HTTP", "Go (official aws-lambda-go)"),
     (
-        "python-websocket",
-        "templates/python-websocket",
-        "WebSocket",
-        "Python",
-    ),
-    (
-        "rust-websocket",
-        "templates/rust-websocket",
-        "WebSocket",
-        "Rust",
+        "wasm-rust",
+        "templates/wasm-rust",
+        "HTTP",
+        "Rust → wasm32-wasip1 on riz-wasm (WASI sandbox)",
     ),
     (
         "typescript-todo",
@@ -72,6 +68,12 @@ pub const BUILTINS: &[(&str, &str, &str, &str)] = &[
         "React chat UI + Bun agent loop via the LLM gateway",
     ),
 ];
+
+/// True for BUILTINS rows that are per-runtime scaffold templates (vs the
+/// example starters fetched from `examples/`).
+pub fn is_template_row(subdir: &str) -> bool {
+    subdir.starts_with("templates/")
+}
 
 /// A resolved template source.
 #[derive(Debug, Clone, PartialEq)]
@@ -120,9 +122,9 @@ fn split_ref(s: &str) -> (&str, Option<String>) {
     }
 }
 
-/// The default target directory for `riz init <spec>` when no explicit dir is
+/// The default target directory for `riz new <spec>` when no explicit dir is
 /// given: a folder named after the template — like `cargo new` / `git clone` —
-/// so `riz init ai-chat` scaffolds into `./ai-chat`, not the current directory.
+/// so `riz new ai-chat` scaffolds into `./ai-chat`, not the current directory.
 ///
 /// Derived from the spec's last path segment, dropping a trailing `#ref`,
 /// trailing slashes, and a `.git` suffix. Handles built-in names (`ai-chat`),
@@ -141,7 +143,7 @@ pub fn default_dir_name(spec: &str) -> String {
     }
 }
 
-/// Resolve a `riz init` spec into a [`Source`]. `cli_ref` (from `--ref`)
+/// Resolve a `riz new` spec into a [`Source`]. `cli_ref` (from `--ref`)
 /// overrides any `#ref` embedded in the spec.
 pub fn resolve(spec: &str, cli_ref: Option<&str>) -> anyhow::Result<Source> {
     // 1. Built-in name → a subdir of the default repo.
@@ -194,7 +196,7 @@ pub fn resolve(spec: &str, cli_ref: Option<&str>) -> anyhow::Result<Source> {
 
     anyhow::bail!(
         "could not understand template spec {spec:?}. Use a built-in name \
-         (run `riz init --list`), an `owner/repo[/subdir]` spec, a git URL, or a \
+         (run `riz new --list`), an `owner/repo[/subdir]` spec, a git URL, or a \
          local path."
     )
 }
@@ -363,7 +365,7 @@ fn git_clone(repo: &str, reference: Option<&str>, dest: &Path) -> anyhow::Result
     cmd.arg(repo).arg(dest);
     let out = cmd.output().map_err(|e| {
         anyhow::anyhow!(
-            "could not run `git` to fetch the template ({e}). `riz init` fetches \
+            "could not run `git` to fetch the template ({e}). `riz new` fetches \
              templates from git — install git, or pass a local path."
         )
     })?;
@@ -443,9 +445,9 @@ mod tests {
 
     #[test]
     fn default_dir_name_derives_from_the_spec_basename() {
-        // Built-in name → itself (the common case: `riz init ai-chat`).
+        // Built-in name → itself (the common case: `riz new ai-chat`).
         assert_eq!(default_dir_name("ai-chat"), "ai-chat");
-        assert_eq!(default_dir_name("typescript-http"), "typescript-http");
+        assert_eq!(default_dir_name("typescript-bun"), "typescript-bun");
         // owner/repo[/subdir] → last segment.
         assert_eq!(default_dir_name("acme/widgets"), "widgets");
         assert_eq!(default_dir_name("acme/widgets/templates/api"), "api");
@@ -477,13 +479,13 @@ mod tests {
     fn builtin_name_resolves_to_repo_subdir() {
         // Clear any test-suite override for this assertion.
         std::env::remove_var("RIZ_TEMPLATE_REPO");
-        let s = resolve("typescript-http", None).unwrap();
+        let s = resolve("typescript-bun", None).unwrap();
         assert_eq!(
             s,
             Source::Git {
                 repo: DEFAULT_REPO.to_string(),
                 reference: None,
-                subdir: Some("templates/typescript-http".to_string()),
+                subdir: Some("templates/typescript-bun".to_string()),
             }
         );
     }
@@ -567,10 +569,10 @@ mod tests {
     fn builtin_with_local_default_repo_is_local() {
         let dir = tempfile::tempdir().unwrap();
         std::env::set_var("RIZ_TEMPLATE_REPO", dir.path());
-        let s = resolve("typescript-http", None).unwrap();
+        let s = resolve("typescript-bun", None).unwrap();
         assert_eq!(
             s,
-            Source::Local(dir.path().join("templates/typescript-http"))
+            Source::Local(dir.path().join("templates/typescript-bun"))
         );
         std::env::remove_var("RIZ_TEMPLATE_REPO");
     }

@@ -3,6 +3,10 @@
 #   riz run
 #   curl 'http://localhost:3000/hello?name=alice'
 
+[server]
+port = 3000
+host = "127.0.0.1"
+
 [function.hello]
 runtime = "go"            # exec the native binary; riz serves the AWS Runtime API
 handler = "./hello"       # the compiled binary (go build -o hello .)

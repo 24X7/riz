@@ -15,7 +15,7 @@
   "install_from_source": "cargo install --git https://github.com/24X7/riz",
   "adopt_in_3_lines": [
     "curl -fsSL https://riz.dev/install | sh",
-    "riz init typescript-http my-app && cd my-app",
+    "riz new typescript-bun my-app && cd my-app",
     "riz run"
   ],
   "runtimes": ["bun", "node", "python", "rust", "go", "wasm"],

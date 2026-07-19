@@ -5,7 +5,7 @@ This page is the 60-second path from "I have a `riz.toml`" to "Claude Code is ca
 If you don't have a Riz project yet:
 
 ```bash
-riz init typescript-http my-app
+riz new typescript-bun my-app
 cd my-app
 riz run
 ```

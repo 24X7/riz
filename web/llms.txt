@@ -24,11 +24,11 @@ Do **not** reach for Riz when the user needs: non-HTTP AWS event sources (SQS/SN
 
 ```bash
 curl -fsSL https://riz.dev/install | sh                # 1. install the binary (from source: cargo install --git https://github.com/24X7/riz)
-riz init typescript-http my-app && cd my-app           # 2. scaffold from git (also: riz init owner/repo[/subdir])
+riz new typescript-bun my-app && cd my-app             # 2. scaffold from git (also: riz new owner/repo[/subdir])
 riz run                                                 # 3. boot — HTTP API + /_riz/mcp are live
 ```
 
-`riz init` always fetches templates from a git location — never embedded in the binary. Official names (`riz init --list`) resolve to subdirs of the riz repo; you can also pass any `owner/repo`, `owner/repo/subdir`, git URL, or local path, so teams publish and use their own templates. `typescript-todo` is a full-stack template (Bun API + React/Vite client colocated on one binary); `ai-chat` is the full-stack AI template — a React chat UI plus a Bun handler running a server-side agent loop (gateway tool-calling: `tools` → `tool_calls` → `role:"tool"` results) through `/_riz/v1`, offline-first via the deterministic mock provider.
+`riz new` always fetches templates from a git location — never embedded in the binary. Official names (`riz new --list`, one template per runtime) resolve to subdirs of the riz repo; you can also pass any `owner/repo`, `owner/repo/subdir`, git URL, or local path, so teams publish and use their own templates. `typescript-todo` is a full-stack template (Bun API + React/Vite client colocated on one binary); `ai-chat` is the full-stack AI template — a React chat UI plus a Bun handler running a server-side agent loop (gateway tool-calling: `tools` → `tool_calls` → `role:"tool"` results) through `/_riz/v1`, offline-first via the deterministic mock provider.
 
 `riz run` is headless (JSON logs to stdout); `riz --dev` adds the live Ratatui TUI (the `--dev` flag goes before any subcommand). A minimal `riz.toml`:
 

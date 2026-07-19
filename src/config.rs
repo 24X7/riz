@@ -852,8 +852,8 @@ impl Config {
                     "no {} found in {cwd}\n\n\
                      riz reads ./riz.toml by default (override with --config <path>).\n\n\
                      Get started:\n  \
-                       riz init typescript-http my-app   scaffold a project, then `cd my-app && riz run`\n  \
-                       riz init --list                   list available templates\n  \
+                       riz new typescript-bun my-app     scaffold a project, then `cd my-app && riz run`\n  \
+                       riz new --list                    list available templates\n  \
                        riz --config <path> run           run a riz.toml that lives elsewhere\n\n\
                      Run `riz --help` for all commands.",
                     path.display()
@@ -868,7 +868,7 @@ impl Config {
             // to a known-good reference so the user can diff their way out.
             anyhow::anyhow!(
                 "invalid riz.toml at {}:\n\n{e}\n\
-                 Compare against a working config: `riz init --list` then scaffold one, \
+                 Compare against a working config: `riz new --list` then scaffold one, \
                  or see examples/riz.all.toml. Every field is documented there.",
                 path.display()
             )
@@ -1742,7 +1742,7 @@ allow_credentials = true
         );
         assert!(msg.contains("riz.toml"), "names the file: {msg}");
         assert!(
-            msg.contains("riz init --list") || msg.contains("riz.all.toml"),
+            msg.contains("riz new --list") || msg.contains("riz.all.toml"),
             "points at a known-good reference: {msg}"
         );
     }
