@@ -30,7 +30,7 @@ fn guard_wasm() -> PathBuf {
 
 fn echo_wasm() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("examples/lambdas/echo-wasm/target/wasm32-wasip1/release/echo-wasm.wasm")
+        .join("tests/fixtures/parity/echo-wasm/target/wasm32-wasip1/release/echo-wasm.wasm")
 }
 
 fn bun_available() -> bool {
@@ -80,7 +80,7 @@ host = "127.0.0.1"
 
 [function.echo_bun]
 runtime = "bun"
-handler = "{repo}/examples/lambdas/echo-bun/index.ts"
+handler = "{repo}/tests/fixtures/parity/echo-bun/index.ts"
 timeout_ms = 5000
 concurrency = 2
 guard_in = "{guard}"
@@ -91,7 +91,7 @@ method = "ANY"
 
 [function.redact_bun]
 runtime = "bun"
-handler = "{repo}/examples/lambdas/echo-bun/index.ts"
+handler = "{repo}/tests/fixtures/parity/echo-bun/index.ts"
 timeout_ms = 5000
 concurrency = 1
 guard_out = "{guard}"

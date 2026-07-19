@@ -14,7 +14,7 @@ asserts they match.
 ```toml
 [function.echo-python]
 runtime = "python"
-handler = "./examples/lambdas/echo-python/main.lambda_handler"
+handler = "./tests/fixtures/parity/echo-python/main.lambda_handler"
 [[function.echo-python.routes]]
 path = "/echo-python"
 method = "ANY"

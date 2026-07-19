@@ -1,40 +1,40 @@
 # riz Examples
 
-Seventeen example handlers spanning all six runtimes (Bun, Node.js, Python,
-Rust, Go, WASM), both protocols (HTTP, WebSocket), and the authorizer surface.
-Each example has its own README under `examples/lambdas/<name>/`.
+**Templates are starting points; examples are proof.** Every handler here is
+authored as a pure AWS Lambda handler — event in, response out, never an event
+loop — and `tests/lambda_shape_conformance.rs` enforces that statically for
+every file in this tree. Scaffolding lives in `templates/` (`riz new --list`);
+these are showcase apps you read, boot, and steal from.
 
 ## Prerequisites
 
 - [bun](https://bun.sh) on `PATH` (TypeScript handlers)
-- [node](https://nodejs.org) on `PATH` (Node.js handlers)
-- `python3` on `PATH` (Python handlers)
 - riz built: `cargo build --release` (or `cargo build` for dev)
-- For the Rust handlers: `cargo build --release --manifest-path examples/lambdas/echo-rust/Cargo.toml`
-  and `…/chat-rust/Cargo.toml`
+- For `orders-wasm`: `rustup target add wasm32-wasip1`, then
+  `cargo build --release --target wasm32-wasip1 --manifest-path examples/lambdas/orders-wasm/Cargo.toml`
 - For the WebSocket smoke tests: [`websocat`](https://github.com/vi/websocat)
 
-## The examples
+## The showcase
 
-| Example | Runtime | Protocol | Capability |
+| Example | Runtime | Protocol | Shows off |
 |---|---|---|---|
-| [`ping`](lambdas/ping/) | Bun | HTTP | Minimal handler, no input |
-| [`accounts`](lambdas/accounts/) | Bun | HTTP | Path params + query string |
-| [`events`](lambdas/events/) | Bun | HTTP | JSON body + validation |
-| [`crud-accounts`](lambdas/crud-accounts/) | Bun | HTTP | All five HTTP verbs |
-| [`echo-bun`](lambdas/echo-bun/) | Bun | HTTP | Full event/context surface |
-| [`echo-node`](lambdas/echo-node/) | Node.js | HTTP | Same surface, Node.js |
-| [`echo-python`](lambdas/echo-python/) | Python | HTTP | Same surface, Python |
-| [`echo-rust`](lambdas/echo-rust/) | Rust | HTTP | Same surface, Rust |
-| [`chat`](lambdas/chat/) | Bun | WebSocket | WS lifecycle + @connections |
-| [`chat-python`](lambdas/chat-python/) | Python | WebSocket | WS, Python |
-| [`chat-rust`](lambdas/chat-rust/) | Rust | WebSocket | WS, Rust |
-| [`auth-allow-bun`](lambdas/auth-allow-bun/) | Bun | HTTP | REQUEST authorizer (allow) |
-| [`auth-deny-bun`](lambdas/auth-deny-bun/) | Bun | HTTP | REQUEST authorizer (deny) |
+| [`agent-tools`](lambdas/agent-tools/) | Bun | HTTP | Every function is an MCP tool — three tools from one module (multi-export routing) |
+| [`crud-accounts`](lambdas/crud-accounts/) | Bun | HTTP | REST over all five verbs, method dispatch, in-memory store |
+| [`chat`](lambdas/chat/) | Bun | WebSocket | $connect/$disconnect/$default + @connections push |
+| [`orders-wasm`](lambdas/orders-wasm/) | WASM | HTTP | Real deterministic compute on the riz-wasm shim inside the WASI sandbox |
+| [`events`](lambdas/events/) | Bun | HTTP | JSON body + validation; the protected target behind the authorizer demos |
+| [`auth-allow-bun`](lambdas/auth-allow-bun/) | Bun | HTTP | REQUEST authorizer — the APIGW simple-response contract (allow) |
+| [`auth-deny-bun`](lambdas/auth-deny-bun/) | Bun | HTTP | REQUEST authorizer — the 401 deny path |
 
-The `echo-*` set (Bun, Node.js, Python, Rust) and the `chat-*` trio are
-**runtime-parity sets**: every implementation emits identical responses,
-asserted by `tests/runtime_parity_echo.rs` and the WebSocket integration tests.
+Two full-stack example starters live one level up — [`../ai-chat`](../ai-chat)
+(React chat UI + Bun agent loop through the LLM gateway) and
+[`../typescript-todo`](../typescript-todo) (Bun API + React/Vite client) —
+both scaffoldable via `riz new`.
+
+The cross-runtime **parity fixtures** (`echo-*` in all six runtimes, the WS
+`chat-python`/`chat-rust` mirrors) are test infrastructure, not teaching
+material; they live in `tests/fixtures/parity/` and back
+`tests/runtime_parity_*.rs`.
 
 ## Config files
 
@@ -116,4 +116,4 @@ export const handler = async (event: any, _ctx: any) => ({
 ```
 
 The `handler` field in `riz.toml` points at the file + export using the AWS
-`file.export` convention (e.g. `./lambdas/ping/index.handler`).
+`file.export` convention (e.g. `./lambdas/events/index.handler`).

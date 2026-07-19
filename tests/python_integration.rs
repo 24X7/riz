@@ -29,7 +29,7 @@ async fn python_echo_lambda_returns_200() {
 
     let handler_path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/examples/lambdas/echo-python/main.lambda_handler"
+        "/tests/fixtures/parity/echo-python/main.lambda_handler"
     );
 
     let config_toml = format!(

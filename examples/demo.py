@@ -7,7 +7,7 @@ Boots ONE riz instance from examples/riz.all.toml and demonstrates, live:
   • MCP server (2025-11-25)  raw JSON-RPC wire test + built-in inspector
   • LLM gateway (live)       OpenAI-compatible /_riz/v1 → a REAL local model via
                              Ollama (llama3.2:1b), plus the mock provider
-  • Five of six runtimes     Bun, Node.js, Python, Rust, WASM — one envelope (Go: examples/lambdas/echo-go)
+  • Five of six runtimes     Bun, Node.js, Python, Rust, WASM — one envelope (Go: tests/fixtures/parity/echo-go)
   • Capability-sandboxed WASM  a wasm32-wasip1 handler run under wasmtime
   • HTTP shapes              path params, query string, JSON body, every verb (CRUD)
   • Response caching         a cache HIT replays the response; invalidate evicts
@@ -418,7 +418,7 @@ def build_wasm() -> None:
         ST.has_wasm = True
         ok(f"already built: {wasm_out.relative_to(ROOT)}")
     elif _wasm_target_installed():
-        sub("cargo build --release --target wasm32-wasip1  (in examples/lambdas/echo-wasm)")
+        sub("cargo build --release --target wasm32-wasip1  (in tests/fixtures/parity/echo-wasm)")
         r = subprocess.run(
             ["cargo", "build", "--release", "--target", "wasm32-wasip1"],
             cwd=wasm_dir, capture_output=True, text=True, stdin=DEVNULL,

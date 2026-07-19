@@ -188,7 +188,7 @@ async fn bun_echo_response_headers_and_cookies() {
     }
     let handler = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/examples/lambdas/echo-bun/index.handler"
+        "/tests/fixtures/parity/echo-bun/index.handler"
     );
     let config_toml = format!(
         r#"
@@ -219,7 +219,7 @@ async fn node_echo_response_headers_and_cookies() {
     }
     let handler = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/examples/lambdas/echo-node/index.handler"
+        "/tests/fixtures/parity/echo-node/index.handler"
     );
     let config_toml = format!(
         r#"
@@ -250,7 +250,7 @@ async fn python_echo_response_headers_and_cookies() {
     }
     let handler = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/examples/lambdas/echo-python/main.lambda_handler"
+        "/tests/fixtures/parity/echo-python/main.lambda_handler"
     );
     let config_toml = format!(
         r#"

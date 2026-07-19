@@ -1,7 +1,14 @@
 import json
 
+# Module-level state proves the process stays warm across invocations —
+# mirrors the bun/node legs' invocationCount surface (parity-shape fix,
+# 2026-07-19: python previously omitted authorizer/invocationCount).
+_invocation_count = 0
+
 
 def lambda_handler(event, context):
+    global _invocation_count
+    _invocation_count += 1
     # Honor ?status=NNN for the parity-H error-status test.
     qs = event.get("queryStringParameters") or {}
     try:
@@ -26,5 +33,7 @@ def lambda_handler(event, context):
             "stageVariables": event.get("stageVariables"),
             "cookies": event.get("cookies"),
             "requestHeaders": event.get("headers"),
+            "authorizer": (event.get("requestContext") or {}).get("authorizer"),
+            "invocationCount": _invocation_count,
         }),
     }

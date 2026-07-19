@@ -116,7 +116,7 @@ async fn wait_for_ready(client: &reqwest::Client, url: &str) {
 const TIMEOUT_MS: i64 = 5000;
 const BUN_HANDLER: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/examples/lambdas/echo-bun/index.handler"
+    "/tests/fixtures/parity/echo-bun/index.handler"
 );
 
 #[tokio::test]

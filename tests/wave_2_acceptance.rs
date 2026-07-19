@@ -95,8 +95,8 @@ fn python_adapter_extracted_to_riz_dir_on_first_run() {
 #[test]
 fn python_echo_example_exists_and_config_valid() {
     assert!(
-        std::path::Path::new("examples/lambdas/echo-python/main.py").exists(),
-        "missing examples/lambdas/echo-python/main.py — create it during Wave 2 Task 9"
+        std::path::Path::new("tests/fixtures/parity/echo-python/main.py").exists(),
+        "missing tests/fixtures/parity/echo-python/main.py — create it during Wave 2 Task 9"
     );
 }
 

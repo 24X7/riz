@@ -55,10 +55,10 @@ fn echo_rust_available() -> bool {
 }
 
 /// The compiled wasm32-wasip1 echo module (built by
-/// `cargo build --release --target wasm32-wasip1` in examples/lambdas/echo-wasm).
+/// `cargo build --release --target wasm32-wasip1` in tests/fixtures/parity/echo-wasm).
 fn echo_wasm_module() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("examples/lambdas/echo-wasm/target/wasm32-wasip1/release/echo-wasm.wasm")
+        .join("tests/fixtures/parity/echo-wasm/target/wasm32-wasip1/release/echo-wasm.wasm")
 }
 
 /// The built riz host binary — needed because WasmRuntime re-invokes
@@ -217,7 +217,7 @@ async fn bun_echo_passes_path_and_query() {
     }
     let handler = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/examples/lambdas/echo-bun/index.handler"
+        "/tests/fixtures/parity/echo-bun/index.handler"
     );
     let config_toml = format!(
         r#"
@@ -248,7 +248,7 @@ async fn node_echo_passes_path_and_query() {
     }
     let handler = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/examples/lambdas/echo-node/index.handler"
+        "/tests/fixtures/parity/echo-node/index.handler"
     );
     let config_toml = format!(
         r#"
@@ -279,7 +279,7 @@ async fn python_echo_passes_path_and_query() {
     }
     let handler = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/examples/lambdas/echo-python/main.lambda_handler"
+        "/tests/fixtures/parity/echo-python/main.lambda_handler"
     );
     let config_toml = format!(
         r#"
@@ -341,7 +341,7 @@ async fn wasm_echo_passes_path_and_query() {
         eprintln!(
             "SKIP: echo-wasm module or riz host binary not built. Run \
              `cargo build --release` and \
-             `cargo build --release --target wasm32-wasip1` in examples/lambdas/echo-wasm first."
+             `cargo build --release --target wasm32-wasip1` in tests/fixtures/parity/echo-wasm first."
         );
         return;
     }

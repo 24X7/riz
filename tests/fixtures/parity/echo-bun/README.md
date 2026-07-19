@@ -16,14 +16,14 @@ status code.
 The Bun handler additionally returns `invocationCount` (a per-process counter)
 — this drives the cache-replay parity test: a cached hit replays the prior
 response *including* its captured count, proving the handler wasn't re-run.
-The Python and Rust echoes omit this Bun-only field.
+The Rust echo omits this field.
 
 ## Wiring (`examples/riz.all.toml`)
 
 ```toml
 [function.echo-bun]
 runtime = "bun"
-handler = "./examples/lambdas/echo-bun/index.handler"
+handler = "./tests/fixtures/parity/echo-bun/index.handler"
 [[function.echo-bun.routes]]
 path = "/echo-bun"
 method = "ANY"

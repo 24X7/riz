@@ -59,7 +59,7 @@ fn echo_rust_available() -> bool {
 }
 
 fn echo_go_binary() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/lambdas/echo-go/echo-go")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/parity/echo-go/echo-go")
 }
 
 fn echo_go_available() -> bool {
@@ -212,7 +212,7 @@ async fn bun_echo_emits_canonical_shape() {
     }
     let handler = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/examples/lambdas/echo-bun/index.handler"
+        "/tests/fixtures/parity/echo-bun/index.handler"
     );
     let config_toml = format!(
         r#"
@@ -248,7 +248,7 @@ async fn python_echo_emits_canonical_shape() {
     }
     let handler = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/examples/lambdas/echo-python/main.lambda_handler"
+        "/tests/fixtures/parity/echo-python/main.lambda_handler"
     );
     let config_toml = format!(
         r#"
@@ -321,7 +321,7 @@ async fn go_echo_emits_canonical_shape() {
     if !echo_go_available() {
         eprintln!(
             "SKIP: echo-go binary not built at {}. \
-             Run `(cd examples/lambdas/echo-go && go build -o echo-go .)` first.",
+             Run `(cd tests/fixtures/parity/echo-go && go build -o echo-go .)` first.",
             echo_go_binary().display()
         );
         return;
@@ -362,7 +362,7 @@ async fn node_echo_emits_canonical_shape() {
     }
     let handler = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/examples/lambdas/echo-node/index.handler"
+        "/tests/fixtures/parity/echo-node/index.handler"
     );
     let config_toml = format!(
         r#"

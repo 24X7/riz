@@ -32,7 +32,7 @@ fn bun_available() -> bool {
 const TIMEOUT_MS: i64 = 5000;
 const ECHO_BUN_HANDLER: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/examples/lambdas/echo-bun/index.handler"
+    "/tests/fixtures/parity/echo-bun/index.handler"
 );
 
 fn riz_toml_with_routes(routes: &[(&str, &str)]) -> String {

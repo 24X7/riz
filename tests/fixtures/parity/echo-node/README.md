@@ -17,7 +17,7 @@ in unmodified — same `index.handler` shape, no SDK, no build step (plain ESM).
 ```toml
 [function.echo-node]
 runtime = "node"
-handler = "./examples/lambdas/echo-node/index.handler"
+handler = "./tests/fixtures/parity/echo-node/index.handler"
 [[function.echo-node.routes]]
 path = "/echo-node"
 method = "ANY"
@@ -31,4 +31,4 @@ curl 'http://127.0.0.1:3000/echo-node?status=200&name=alice'
 ```
 
 Like `echo-bun`, this handler returns an `invocationCount` (per-process counter)
-used by the cache-replay test; `echo-python` and `echo-rust` omit it.
+used by the cache-replay test; `echo-rust` omits it.

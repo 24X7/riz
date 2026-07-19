@@ -274,7 +274,7 @@ fn shim_built_guests_export_the_abi_marker() {
     let modules = [
         orders_wasm_module(),
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("examples/lambdas/echo-wasm/target/wasm32-wasip1/release/echo-wasm.wasm"),
+            .join("tests/fixtures/parity/echo-wasm/target/wasm32-wasip1/release/echo-wasm.wasm"),
     ];
     let engine = wasmtime::Engine::default();
     let mut checked = 0;

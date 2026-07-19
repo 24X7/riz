@@ -28,7 +28,7 @@ fn bun_available() -> bool {
 fn install_echo_handler(dir: &std::path::Path) -> PathBuf {
     let src = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/examples/lambdas/echo-bun/index.ts"
+        "/tests/fixtures/parity/echo-bun/index.ts"
     );
     let dst = dir.join("index.ts");
     std::fs::copy(src, &dst).expect("copy echo handler");

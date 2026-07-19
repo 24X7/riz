@@ -31,7 +31,7 @@ fn write_test_config(port: u16) -> tempfile::TempDir {
     let cfg_path = dir.path().join("riz.toml");
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let handler_path = workspace
-        .join("examples/lambdas/ping/index.handler")
+        .join("tests/fixtures/ping/index.handler")
         .display()
         .to_string();
     let toml = format!(

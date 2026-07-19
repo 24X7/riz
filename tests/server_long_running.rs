@@ -68,7 +68,7 @@ async fn riz_stays_alive_past_30s_drain_timeout_window() {
     let cfg = tmp.path().join("riz.toml");
     let port = pick_free_port();
     let ping_handler = workspace
-        .join("examples/lambdas/ping/index.handler")
+        .join("tests/fixtures/ping/index.handler")
         .display()
         .to_string();
     std::fs::write(
