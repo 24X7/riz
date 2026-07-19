@@ -14,7 +14,19 @@ concurrency = 2
 # WASM runs deny-by-default under wasmtime + WASI: stdio only, no filesystem,
 # network, or host env. Grant filesystem access with `allowed_paths`, guest env
 # with `[function.hello.stage_variables]`, and brokered resources with
-# `[function.hello.capabilities]` — see examples/riz.all.toml.
+# capability grants. The guest names a grant, never a secret — credentials
+# stay host-side. Uncomment to give this function a Postgres grant:
+#
+# [resources.pg.main]
+# dsn_env = "RIZ_PG_MAIN_DSN"          # credential lives in the HOST env only
+#
+# [function.hello.capabilities.db]
+# type = "pg"
+# resource = "pg.main"
+# mode = "read-only"
+# max_inflight = 2
+#
+# Then in the handler: riz_wasm::cap::pg::query("db", "select 1 as one", &[])
 
 [[function.hello.routes]]
 path = "/hello"

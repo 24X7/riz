@@ -9,6 +9,8 @@ edition = "2021"
 
 [dependencies]
 serde_json = "1"
+# The riz-wasm shim owns the wire: you write a handler, it runs the loop.
+riz-wasm = { git = "https://github.com/24X7/riz" }
 
 # A small, stripped wasm artifact. `opt-level = "s"` keeps the module compact;
 # `strip` drops debug symbols.

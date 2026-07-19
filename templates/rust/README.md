@@ -1,4 +1,4 @@
-# rust-http riz template
+# rust riz template
 
 A minimal AWS API Gateway v2 HTTP Lambda handler in Rust, ready to run
 on riz (https://riz.dev).
@@ -45,3 +45,7 @@ picks up the new binary via handler-source hot reload (no restart needed).
 - Your function is already a typed MCP tool at `/_riz/mcp`:
   `claude mcp add riz --transport http http://localhost:3000/_riz/mcp`
 - Pre-flight check: `riz doctor`
+
+**WebSocket variant:** WS handlers ($connect/$disconnect/$default +
+@connections push) live as a showcase in `examples/chat`; scaffold any repo
+subdir with `riz new <owner>/<repo>/<subdir>`.

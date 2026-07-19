@@ -1,0 +1,8 @@
+{
+  "name": "riz-typescript-bun-starter",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.152"
+  }
+}

@@ -4,7 +4,9 @@ host = "127.0.0.1"
 
 [function.hello]
 runtime = "node"
-handler = "index.handler"
+# Explicit-path form: node's AWS-style auto-extension is .mjs, so a TypeScript
+# entry names its file directly (export defaults to `handler`).
+handler = "./index.ts"
 timeout_ms = 5000
 concurrency = 2
 
