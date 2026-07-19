@@ -1,71 +1,39 @@
 //! orders-wasm — the real-compute member of the WASM example set.
 //!
-//! Compiled to `wasm32-wasip1` and run by `riz __wasm-host` inside wasmtime's
-//! WASI capability sandbox (deny-by-default fs/net). Unlike echo-wasm, this
-//! module does REAL deterministic business compute: it parses an order payload
-//! (an array of line-items), validates every field, and prices the order —
-//! per-line extended amounts, subtotal, tax, and grand total — returning a
-//! structured JSON Lambda response.
+//! Authored as a pure Lambda handler on `riz-wasm`: the shim owns the wire;
+//! this file owns the business logic. Compiled to `wasm32-wasip1` and run by
+//! `riz __wasm-host` inside wasmtime's WASI capability sandbox (deny-by-default
+//! fs/net), it parses an order payload (an array of line-items), validates
+//! every field, and prices the order — per-line extended amounts, subtotal,
+//! tax, and grand total — returning a structured JSON Lambda response.
 //!
 //! It proves a `.wasm` handler is a first-class riz runtime that can run actual
-//! application logic, not just bounce the event back.
-//!
-//! Pure sync std + serde_json — no tokio, no networking — so it compiles to
-//! wasm cleanly and runs under the no-syscall WASI sandbox.
-//!
-//! Wire protocol (identical to every other riz runtime):
-//!   stdin  ← one JSON line per invocation: the API Gateway v2 event, optionally
-//!            wrapped in a `{ event, __riz_deadline_ms, __riz_function_name }`
-//!            envelope.
-//!   stdout → one JSON line: the Lambda proxy response
-//!            (`statusCode` + `headers` + JSON `body`).
+//! application logic, not just bounce the event back. Pure sync std +
+//! serde_json — no tokio, no networking — fully deterministic across hosts.
 
-use std::io::{self, BufRead, Write};
+use riz_wasm::{Context, Error, Event, Response};
 
 /// Tax rate applied to the order subtotal, in basis points (825 = 8.25%).
 /// Fixed + integer math keeps the compute fully deterministic across hosts.
 const TAX_RATE_BPS: i64 = 825;
 
 fn main() {
-    let stdin = io::stdin();
-    let mut stdout = io::stdout();
-    for line in stdin.lock().lines() {
-        let line = match line {
-            Ok(l) => l,
-            Err(_) => break,
-        };
-        if line.trim().is_empty() {
-            continue;
-        }
-        let _ = writeln!(stdout, "{}", handle(&line));
-        let _ = stdout.flush();
-    }
+    riz_wasm::run(handler)
 }
 
-fn handle(line: &str) -> String {
-    let parsed: serde_json::Value = match serde_json::from_str(line) {
-        Ok(v) => v,
-        Err(_) => return response(400, &error_body("malformed envelope json")),
-    };
-    // Envelope: { event, __riz_deadline_ms, __riz_function_name } — fall back to
-    // a bare event for manual invocations.
-    let event = parsed.get("event").unwrap_or(&parsed);
-
+fn handler(event: Event, _ctx: Context) -> Result<Response, Error> {
     // The order payload arrives as the request body (a JSON string in the AWS
     // proxy event). Parse it out, then compute.
-    let body_str = event
-        .get("body")
-        .and_then(|b| b.as_str())
-        .unwrap_or("");
+    let body_str = event.raw().get("body").and_then(|b| b.as_str()).unwrap_or("");
     let body: serde_json::Value = match serde_json::from_str(body_str) {
         Ok(v) => v,
-        Err(_) => return response(400, &error_body("request body is not valid json")),
+        Err(_) => return Ok(response(400, &error_body("request body is not valid json"))),
     };
 
-    match price_order(&body) {
+    Ok(match price_order(&body) {
         Ok(result) => response(200, &result),
         Err(msg) => response(422, &error_body(&msg)),
-    }
+    })
 }
 
 /// The core compute: validate + price an order.
@@ -159,14 +127,13 @@ fn error_body(message: &str) -> serde_json::Value {
 }
 
 /// Wrap a JSON value in a canonical AWS Lambda proxy response.
-fn response(status: i64, body: &serde_json::Value) -> String {
-    serde_json::json!({
+fn response(status: i64, body: &serde_json::Value) -> Response {
+    Response::from(serde_json::json!({
         "statusCode": status,
         "headers": { "content-type": "application/json", "x-riz-runtime": "wasm" },
         "multiValueHeaders": {},
         "body": body.to_string(),
         "isBase64Encoded": false,
         "cookies": [],
-    })
-    .to_string()
+    }))
 }
