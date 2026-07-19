@@ -4,8 +4,8 @@
 //! and-wasm-capability-suite-design.html. The behavioral half is the parity
 //! matrix + template boot smoke.)
 //!
-//! Scope: the handler-source trees — `examples/lambdas/*/`, `examples/ai-chat/`,
-//! `examples/typescript-todo/` (PR2 extends it to `templates/*/`). Demo/smoke
+//! Scope: the handler-source trees — `templates/*/`, `examples/lambdas/*/`,
+//! `examples/ai-chat/`, `examples/typescript-todo/`. Demo/smoke
 //! tooling (examples/demo.py, smoke-all.sh) is outside scope by construction.
 //! Wire tokens may exist only under src/, assets/, crates/riz-wasm/, and
 //! tests/fixtures/ — never in code a user is meant to copy.
@@ -44,6 +44,13 @@ fn examples_author_lambda_handlers_never_the_wire() {
     ];
     let lambdas = root.join("examples/lambdas");
     for entry in fs::read_dir(&lambdas).expect("examples/lambdas must exist") {
+        let entry = entry.expect("readable dir entry");
+        if entry.path().is_dir() {
+            roots.push(entry.path());
+        }
+    }
+    // Templates are held to the same authoring contract as examples.
+    for entry in fs::read_dir(root.join("templates")).expect("templates/ must exist") {
         let entry = entry.expect("readable dir entry");
         if entry.path().is_dir() {
             roots.push(entry.path());
@@ -117,4 +124,56 @@ fn allowlisted(rel_path: &str, token: &str) -> bool {
         );
         rel_path.ends_with(suffix) && *tok == token
     })
+}
+
+/// The scaffold set is a lockstep surface of the RuntimeKind enum, enforced
+/// by test rather than prose: one template per variant, names carrying the
+/// spec's wording (typescript-bun / typescript-node / python / rust / go /
+/// wasm-rust), each declaring the runtime it claims.
+#[test]
+fn template_set_maps_one_to_one_onto_runtime_kinds() {
+    // variant (serde name) → template dir
+    const MAP: &[(&str, &str)] = &[
+        ("bun", "typescript-bun"),
+        ("node", "typescript-node"),
+        ("python", "python"),
+        ("rust", "rust"),
+        ("go", "go"),
+        ("wasm", "wasm-rust"),
+    ];
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    // Every mapped template exists and declares the runtime it claims.
+    for (variant, template) in MAP {
+        let dir = root.join("templates").join(template);
+        assert!(dir.is_dir(), "templates/{template} missing for runtime {variant}");
+        let cfg = fs::read_to_string(dir.join("riz.toml"))
+            .unwrap_or_else(|e| panic!("templates/{template}/riz.toml unreadable: {e}"));
+        assert!(
+            cfg.contains(&format!("runtime = \"{variant}\"")),
+            "templates/{template}/riz.toml must declare runtime = \"{variant}\""
+        );
+    }
+
+    // The on-disk template dirs are exactly the mapped set (no extras, none
+    // missing) …
+    let mut on_disk: Vec<String> = fs::read_dir(root.join("templates"))
+        .expect("templates/ exists")
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| e.file_name().to_str().map(String::from))
+        .collect();
+    on_disk.sort();
+    let mut expected: Vec<String> = MAP.iter().map(|(_, t)| t.to_string()).collect();
+    expected.sort();
+    assert_eq!(on_disk, expected, "templates/ dirs must match the RuntimeKind map");
+
+    // … and BUILTINS advertises exactly the same six template rows.
+    let mut advertised: Vec<String> = riz::template_fetch::BUILTINS
+        .iter()
+        .filter(|(_, subdir, ..)| riz::template_fetch::is_template_row(subdir))
+        .map(|(name, ..)| name.to_string())
+        .collect();
+    advertised.sort();
+    assert_eq!(advertised, expected, "riz new --list templates must match the map");
 }

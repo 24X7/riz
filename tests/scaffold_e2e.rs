@@ -1,4 +1,4 @@
-//! End-to-end scaffold tests: prove that `riz init <template>` produces a
+//! End-to-end scaffold tests: prove that `riz new <template>` produces a
 //! project that actually boots and serves traffic. Distinct from `cli_init.rs`
 //! which only verifies the files exist + the config parses.
 //!
@@ -17,9 +17,9 @@ fn riz_binary() -> PathBuf {
     target_dir.join("debug").join("riz")
 }
 
-/// This checkout, used as a local `RIZ_TEMPLATE_REPO` so `riz init <name>`
+/// This checkout, used as a local `RIZ_TEMPLATE_REPO` so `riz new <name>`
 /// resolves built-in templates to the on-disk `templates/` dir — hermetic, no
-/// network. (`riz init` always loads from a git location; this points it at a
+/// network. (`riz new` always loads from a git location; this points it at a
 /// local one.)
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -56,7 +56,7 @@ fn rewrite_port(toml_path: &std::path::Path, port: u16) {
 }
 
 #[test]
-fn typescript_http_scaffold_boots_and_serves_hello() {
+fn typescript_bun_scaffold_boots_and_serves_hello() {
     if std::process::Command::new("bun")
         .arg("--version")
         .output()
@@ -69,7 +69,7 @@ fn typescript_http_scaffold_boots_and_serves_hello() {
     let target = tmp.path().join("app");
 
     Command::new(riz_binary())
-        .args(["init", "typescript-http"])
+        .args(["new", "typescript-bun"])
         .arg(&target)
         .env("RIZ_TEMPLATE_REPO", repo_root())
         .output()
@@ -87,7 +87,7 @@ fn typescript_http_scaffold_boots_and_serves_hello() {
     let ready = wait_for_ready(port, Duration::from_secs(15));
     if !ready {
         let _ = server.kill();
-        panic!("typescript-http scaffold never became ready");
+        panic!("typescript-bun scaffold never became ready");
     }
 
     let resp =
@@ -112,13 +112,13 @@ fn typescript_http_scaffold_boots_and_serves_hello() {
     );
 }
 
-/// REGRESSION: `riz init python-http` used to produce a `handler = "main.lambda_handler"`
+/// REGRESSION: `riz new python` used to produce a `handler = "main.lambda_handler"`
 /// config that crashed the Python adapter with "ModuleNotFoundError: main" because
 /// the adapter's bare-module branch tried `importlib.import_module("main")` which
 /// can't find files in the user's CWD. Fix: scaffold uses `./main.lambda_handler`
 /// which hits the file-path branch. This test locks in the runnable behavior.
 #[test]
-fn python_http_scaffold_boots_and_serves_hello() {
+fn python_scaffold_boots_and_serves_hello() {
     if std::process::Command::new("python3")
         .arg("--version")
         .output()
@@ -131,7 +131,7 @@ fn python_http_scaffold_boots_and_serves_hello() {
     let target = tmp.path().join("app");
 
     Command::new(riz_binary())
-        .args(["init", "python-http"])
+        .args(["new", "python"])
         .env("RIZ_TEMPLATE_REPO", repo_root())
         .arg(&target)
         .output()
@@ -149,7 +149,7 @@ fn python_http_scaffold_boots_and_serves_hello() {
     let ready = wait_for_ready(port, Duration::from_secs(15));
     if !ready {
         let _ = server.kill();
-        panic!("python-http scaffold never became ready");
+        panic!("python scaffold never became ready");
     }
 
     let resp =
