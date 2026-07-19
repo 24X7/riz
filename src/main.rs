@@ -38,8 +38,8 @@ use tracing_subscriber::EnvFilter;
     about = "Self-hosted AWS Lambda runtime — HTTP API v2 + WebSocket, MCP-native",
     after_help = "\
 Getting started:
-  riz init typescript-http my-app   scaffold a project (then: cd my-app && riz run)
-  riz init --list                   list the available templates
+  riz new typescript-bun my-app     scaffold a project (then: cd my-app && riz run)
+  riz new --list                    list the available templates
   riz run                           start ./riz.toml in the current directory
   riz --dev run                     start with the live TUI dashboard
   riz doctor                        pre-flight check your riz.toml + runtimes
@@ -104,7 +104,7 @@ enum Commands {
     ///
     /// Templates are never embedded in the binary — they always load from a
     /// git location. `<spec>` may be:
-    ///   - an official template name (`riz init --list`), e.g. `typescript-http`,
+    ///   - an official template name (`riz new --list`), e.g. `typescript-bun`,
     ///     `typescript-todo` — fetched from a subdir of the riz repo;
     ///   - `owner/repo`, `owner/repo/subdir`, optionally `#ref` — any GitHub
     ///     repo or subdirectory, so you can use your own;
@@ -112,12 +112,12 @@ enum Commands {
     ///
     /// Files are written into <dir>. With no <dir>, riz creates a new directory
     /// named after the template (like `cargo new` / `git clone`), so
-    /// `riz init ai-chat && cd ai-chat` works; pass `.` to scaffold in place.
-    /// E.g.: `riz init typescript-todo my-app && cd my-app && riz run`.
+    /// `riz new ai-chat && cd ai-chat` works; pass `.` to scaffold in place.
+    /// E.g.: `riz new typescript-todo my-app && cd my-app && riz run`.
     ///
-    /// `riz init --list` prints the official templates. Set `RIZ_TEMPLATE_REPO`
+    /// `riz new --list` prints the official templates. Set `RIZ_TEMPLATE_REPO`
     /// to fetch the official names from a fork.
-    Init {
+    New {
         /// Template spec (name / owner/repo[/subdir] / git URL / local path).
         /// Required unless --list is given.
         spec: Option<String>,
@@ -212,22 +212,32 @@ enum McpCmd {
 }
 
 fn print_template_list() {
-    println!("Official templates (fetched from git, never embedded):\n");
-    println!("  {:<24} {:<12} LANGUAGE", "TEMPLATE", "SCENARIO");
-    for (name, _subdir, scenario, lang) in template_fetch::BUILTINS {
-        println!("  {name:<24} {scenario:<12} {lang}");
+    println!("Templates are starting points; examples are proof.\n");
+    println!("Templates (one per runtime; fetched from git, never embedded):\n");
+    println!("  {:<18} {:<12} LANGUAGE", "TEMPLATE", "SCENARIO");
+    for (name, subdir, scenario, lang) in template_fetch::BUILTINS {
+        if template_fetch::is_template_row(subdir) {
+            println!("  {name:<18} {scenario:<12} {lang}");
+        }
+    }
+    println!("\nExample starters (full apps to fetch and explore):\n");
+    println!("  {:<18} {:<12} LANGUAGE", "EXAMPLE", "SCENARIO");
+    for (name, subdir, scenario, lang) in template_fetch::BUILTINS {
+        if !template_fetch::is_template_row(subdir) {
+            println!("  {name:<18} {scenario:<12} {lang}");
+        }
     }
     println!("\nUsage:");
-    println!("  riz init <template> [dir] [--ref <ref>] [--git]   # an official template above");
-    println!("  riz init <owner>/<repo>[/<subdir>][#ref] [dir]    # any GitHub repo or subdir");
-    println!("  riz init <git-url|local-path> [dir]               # any git URL or local path");
+    println!("  riz new <template> [dir] [--ref <ref>] [--git]   # an official name above");
+    println!("  riz new <owner>/<repo>[/<subdir>][#ref] [dir]    # any GitHub repo or subdir");
+    println!("  riz new <git-url|local-path> [dir]               # any git URL or local path");
     println!("\nTemplates always load from a git location — set RIZ_TEMPLATE_REPO to use a fork.");
 }
 
 /// Scaffold a project by FETCHING a template from a git location (or local
 /// path) — nothing is embedded in the binary. `spec` is a built-in name, an
 /// `owner/repo[/subdir][#ref]` shorthand, a git URL, or a local path.
-fn run_init(
+fn run_new(
     spec: &str,
     dir: Option<&str>,
     reference: Option<&str>,
@@ -256,8 +266,33 @@ fn run_init(
         try_git_init(&target);
     }
 
+    warn_if_node_below_floor(spec);
     print_next_steps(spec, &target);
     Ok(())
+}
+
+/// Scaffold-time preflight for the typescript-node template: its floor is
+/// Node >= 22.18 (native type stripping on by default). Warn, never block —
+/// the scaffold may be destined for another machine; `riz doctor` re-checks.
+fn warn_if_node_below_floor(spec: &str) {
+    if spec != "typescript-node" {
+        return;
+    }
+    let Ok(out) = std::process::Command::new("node").arg("--version").output() else {
+        eprintln!("  note: `node` not found on PATH — this template needs Node >= 22.18 to run");
+        return;
+    };
+    let v = String::from_utf8_lossy(&out.stdout);
+    let v = v.trim().trim_start_matches('v');
+    let mut parts = v.split('.').filter_map(|p| p.parse::<u32>().ok());
+    let major = parts.next().unwrap_or(0);
+    let minor = parts.next().unwrap_or(0);
+    if major < 22 || (major == 22 && minor < 18) {
+        eprintln!(
+            "  note: node {v} found, but this template needs Node >= 22.18 \
+             (native type stripping)"
+        );
+    }
 }
 
 /// `riz scaffold static` — load the project config and DERIVE the
@@ -354,7 +389,7 @@ fn try_git_init(target: &std::path::Path) {
         .current_dir(target)
         .status();
     let _ = Command::new("git")
-        .args(["commit", "--quiet", "-m", "riz init"])
+        .args(["commit", "--quiet", "-m", "riz new"])
         .current_dir(target)
         .status();
     println!("  git init + initial commit");
@@ -368,11 +403,18 @@ fn print_next_steps(spec: &str, target: &std::path::Path) {
     let has = |rel: &str| target.join(rel).exists();
     let rust = has("Cargo.toml");
     let client = has("client/package.json"); // full-stack (Vite) layout
+    // A wasm scaffold builds for the wasm32-wasip1 target, not the host.
+    let wasm = std::fs::read_to_string(target.join("riz.toml"))
+        .map(|c| c.contains("runtime = \"wasm\""))
+        .unwrap_or(false);
 
     println!("\n✓ fetched {spec} into {dir}");
     println!("\n  Next steps:");
     println!("    cd {dir}");
-    if rust {
+    if rust && wasm {
+        println!("    rustup target add wasm32-wasip1   # once");
+        println!("    cargo build --release --target wasm32-wasip1");
+    } else if rust {
         println!("    cargo build --release");
     }
     if client {
@@ -755,7 +797,7 @@ fn doctor_check_config(config_path: &str, tally: &mut DoctorTally) -> config::Co
             &format!("not found at {config_path}"),
         );
         tally.record(Finding::Fail);
-        println!("\n  Hint: run `riz init <template>` to scaffold one.");
+        println!("\n  Hint: run `riz new <template>` to scaffold one.");
         println!("\n✗ 1 failure — cannot continue without a config.");
         // Rule 1 deviation (docs/SAFETY.md): doctor is a top-level CLI
         // diagnostic whose contract is "summary on stdout, exit code 1" —
@@ -1152,9 +1194,9 @@ fn resolve_bearer(flag: Option<&String>) -> Option<String> {
         .or_else(|| std::env::var("RIZ_AUTH_BEARER_TOKEN").ok())
 }
 
-/// `riz init`, resolved from its CLI flags: `--list` prints the official
+/// `riz new`, resolved from its CLI flags: `--list` prints the official
 /// templates and exits; otherwise a template spec is required.
-fn run_init_command(
+fn run_new_command(
     spec: Option<&str>,
     dir: Option<&str>,
     reference: Option<&str>,
@@ -1167,9 +1209,9 @@ fn run_init_command(
         return Ok(());
     }
     let spec = spec.ok_or_else(|| {
-        anyhow::anyhow!("template spec required. Run `riz init --list` to see official templates.")
+        anyhow::anyhow!("template spec required. Run `riz new --list` to see official templates.")
     })?;
-    run_init(spec, dir, reference, git, force)
+    run_new(spec, dir, reference, git, force)
 }
 
 /// Dispatch the subcommands that run BEFORE the generic config-load path:
@@ -1202,14 +1244,14 @@ async fn dispatch_client_command(cli: &Cli) -> Option<anyhow::Result<()>> {
             let config_path = effective_config_path(cli.dev, cli.config.as_deref());
             Some(run_doctor(&config_path).await)
         }
-        Some(Commands::Init {
+        Some(Commands::New {
             spec,
             dir,
             r#ref,
             list,
             force,
             git,
-        }) => Some(run_init_command(
+        }) => Some(run_new_command(
             spec.as_deref(),
             dir.as_deref(),
             r#ref.as_deref(),
