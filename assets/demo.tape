@@ -32,7 +32,7 @@ Hide
 Type "cd $(mktemp -d)" Enter
 Show
 
-Type "riz init typescript-http orders && cd orders" Sleep 600ms Enter
+Type "riz new typescript-bun orders && cd orders" Sleep 600ms Enter
 Sleep 2.5s
 
 Type "cat index.ts" Enter

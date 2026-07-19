@@ -135,7 +135,7 @@ async fn main() -> Result<(), Error> {
 }
 ```
 
-`riz init rust-http my-api` scaffolds a complete, buildable version of this handler.
+`riz new rust my-api` scaffolds a complete, buildable version of this handler.
 
 ```toml
 [function.api]

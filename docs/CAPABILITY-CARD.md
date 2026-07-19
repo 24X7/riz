@@ -126,7 +126,7 @@ This measures the riz dispatch path (routing + process pool bridge). Real throug
 
 | Command | What it does |
 |---|---|
-| `riz init <template>` | Scaffold a working project — 10 templates: `typescript-http` · `nodejs-http` · `python-http` · `rust-http` · `go-http` · `typescript-websocket` · `python-websocket` · `rust-websocket` · `typescript-todo` (full-stack: Bun API + React/Vite client) · `ai-chat` (full-stack AI: React chat UI + Bun agent loop through the LLM gateway) |
+| `riz new <template>` | Scaffold a working project — six per-runtime templates (`typescript-bun` · `typescript-node` · `python` · `rust` · `go` · `wasm-rust`) plus two example starters: `typescript-todo` (full-stack: Bun API + React/Vite client) · `ai-chat` (full-stack AI: React chat UI + Bun agent loop through the LLM gateway). WebSocket showcase lives in `examples/chat` |
 | `riz run` | Headless (JSON logs to stdout) — the default subcommand |
 | `riz --dev` | Boots the Ratatui terminal dashboard with hot-reload (`--dev` goes before any subcommand) |
 | `riz validate` | Config check — parse + validate `riz.toml` |

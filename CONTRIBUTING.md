@@ -161,6 +161,9 @@ cargo nextest run
 # …or on its own (skips cleanly if the full toolchain isn't present):
 cargo nextest run --test e2e_smoke_all
 
+# Its sibling: scaffold + boot all six `riz new` templates (also isolated):
+cargo nextest run --test template_smoke_all
+
 # Or run the harness directly for the full ✓/✗ report on any port:
 PORT=3939 bash examples/smoke-all.sh
 ```
@@ -255,7 +258,7 @@ assets/                # files embedded into the binary via include_str!
   node-adapter.mjs     # node side
   python-adapter.py    # python side
 
-templates/             # 9 `riz init <template>` scaffolds, git-fetched (5 HTTP + 3 WebSocket + 1 WASM)
+templates/             # 6 `riz new <template>` scaffolds, git-fetched (one per runtime)
 
 examples/
   riz.dev.toml         # dev config for the bundled example fleet
@@ -304,7 +307,7 @@ docs/
 2. Wire the spawn path in `src/process/mod.rs` (look for `RuntimeKind` match arms)
 3. Add the runtime-side adapter (line-delimited JSON over stdin/stdout) in `assets/<lang>-adapter.<ext>`, include_str!-load it in the spawner
 4. Add a config variant in `RuntimeKind` (`src/config.rs`)
-5. Add a `riz init <lang>-http` template under `templates/<lang>-http/` + register its name in `BUILTINS` in `src/template_fetch.rs` (templates load from git — never embedded)
+5. Add a `riz new` template under `templates/<name>/` + register its name in `BUILTINS` in `src/template_fetch.rs` (templates load from git — never embedded; the conformance test asserts one template per `RuntimeKind` variant)
 6. Add a parity test sequence in `tests/runtime_parity_*.rs`
 7. Add an e2e test in `tests/scaffold_e2e.rs`
 8. Document in the README runtimes list + `docs/migrate-from/aws-lambda.md`

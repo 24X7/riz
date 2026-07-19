@@ -1,7 +1,7 @@
 # VHS tape — recorded terminal demo for the riz landing page.
 #
 # Generates a GIF showing the riz dev loop in motion:
-#   1. `riz init typescript-http my-app` (scaffold)
+#   1. `riz new typescript-bun my-app` (scaffold)
 #   2. `cd my-app && riz run` (boots TUI)
 #   3. live latency percentiles update as traffic hits
 #   4. `riz mcp inspect` in a second pane shows the auto-registered tool
@@ -41,7 +41,7 @@ Set Theme {
 }
 
 # Frame 1 — scaffold
-Type "riz init typescript-http my-app"
+Type "riz new typescript-bun my-app"
 Sleep 600ms
 Enter
 Sleep 1500ms

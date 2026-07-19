@@ -67,10 +67,10 @@
     <!-- copy-all quickstart: the promised 3 lines, plus the agent hookup, in one block -->
     <div class="well" style="margin-bottom:3rem">
       <div class="well-hd"><b>adopt in 3 lines · agent hookup included</b>
-        <button onclick="navigator.clipboard.writeText('curl -fsSL https://riz.dev/install | sh\nriz init typescript-http my-app &amp;&amp; cd my-app\nriz --dev\n# second shell:\ncurl localhost:3000/hello\nclaude mcp add riz --transport http http://localhost:3000/_riz/mcp');this.textContent='copied';if(window.va)window.va('event',{name:'copy-quickstart'})">copy all</button>
+        <button onclick="navigator.clipboard.writeText('curl -fsSL https://riz.dev/install | sh\nriz new typescript-bun my-app &amp;&amp; cd my-app\nriz --dev\n# second shell:\ncurl localhost:3000/hello\nclaude mcp add riz --transport http http://localhost:3000/_riz/mcp');this.textContent='copied';if(window.va)window.va('event',{name:'copy-quickstart'})">copy all</button>
       </div>
       <pre>curl -fsSL https://riz.dev/install | sh
-riz init typescript-http my-app &amp;&amp; cd my-app
+riz new typescript-bun my-app &amp;&amp; cd my-app
 riz --dev
 <span class="c"># second shell:</span>
 curl localhost:3000/hello
@@ -99,11 +99,11 @@ $ cargo install --git https://github.com/24X7/riz
         </div>
         <div class="well scrolly-panel" data-panel="1">
           <div class="well-hd"><b><span class="step-tag">02</span> · shell</b></div>
-          <pre>$ riz init typescript-http my-app
+          <pre>$ riz new typescript-bun my-app
 $ cd my-app
 
 <span class="c"># see all templates:</span>
-$ riz init --list</pre>
+$ riz new --list</pre>
         </div>
         <div class="well scrolly-panel" data-panel="2">
           <div class="well-hd"><b><span class="step-tag">03</span> · shell</b></div>
@@ -149,13 +149,13 @@ $ riz mcp inspect
           <div class="sn"></div>
           <div>
             <h3>Scaffold a working project</h3>
-            <p>Official templates — <code>typescript-http</code>, <code>nodejs-http</code>, <code>python-http</code>,
-            <code>rust-http</code>, <code>go-http</code>, <code>wasm-http</code> (a wasm32-wasip1 handler in the WASI sandbox),
-            WebSocket variants for TS/Python/Rust, a full-stack
+            <p>Official templates, one per runtime — <code>typescript-bun</code>, <code>typescript-node</code>, <code>python</code>,
+            <code>rust</code>, <code>go</code>, <code>wasm-rust</code> (a wasm32-wasip1 handler on the riz-wasm shim;
+            the WebSocket showcase lives in <code>examples/chat</code>), plus a full-stack
             <code>typescript-todo</code> (API + React/Vite client), and <code>ai-chat</code>
             (React chat UI + a server-side agent loop through the LLM gateway — boots offline).
             Each boots first try. Templates always load from a git location, never embedded — so
-            <code>riz init owner/repo[/subdir]</code> works for your own too.</p>
+            <code>riz new owner/repo[/subdir]</code> works for your own too.</p>
           </div>
         </div>
         <div class="scrolly-step" data-step="2">

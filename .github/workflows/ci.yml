@@ -98,7 +98,7 @@ jobs:
       # itself. Both steps are in this gating job, so either failing fails CI.
       - name: cargo nextest run (unit + integration, excl. e2e fleet)
         # --no-fail-fast: surface every failure in one run, not just the first.
-        run: cargo nextest run --workspace --no-fail-fast -E 'not binary(e2e_smoke_all)'
+        run: cargo nextest run --workspace --no-fail-fast -E 'not binary(e2e_smoke_all) and not binary(template_smoke_all)'
 
       # The end-to-end smoke harness, isolated so the full example fleet has the
       # whole runner. Boots the real riz binary against examples/riz.all.toml and
@@ -106,6 +106,12 @@ jobs:
       # examples/smoke-all.sh + tests/e2e_smoke_all.rs).
       - name: cargo nextest run (e2e smoke — full example fleet, isolated)
         run: cargo nextest run --test e2e_smoke_all
+
+      # The scaffold-boot smoke: `riz new` every one of the six templates,
+      # build the compiled legs, boot riz run, assert an APIGW v2 roundtrip
+      # (tests/template_smoke_all.rs). Isolated for the same reason as above.
+      - name: cargo nextest run (template smoke — scaffold + boot all six, isolated)
+        run: cargo nextest run --test template_smoke_all
 
   # Supply-chain gate (deny.toml): RUSTSEC advisories, an SPDX license
   # allowlist, banned/wildcard crates, and registry provenance. Advisories are

@@ -71,7 +71,7 @@
         <h3>The full-stack AI app</h3>
         <p class="claim">A React chat UI, a Bun API running a real <b>server-side agent loop</b> (model → <code style="font-family:var(--mono);font-size:.85em">tool_calls</code> → execute → final answer) through the gateway, and the whole app exposed as an MCP tool — one binary, one origin.</p>
         <ul class="facts">
-          <li><code>riz init ai-chat && cd ai-chat && riz --dev</code></li>
+          <li><code>riz new ai-chat && cd ai-chat && riz --dev</code></li>
           <li>Boots <b>offline</b> first try — the mock provider drives the full tool loop</li>
           <li>Anthropic / OpenAI / Ollama = a riz.toml edit; the handler never changes</li>
           <li>Same loop, no code: an <code>[agent]</code> block makes the binary a delegable A2A agent</li>

@@ -4,6 +4,28 @@ All notable changes to riz are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and riz aims to follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- `riz init` is now `riz new`. The scaffold set is six per-runtime templates —
+  `typescript-bun`, `typescript-node` (real TypeScript on Node's native type
+  stripping, node >= 22.18), `python`, `rust`, `go`, `wasm-rust` (authored on
+  the new `riz-wasm` shim: you write a Lambda handler, the shim owns the wire)
+  — plus the `typescript-todo` / `ai-chat` example starters. The three
+  WebSocket templates are gone; `examples/chat` is the WS showcase.
+- WASM guests are authored as pure Lambda handlers on the `riz-wasm` crate;
+  hand-written stdin loops are banned from examples and templates by a
+  conformance test, and `tests/template_smoke_all.rs` scaffolds, builds, and
+  boots every template as an isolated smoke suite.
+
+### Fixed
+
+- Lambda proxy responses with `null` or missing `cookies` / `headers` /
+  `multiValueHeaders` / `isBase64Encoded` are now accepted exactly like real
+  AWS (stock `aws-lambda-go` handlers marshal nil slices as `null` and
+  previously drew a 502 "bad gateway").
+
 ## 0.2.2 - 2026-07-18
 
 ### Fixed

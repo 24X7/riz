@@ -403,7 +403,7 @@ fn print_next_steps(spec: &str, target: &std::path::Path) {
     let has = |rel: &str| target.join(rel).exists();
     let rust = has("Cargo.toml");
     let client = has("client/package.json"); // full-stack (Vite) layout
-    // A wasm scaffold builds for the wasm32-wasip1 target, not the host.
+                                             // A wasm scaffold builds for the wasm32-wasip1 target, not the host.
     let wasm = std::fs::read_to_string(target.join("riz.toml"))
         .map(|c| c.contains("runtime = \"wasm\""))
         .unwrap_or(false);

@@ -146,7 +146,10 @@ fn template_set_maps_one_to_one_onto_runtime_kinds() {
     // Every mapped template exists and declares the runtime it claims.
     for (variant, template) in MAP {
         let dir = root.join("templates").join(template);
-        assert!(dir.is_dir(), "templates/{template} missing for runtime {variant}");
+        assert!(
+            dir.is_dir(),
+            "templates/{template} missing for runtime {variant}"
+        );
         let cfg = fs::read_to_string(dir.join("riz.toml"))
             .unwrap_or_else(|e| panic!("templates/{template}/riz.toml unreadable: {e}"));
         assert!(
@@ -166,7 +169,10 @@ fn template_set_maps_one_to_one_onto_runtime_kinds() {
     on_disk.sort();
     let mut expected: Vec<String> = MAP.iter().map(|(_, t)| t.to_string()).collect();
     expected.sort();
-    assert_eq!(on_disk, expected, "templates/ dirs must match the RuntimeKind map");
+    assert_eq!(
+        on_disk, expected,
+        "templates/ dirs must match the RuntimeKind map"
+    );
 
     // … and BUILTINS advertises exactly the same six template rows.
     let mut advertised: Vec<String> = riz::template_fetch::BUILTINS
@@ -175,5 +181,8 @@ fn template_set_maps_one_to_one_onto_runtime_kinds() {
         .map(|(name, ..)| name.to_string())
         .collect();
     advertised.sort();
-    assert_eq!(advertised, expected, "riz new --list templates must match the map");
+    assert_eq!(
+        advertised, expected,
+        "riz new --list templates must match the map"
+    );
 }

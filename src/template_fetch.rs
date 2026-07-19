@@ -42,7 +42,12 @@ pub const BUILTINS: &[(&str, &str, &str, &str)] = &[
         "TypeScript on Node.js (native type stripping, node >= 22.18)",
     ),
     ("python", "templates/python", "HTTP", "Python"),
-    ("rust", "templates/rust", "HTTP", "Rust (official lambda_runtime)"),
+    (
+        "rust",
+        "templates/rust",
+        "HTTP",
+        "Rust (official lambda_runtime)",
+    ),
     ("go", "templates/go", "HTTP", "Go (official aws-lambda-go)"),
     (
         "wasm-rust",
