@@ -40,7 +40,7 @@ fn rust_examples_use_the_official_runtime_not_a_riz_helper() {
     // riz speaks the AWS Lambda Runtime API, so a Rust handler uses the OFFICIAL
     // `lambda_runtime` crate with no riz library — the same binary runs on AWS.
     for ex in ["echo-rust", "chat-rust"] {
-        let cargo = std::fs::read_to_string(format!("examples/lambdas/{ex}/Cargo.toml"))
+        let cargo = std::fs::read_to_string(format!("tests/fixtures/parity/{ex}/Cargo.toml"))
             .unwrap_or_else(|e| panic!("read {ex} Cargo.toml: {e}"));
         assert!(
             cargo.contains("lambda_runtime"),
@@ -56,16 +56,16 @@ fn rust_examples_use_the_official_runtime_not_a_riz_helper() {
 #[test]
 fn rust_echo_example_exists_and_builds() {
     assert!(
-        std::path::Path::new("examples/lambdas/echo-rust/src/main.rs").exists()
-            || std::path::Path::new("examples/lambdas/echo-rust/main.rs").exists(),
-        "missing examples/lambdas/echo-rust/src/main.rs — Wave 6 Rust example not shipped"
+        std::path::Path::new("tests/fixtures/parity/echo-rust/src/main.rs").exists()
+            || std::path::Path::new("tests/fixtures/parity/echo-rust/main.rs").exists(),
+        "missing tests/fixtures/parity/echo-rust/src/main.rs — Wave 6 Rust example not shipped"
     );
 }
 
 #[test]
 fn rust_integration_test_gated_on_cargo_build() {
     assert!(
-        std::path::Path::new("examples/lambdas/echo-rust/Cargo.toml").exists(),
-        "missing examples/lambdas/echo-rust/Cargo.toml — Wave 6 Rust example not shipped"
+        std::path::Path::new("tests/fixtures/parity/echo-rust/Cargo.toml").exists(),
+        "missing tests/fixtures/parity/echo-rust/Cargo.toml — Wave 6 Rust example not shipped"
     );
 }

@@ -153,7 +153,7 @@ fn doctor_flags_port_in_use_by_non_riz() {
     let cfg = tmp.path().join("riz.toml");
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let handler = workspace
-        .join("examples/lambdas/ping/index.handler")
+        .join("tests/fixtures/ping/index.handler")
         .display()
         .to_string();
     std::fs::write(

@@ -124,16 +124,17 @@ ensure_artifacts() {
     note "building echo-rust + chat-rust (release)"
     ( cd "$ROOT" && cargo build --release -p echo-rust -p chat-rust ) || fatal "rust example build failed" 3
   fi
-  if [ ! -x "$ROOT/examples/lambdas/echo-go/echo-go" ]; then
+  if [ ! -x "$ROOT/tests/fixtures/parity/echo-go/echo-go" ]; then
     note "building echo-go (stock aws-lambda-go)"
-    ( cd "$ROOT/examples/lambdas/echo-go" && go build -o echo-go . ) || fatal "echo-go build failed" 3
+    ( cd "$ROOT/tests/fixtures/parity/echo-go" && go build -o echo-go . ) || fatal "echo-go build failed" 3
   fi
-  local w
-  for w in echo-wasm orders-wasm; do
-    if [ ! -f "$ROOT/examples/lambdas/$w/target/wasm32-wasip1/release/$w.wasm" ]; then
+  local wdir
+  for wdir in tests/fixtures/parity/echo-wasm examples/lambdas/orders-wasm; do
+    local w="${wdir##*/}"
+    if [ ! -f "$ROOT/$wdir/target/wasm32-wasip1/release/$w.wasm" ]; then
       note "building $w (wasm32-wasip1)"
       ( cd "$ROOT" && cargo build --release --target wasm32-wasip1 \
-          --manifest-path "examples/lambdas/$w/Cargo.toml" ) || fatal "$w wasm build failed" 3
+          --manifest-path "$wdir/Cargo.toml" ) || fatal "$w wasm build failed" 3
     fi
   done
   note "all artifacts present"

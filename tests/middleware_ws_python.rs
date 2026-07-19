@@ -32,7 +32,7 @@ async fn python_ws_echo_roundtrip() {
     }
     let handler_path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/examples/lambdas/chat-python/main.lambda_handler"
+        "/tests/fixtures/parity/chat-python/main.lambda_handler"
     );
 
     let config_toml = format!(

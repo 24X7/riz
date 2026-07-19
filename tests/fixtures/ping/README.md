@@ -11,7 +11,7 @@ the "hello world" when wiring up a new config or checking the server is live.
 ```toml
 [function.ping]
 runtime = "bun"
-handler = "./examples/lambdas/ping/index.handler"
+handler = "./tests/fixtures/ping/index.handler"
 # No routes block → implicit default is `ANY /ping`.
 ```
 

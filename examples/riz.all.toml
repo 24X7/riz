@@ -74,7 +74,7 @@ kind = "ollama"
 
 [function.ping]
 runtime = "bun"
-handler = "./examples/lambdas/ping/index.handler"
+handler = "./tests/fixtures/ping/index.handler"
 timeout_ms = 1000
 concurrency = 1
 
@@ -114,7 +114,7 @@ method = "ANY"
 
 [function.echo-bun]
 runtime = "bun"
-handler = "./examples/lambdas/echo-bun/index.handler"
+handler = "./tests/fixtures/parity/echo-bun/index.handler"
 timeout_ms = 5000
 concurrency = 1
 # Stage variables — surfaced on the event as `stageVariables`, mirroring AWS
@@ -130,7 +130,7 @@ method = "ANY"
 
 [function.echo-node]
 runtime = "node"
-handler = "./examples/lambdas/echo-node/index.handler"
+handler = "./tests/fixtures/parity/echo-node/index.handler"
 timeout_ms = 5000
 concurrency = 1
 [[function.echo-node.routes]]
@@ -141,7 +141,7 @@ method = "ANY"
 
 [function.echo-python]
 runtime = "python"
-handler = "./examples/lambdas/echo-python/main.lambda_handler"
+handler = "./tests/fixtures/parity/echo-python/main.lambda_handler"
 timeout_ms = 5000
 concurrency = 1
 # On-box safety caps applied to this handler's child process:
@@ -179,11 +179,11 @@ method = "ANY"
 # ─────────────── Go HTTP ───────────────
 # A STOCK aws-lambda-go (`lambda.Start`) binary — no riz library. The same
 # binary runs unmodified on AWS Lambda and on riz, because riz speaks the AWS
-# Lambda Runtime API. Build: cd examples/lambdas/echo-go && go build -o echo-go .
+# Lambda Runtime API. Build: cd tests/fixtures/parity/echo-go && go build -o echo-go .
 
 [function.echo-go]
 runtime = "go"
-handler = "./examples/lambdas/echo-go/echo-go"
+handler = "./tests/fixtures/parity/echo-go/echo-go"
 timeout_ms = 5000
 concurrency = 1
 [[function.echo-go.routes]]
@@ -194,7 +194,7 @@ method = "ANY"
 # A capability-sandboxed .wasm handler — same Lambda envelope as every other
 # runtime, run by `riz __wasm-host` inside wasmtime's WASI sandbox. Deny-by-
 # default: stdio only, no filesystem, no network, no host env. stage_variables
-# become the guest's environment. Build: cd examples/lambdas/echo-wasm &&
+# become the guest's environment. Build: cd tests/fixtures/parity/echo-wasm &&
 # cargo build --release --target wasm32-wasip1
 #
 # allowed_paths would grant WASI preopens to the guest — but it ALSO drives the
@@ -204,7 +204,7 @@ method = "ANY"
 # runs fully sandboxed (the strongest demo). See riz-bug note in CONTRIBUTING.
 [function.echo-wasm]
 runtime = "wasm"
-handler = "./examples/lambdas/echo-wasm/target/wasm32-wasip1/release/echo-wasm.wasm"
+handler = "./tests/fixtures/parity/echo-wasm/target/wasm32-wasip1/release/echo-wasm.wasm"
 timeout_ms = 5000
 concurrency = 1
 [function.echo-wasm.stage_variables]
@@ -286,7 +286,7 @@ method = "ANY"
 [function.chat-python]
 protocol = "websocket"
 runtime = "python"
-handler = "./examples/lambdas/chat-python/main.lambda_handler"
+handler = "./tests/fixtures/parity/chat-python/main.lambda_handler"
 timeout_ms = 5000
 concurrency = 1
 [[function.chat-python.routes]]

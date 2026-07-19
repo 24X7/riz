@@ -15,7 +15,7 @@ management endpoint.
 [function.chat-python]
 protocol = "websocket"
 runtime = "python"
-handler = "./examples/lambdas/chat-python/main.lambda_handler"
+handler = "./tests/fixtures/parity/chat-python/main.lambda_handler"
 [[function.chat-python.routes]]
 path = "/chat-python"
 method = "ANY"

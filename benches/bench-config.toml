@@ -14,6 +14,6 @@ enabled = false
 
 [function.ping]
 runtime = "bun"
-handler = "./examples/lambdas/ping/index.handler"
+handler = "./tests/fixtures/ping/index.handler"
 timeout_ms = 1000
 concurrency = 20

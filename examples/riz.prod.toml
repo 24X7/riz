@@ -49,7 +49,7 @@ region = "us-east-1"
 
 [function.ping]
 runtime = "bun"
-handler = "./examples/lambdas/ping/index.ts"
+handler = "./tests/fixtures/ping/index.ts"
 timeout_ms = 5000
 concurrency = 2
 

@@ -9,7 +9,7 @@ description = "WASM member of the echo parity set — compiled to wasm32-wasip1,
 
 [dependencies]
 serde_json = "1"
-riz-wasm = { path = "../../../crates/riz-wasm" }
+riz-wasm = { path = "../../../../crates/riz-wasm" }
 
 [profile.release]
 opt-level = "s"

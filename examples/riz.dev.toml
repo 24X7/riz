@@ -14,7 +14,7 @@ max_size_mb = 128
 
 [function.ping]
 runtime = "bun"
-handler = "./examples/lambdas/ping/index.handler"
+handler = "./tests/fixtures/ping/index.handler"
 timeout_ms = 1000
 concurrency = 1
 # No routes block → implicit default: ANY /ping
@@ -41,7 +41,7 @@ method = "POST"
 
 [function.echo-python]
 runtime = "python"
-handler = "./examples/lambdas/echo-python/main.lambda_handler"
+handler = "./tests/fixtures/parity/echo-python/main.lambda_handler"
 timeout_ms = 5000
 concurrency = 1
 

@@ -13,7 +13,7 @@ echoes.
 ## Build & wiring
 
 ```bash
-cargo build --release --manifest-path examples/lambdas/echo-rust/Cargo.toml
+cargo build --release --manifest-path tests/fixtures/parity/echo-rust/Cargo.toml
 # → target/release/echo-rust
 ```
 

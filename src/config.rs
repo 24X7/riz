@@ -801,7 +801,7 @@ pub enum RuntimeKind {
     Node,
     /// A pre-compiled Go binary using the official `aws-lambda-go` SDK against
     /// riz's per-worker AWS Lambda Runtime API (`src/process/runtime_api.rs`;
-    /// see `examples/lambdas/echo-go`). Like Rust, the handler IS the
+    /// see `tests/fixtures/parity/echo-go`). Like Rust, the handler IS the
     /// executable — there is no module/export split. Runs via the same
     /// `static_binary` spawner as Rust.
     Go,

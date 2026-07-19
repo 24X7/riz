@@ -14,7 +14,7 @@ Reproducible perf snapshot. Numbers below come from `wrk` against a release-mode
    p99 = 845 µs   ← sub-millisecond at the tail
 ```
 
-Tested on: Apple M-series, 1 host process + 20 Bun worker processes, localhost loopback. The handler is `examples/lambdas/ping/index.handler` — returns `{"status":"ok","ts":<unix>}`.
+Tested on: Apple M-series, 1 host process + 20 Bun worker processes, localhost loopback. The handler is `tests/fixtures/ping/index.handler` — returns `{"status":"ok","ts":<unix>}`.
 
 ## Reproducing
 

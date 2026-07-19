@@ -38,7 +38,7 @@ fn ping_config() -> FunctionConfig {
         protocol: Default::default(),
         handler: std::path::PathBuf::from(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/examples/lambdas/ping/index.handler"
+            "/tests/fixtures/ping/index.handler"
         )),
         timeout_ms: 1000,
         integration_timeout_ms: 30000,

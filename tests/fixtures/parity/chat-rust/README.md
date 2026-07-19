@@ -12,7 +12,7 @@ behaviour as the Bun `chat` example.
 ## Build & wiring
 
 ```bash
-cargo build --release --manifest-path examples/lambdas/chat-rust/Cargo.toml
+cargo build --release --manifest-path tests/fixtures/parity/chat-rust/Cargo.toml
 # → target/release/chat-rust
 ```
 
