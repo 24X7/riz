@@ -61,10 +61,12 @@ export const handler = async (event: any) => {
       if (!id) return badRequest("id path parameter required");
       const account = store.get(id);
       if (!account) return notFound(id);
+      // servedAt varies per handler run, so a cache HIT (which replays the
+      // stored response) is provable: identical servedAt = served from cache.
       return {
         statusCode: 200,
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(account),
+        body: JSON.stringify({ ...account, servedAt: Date.now() }),
       };
     }
 

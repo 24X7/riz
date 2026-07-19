@@ -74,7 +74,7 @@ Routes in `riz.dev.toml`:
 
 ```bash
 curl http://localhost:3000/ping
-curl 'http://localhost:3000/accounts/42?include=profile'
+curl -X POST -H 'content-type: application/json' -d '{"name":"alice"}' http://localhost:3000/accounts
 curl -X POST -H 'content-type: application/json' \
   -d '{"type":"signup","userId":"abc123"}' http://localhost:3000/events
 ```

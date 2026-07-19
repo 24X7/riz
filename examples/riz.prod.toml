@@ -53,22 +53,6 @@ handler = "./tests/fixtures/ping/index.ts"
 timeout_ms = 5000
 concurrency = 2
 
-[function.accounts]
-runtime = "bun"
-handler = "./examples/lambdas/accounts/index.ts"
-cache_ttl_secs = 30
-timeout_ms = 5000
-concurrency = 2
-
-[[function.accounts.routes]]
-path = "/accounts/{id}"
-method = "GET"
-
-# MCP: {id} is typed + required automatically from the route template; the
-# description is what agents read on tools/list.
-[function.accounts.mcp]
-description = "Fetch an account by id."
-
 [function.events]
 runtime = "bun"
 handler = "./examples/lambdas/events/index.ts"
@@ -78,3 +62,8 @@ concurrency = 2
 [[function.events.routes]]
 path = "/events"
 method = "POST"
+
+# MCP: body/route params are typed automatically; the description is what
+# agents read on tools/list.
+[function.events.mcp]
+description = "Record an event payload (JSON body) and echo the received envelope."

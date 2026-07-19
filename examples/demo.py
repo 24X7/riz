@@ -694,32 +694,32 @@ def runtimes_section() -> None:
 
 def http_shapes_section() -> None:
     banner("HTTP request shapes")
-    req("GET /accounts/42?include=profile   (path param {id}=42 + query)")
-    out(json.dumps(getj("/accounts/42?include=profile"), separators=(",", ":")))
-
     req("POST /events   (JSON body)")
     out(json.dumps(post_jsonj("/events", {"event": "login", "user": "alice"}), separators=(",", ":")))
 
-    sub("crud-accounts — one handler, five verbs:")
+    sub("crud-accounts — one handler, five verbs (path param {id} routing):")
     created = post_jsonj("/accounts", {"name": "alice", "plan": "pro"})
-    out("POST   /accounts → " + json.dumps({k: created.get(k) for k in ("id", "name", "plan")}, separators=(",", ":")))
-    out(f"GET    /crud/1   → HTTP {get('/crud/1')[0]}")
-    out(f"DELETE /crud/1   → HTTP {http('DELETE', '/crud/1')[0]}")
+    cid = created.get("id", "")
+    out("POST   /accounts        → " + json.dumps({k: created.get(k) for k in ("id", "name", "plan")}, separators=(",", ":")))
+    out(f"GET    /accounts/{cid}  → HTTP {get(f'/accounts/{cid}')[0]}   (pathParameters.id = {cid!r})")
+    out(f"GET    /accounts/999999 → HTTP {get('/accounts/999999')[0]}   (missing id → 404)")
+    out(f"DELETE /accounts/{cid}  → HTTP {http('DELETE', f'/accounts/{cid}')[0]}")
     pause()
 
 
 def caching_section() -> None:
     banner("Response caching — GET /accounts/{id} cached 30s, then invalidated")
-    sub("Handler stamps a 'ts'. A cache HIT replays it; invalidate evicts → fresh ts.")
-    ts1 = getj("/accounts/7")["ts"]
-    ts2 = getj("/accounts/7")["ts"]
-    out(f"ts #1 {ts1}   ·   ts #2 {ts2}")
-    ok("identical → served from cache") if ts1 == ts2 else warn("differ")
+    sub("Handler stamps 'servedAt'. A cache HIT replays it; invalidate evicts → fresh stamp.")
+    cid = post_jsonj("/accounts", {"name": "cache-demo"}).get("id", "")
+    s1 = getj(f"/accounts/{cid}")["servedAt"]
+    s2 = getj(f"/accounts/{cid}")["servedAt"]
+    out(f"servedAt #1 {s1}   ·   servedAt #2 {s2}")
+    ok("identical → served from cache") if s1 == s2 else warn("differ")
     post_json("/cache/invalidate", {"prefix": "GET:/accounts/"})
-    time.sleep(0.05)  # let the ms clock tick so a re-run yields a distinct ts
-    ts3 = getj("/accounts/7")["ts"]
-    out(f"ts #3 {ts3}   (after POST /cache/invalidate)")
-    ok("changed → cache evicted, handler re-ran") if ts3 != ts1 else warn("unchanged")
+    time.sleep(0.05)  # let the ms clock tick so the re-run yields a distinct stamp
+    s3 = getj(f"/accounts/{cid}")["servedAt"]
+    out(f"servedAt #3 {s3}   (after POST /cache/invalidate)")
+    ok("changed → cache evicted, handler re-ran") if s3 != s1 else warn("unchanged")
     pause()
 
 

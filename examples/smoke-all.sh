@@ -176,15 +176,14 @@ run_checks() {
 
   section "Bun HTTP"
   check_http "ping → 200 {status:ok}"                 GET  "/ping"                            200 '"status":"ok"'
-  check_http "accounts GET /accounts/{id}"            GET  "/accounts/42?include=profile"     200 '"include":"profile"'
   cache_check
   check_http "events POST → echoes payload"           POST "/events"                          200 '"received"'   -H "$CT" -d '{"event":"login","user":"alice"}'
   check_http "events POST (no body) → 400"            POST "/events"                          400 '"error"'
   check_http "crud POST /accounts → 201"              POST "/accounts"                        201 '"createdAt"'  -H "$CT" -d '{"name":"alice","plan":"pro"}'
-  check_http "crud GET missing → 404"                 GET  "/crud/999999"                     404 'not found'
-  check_http "crud PUT missing → 404"                 PUT  "/crud/999999"                     404 'not found'    -H "$CT" -d '{"name":"x"}'
-  check_http "crud PATCH missing → 404"               PATCH "/crud/999999"                    404 'not found'    -H "$CT" -d '{"name":"x"}'
-  check_http "crud DELETE missing → 404"              DELETE "/crud/999999"                   404 'not found'
+  check_http "crud GET missing → 404"                 GET  "/accounts/999999"                     404 'not found'
+  check_http "crud PUT missing → 404"                 PUT  "/accounts/999999"                     404 'not found'    -H "$CT" -d '{"name":"x"}'
+  check_http "crud PATCH missing → 404"               PATCH "/accounts/999999"                    404 'not found'    -H "$CT" -d '{"name":"x"}'
+  check_http "crud DELETE missing → 404"              DELETE "/accounts/999999"                   404 'not found'
   # functionName is asserted as the quoted value token so the check is agnostic
   # to JSON spacing (Python's json.dumps emits "k": "v", others are compact).
   check_http "echo-bun (functionName)"                GET  "/echo-bun?name=alice"             200 '"echo-bun"'
@@ -230,13 +229,16 @@ run_checks() {
 }
 
 cache_check() {
-  local name="accounts response cache replays ts within TTL" j1 j2 ts1 ts2
-  j1="$(curl -sS -m 15 "$BASE/accounts/77?include=profile")" || { bad "$name" "curl #1 failed"; return; }
-  j2="$(curl -sS -m 15 "$BASE/accounts/77?include=profile")" || { bad "$name" "curl #2 failed"; return; }
-  ts1="$(printf '%s' "$j1" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("ts",""))' 2>/dev/null)"
-  ts2="$(printf '%s' "$j2" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("ts",""))' 2>/dev/null)"
-  if [ -n "$ts1" ] && [ "$ts1" = "$ts2" ]; then ok "$name (ts=$ts1 stable)"
-  else bad "$name" "ts differed → cache miss: '$ts1' vs '$ts2'"; fi
+  local name="crud response cache replays servedAt within TTL" cid j1 j2 s1 s2
+  cid="$(curl -sS -m 15 -X POST -H "$CT" -d '{"name":"cache-probe"}' "$BASE/accounts" \
+      | python3 -c 'import sys,json;print(json.load(sys.stdin).get("id",""))' 2>/dev/null)"
+  [ -n "$cid" ] || { bad "$name" "create failed"; return; }
+  j1="$(curl -sS -m 15 "$BASE/accounts/$cid")" || { bad "$name" "curl #1 failed"; return; }
+  j2="$(curl -sS -m 15 "$BASE/accounts/$cid")" || { bad "$name" "curl #2 failed"; return; }
+  s1="$(printf '%s' "$j1" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("servedAt",""))' 2>/dev/null)"
+  s2="$(printf '%s' "$j2" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("servedAt",""))' 2>/dev/null)"
+  if [ -n "$s1" ] && [ "$s1" = "$s2" ]; then ok "$name (servedAt=$s1 stable)"
+  else bad "$name" "servedAt differed → cache miss: '$s1' vs '$s2'"; fi
 }
 
 cors_check() {
@@ -274,7 +276,7 @@ try:
 except Exception as e:
     print("response is not JSON: %s" % e); sys.exit(1)
 fns = {f["name"]: f for f in d.get("functions", [])}
-expected = ["ping","accounts","events","crud-accounts","echo-bun","echo-node",
+expected = ["ping","events","crud-accounts","echo-bun","echo-node",
             "echo-python","echo-rust","echo-go","echo-wasm","orders-wasm",
             "protected","forbidden","chat","chat-python","chat-rust"]
 missing = [n for n in expected if n not in fns]
