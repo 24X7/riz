@@ -78,19 +78,6 @@ handler = "./tests/fixtures/ping/index.handler"
 timeout_ms = 1000
 concurrency = 1
 
-[function.accounts]
-runtime = "bun"
-handler = "./examples/lambdas/accounts/index.handler"
-timeout_ms = 1000
-concurrency = 1
-# Response caching: GET /accounts/{id} is cached for 30s. The handler stamps
-# a `ts` into the body, so a cache HIT replays the same ts; POST /cache/invalidate
-# with prefix "GET:/accounts/" evicts it and the next GET stamps a fresh ts.
-cache_ttl_secs = 30
-[[function.accounts.routes]]
-path = "/accounts/{id}"
-method = "GET"
-
 [function.events]
 runtime = "bun"
 handler = "./examples/lambdas/events/index.handler"
@@ -105,11 +92,15 @@ runtime = "bun"
 handler = "./examples/lambdas/crud-accounts/index.handler"
 timeout_ms = 5000
 concurrency = 1
+# Response caching: GET /accounts/{id} is cached for 30s. The handler stamps
+# `servedAt` into the body, so a cache HIT replays the same servedAt; POST
+# /cache/invalidate with prefix "GET:/accounts/" evicts it -> fresh servedAt.
+cache_ttl_secs = 30
 [[function.crud-accounts.routes]]
 path = "/accounts"
 method = "ANY"
 [[function.crud-accounts.routes]]
-path = "/crud/{id}"   # avoid collision with `accounts` above
+path = "/accounts/{id}"
 method = "ANY"
 
 [function.echo-bun]
