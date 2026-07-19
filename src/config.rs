@@ -799,10 +799,11 @@ pub enum RuntimeKind {
     Rust,
     Python,
     Node,
-    /// A pre-compiled Go binary speaking the line-JSON stdin/stdout protocol
-    /// (see `examples/lambdas/echo-go`). Like Rust, the handler IS the executable
-    /// — there is no module/export split. Runs via the same `static_binary`
-    /// spawner as Rust.
+    /// A pre-compiled Go binary using the official `aws-lambda-go` SDK against
+    /// riz's per-worker AWS Lambda Runtime API (`src/process/runtime_api.rs`;
+    /// see `examples/lambdas/echo-go`). Like Rust, the handler IS the
+    /// executable — there is no module/export split. Runs via the same
+    /// `static_binary` spawner as Rust.
     Go,
     /// A `wasm32-wasip1` module run under wasmtime's WASI capability sandbox
     /// (via the `riz __wasm-host` subprocess). The handler path points at a

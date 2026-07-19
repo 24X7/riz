@@ -7,7 +7,7 @@ Boots ONE riz instance from examples/riz.all.toml and demonstrates, live:
   • MCP server (2025-11-25)  raw JSON-RPC wire test + built-in inspector
   • LLM gateway (live)       OpenAI-compatible /_riz/v1 → a REAL local model via
                              Ollama (llama3.2:1b), plus the mock provider
-  • All FIVE runtimes        Bun, Node.js, Python, Rust, WASM — one envelope
+  • Five of six runtimes     Bun, Node.js, Python, Rust, WASM — one envelope (Go: examples/lambdas/echo-go)
   • Capability-sandboxed WASM  a wasm32-wasip1 handler run under wasmtime
   • HTTP shapes              path params, query string, JSON body, every verb (CRUD)
   • Response caching         a cache HIT replays the response; invalidate evicts
@@ -671,7 +671,7 @@ def gateway_section() -> None:
 
 
 def runtimes_section() -> None:
-    banner("Five runtimes — one Lambda envelope, identical responses")
+    banner("Five of the six runtimes — one Lambda envelope, identical responses")
     sub("The same GET hits five handlers in five languages; each returns the same shape.")
 
     def erow(name: str, runtime: str, path: str, extra=None):

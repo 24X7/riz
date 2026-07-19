@@ -68,7 +68,7 @@ The highest-leverage capability in the method. A `/loop` session works like this
 3. It builds the item end-to-end: implementation, tests (red → green), integration, commit.
 4. It repeats. No prompt between iterations.
 
-This is how features actually land. Five runtimes, the MCP server, the LLM gateway, the WASM
+This is how features actually land. Six runtimes, the MCP server, the LLM gateway, the WASM
 sandbox, the TUI, 778 tests across 47 integration files — all of it fell out of loop sessions.
 The commit log reflects this cadence: `feat(llm): LLM gateway core`, `feat(wasm): capability-
 sandboxed WASM runtime`, `feat(llm): SSE streaming`, `feat(llm): budget caps + cost telemetry` —

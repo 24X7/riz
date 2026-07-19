@@ -29,7 +29,7 @@
       "install": "curl -fsSL https://riz.dev/install | sh",
       "connect": "claude mcp add riz-local --transport http http://localhost:3000/_riz/mcp",
       "capabilities": [
-        "Five runtimes in one binary: Bun, Node.js, Python, Rust, capability-sandboxed WASM (WASI deny-by-default).",
+        "Six runtimes in one binary: Bun, Node.js, Python, Rust, Go, capability-sandboxed WASM (WASI deny-by-default).",
         "Every riz.toml function auto-registers as a typed MCP tool at /_riz/mcp (zero SDK glue).",
         "Built-in OpenAI-compatible LLM gateway on the same binary.",
         "JWT / JWKS authentication.",

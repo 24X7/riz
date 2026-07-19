@@ -232,8 +232,11 @@ src/
   runtime/             # the trait surface that adapters implement
   process/             # process pool, liveness watcher, safety primitives
     bun.rs             # Bun adapter (spawns bun + assets/bun-adapter.mjs)
+    node.rs            # Node adapter (spawns node + assets/node-adapter.mjs)
     python.rs          # Python adapter (spawns python3 + assets/python-adapter.py)
-    rust.rs            # Rust adapter (spawns user's pre-built binary)
+    static_binary.rs   # Rust/Go adapter (spawns user's pre-built binary)
+    runtime_api.rs     # per-worker AWS Lambda Runtime API those binaries speak
+    wasm.rs            # WASM adapter (`riz __wasm-host` under wasmtime)
     safety.rs          # Landlock + rlimits + PR_SET_NO_NEW_PRIVS (pre_exec)
   ws/                  # WebSocket upgrade + connection store + @connections API
   auth/                # bearer-token + JWT + REQUEST authorizer
@@ -249,15 +252,14 @@ src/
 
 assets/                # files embedded into the binary via include_str!
   bun-adapter.mjs      # bun side of the JSON-over-stdin protocol
+  node-adapter.mjs     # node side
   python-adapter.py    # python side
-  templates/           # 7 `riz init <template>` scaffolds (4 HTTP + 3 WebSocket)
+
+templates/             # 9 `riz init <template>` scaffolds, git-fetched (5 HTTP + 3 WebSocket + 1 WASM)
 
 examples/
   riz.dev.toml         # dev config for the bundled example fleet
-  lambdas/             # 13 example handlers (HTTP + WebSocket × Bun/Python/Rust)
-
-crates/
-  riz-rust-runtime/    # public Rust crate user-facing handlers depend on
+  lambdas/             # 17 example handlers across all six runtimes
 
 tests/                 # integration tests (one file per concern)
   cli_*.rs             # CLI subcommand tests

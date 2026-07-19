@@ -1,7 +1,8 @@
 # chat-rust — WebSocket lifecycle + @connections push (Rust)
 
 The Rust member of the WebSocket parity set (`chat`, `chat-python`,
-`chat-rust`). Built on `riz-rust-runtime`, compiled to a static binary. Same
+`chat-rust`). Built on the official `lambda_runtime` crate, compiled to a
+static binary riz drives through its per-worker AWS Lambda Runtime API. Same
 behaviour as the Bun `chat` example.
 
 **Capability:** WebSocket handler in Rust using the typed

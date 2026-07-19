@@ -191,6 +191,12 @@ a DSN.
 
 ## Phasing
 
+> **Phasing superseded (2026-07-19):** the threat model, dispatcher ordering and
+> closed error set above carry forward unchanged, but the v1.1 KV / v2 S3+Dynamo /
+> v2 http_fetch / v3 WIT phasing below is replaced by the capability suite + PR
+> sequence in `2026-07-19-lambda-shape-purity-and-wasm-capability-suite-design.html`.
+> KV and S3 verbs are no longer planned for this cycle.
+
 Marked clearly as **roadmap**. Nothing below is shipped.
 
 - **v1 — Postgres-wire broker.** Implement the dispatcher + one verb,

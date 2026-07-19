@@ -105,6 +105,11 @@ Each entry: **Industry context** · **Why we care** · **Why you care** · **Acc
 
 ### 2. WASM standalone runtime (`runtime = "wasm"`) ✅ SHIPPED
 
+> **Superseded (2026-07-19):** the stdin-authored guest model described here is
+> replaced by the riz-wasm shim + RWP wire in
+> `docs/superpowers/specs/2026-07-19-lambda-shape-purity-and-wasm-capability-suite-design.html`;
+> the wasm template lands via that spec's PR2.
+
 **Shipped.** `runtime = "wasm"` runs a `wasm32-wasip1` module under wasmtime 45's
 WASI sandbox via the `riz __wasm-host` subprocess (`src/process/wasm.rs`). Deny-
 by-default: stdio only; `allowed_paths` → WASI preopens, `stage_variables` →
