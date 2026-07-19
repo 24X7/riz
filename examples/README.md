@@ -1,8 +1,8 @@
 # riz Examples
 
-Thirteen example handlers spanning all four runtimes (Bun, Node.js, Python,
-Rust), both protocols (HTTP, WebSocket), and the authorizer surface. Each
-example has its own README under `examples/lambdas/<name>/`.
+Seventeen example handlers spanning all six runtimes (Bun, Node.js, Python,
+Rust, Go, WASM), both protocols (HTTP, WebSocket), and the authorizer surface.
+Each example has its own README under `examples/lambdas/<name>/`.
 
 ## Prerequisites
 

@@ -1,9 +1,10 @@
 # echo-rust — full event + context surface, runtime parity (Rust)
 
 The Rust member of the echo parity set (`echo-bun`, `echo-python`,
-`echo-rust`). Built on the `riz-rust-runtime` crate, it compiles to a static
-binary that riz drives over stdin/stdout. `tests/runtime_parity_echo.rs`
-asserts its response matches the Bun and Python echoes.
+`echo-rust`). Built on the official `lambda_runtime` crate, it compiles to a
+static binary that riz drives through its per-worker AWS Lambda Runtime API.
+`tests/runtime_parity_echo.rs` asserts its response matches the Bun and Python
+echoes.
 
 **Capability:** complete event surface + Lambda context using typed
 `aws_lambda_events` structs. Honors `?status=NNN`.

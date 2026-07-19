@@ -63,5 +63,6 @@ cargo nextest run --test e2e_smoke_all   # isolated: boots the example fleet
   (module/export vs. static-binary vs. wasm) — update the count and enumerated
   list everywhere it appears in prose, in lockstep: `Cargo.toml` `description`,
   `README.md`, this file's intro line, `registries/README.md`, `CONTRIBUTING.md`,
-  `docs/CAPABILITY-CARD.md`, and `web/`. Keep the wording greppable
+  `docs/CAPABILITY-CARD.md`, `server.json`, `examples/README.md`,
+  `examples/demo.py`, `templates/`, and `web/`. Keep the wording greppable
   (`rg -n "runtimes"`) so the set never drifts out of sync again.

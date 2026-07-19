@@ -238,7 +238,11 @@ fn spec_exists_for_plan(plan_name: &str) -> bool {
     for entry in rd.flatten() {
         let spec_name = entry.file_name();
         let spec_str = spec_name.to_string_lossy();
-        if spec_str.starts_with(date_prefix) && spec_str.ends_with(".md") {
+        // Specs are HTML documents by convention (2026-07-19); older specs
+        // remain markdown — both count as coverage.
+        if spec_str.starts_with(date_prefix)
+            && (spec_str.ends_with(".md") || spec_str.ends_with(".html"))
+        {
             return true;
         }
     }
