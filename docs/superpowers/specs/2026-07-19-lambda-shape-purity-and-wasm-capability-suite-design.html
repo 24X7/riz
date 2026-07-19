@@ -1,0 +1,1145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>riz — Lambda-shape purity &amp; WASM capability suite spec</title>
+<style>
+  :root{
+    --bg:#0A0A0B; --bg1:#111114; --bg2:#17171C; --bg3:#1d1d23;
+    --line:#2A2A31; --line2:#3A3A44;
+    --hi:#F3F3EE; --tx:#B7B7B2; --dim:#807F7C;
+    --acid:#CFFF04; --acid-dim:#A9CE12;
+    --ok:#7CE38B; --okbg:rgba(124,227,139,.12); --okln:rgba(124,227,139,.32);
+    --warn:#F5C451; --warnbg:rgba(245,196,81,.12); --warnln:rgba(245,196,81,.34);
+    --gap:#F07167; --gapbg:rgba(240,113,103,.12); --gapln:rgba(240,113,103,.34);
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --wrap:74ch;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);font-family:var(--sans);
+    font-size:16px;line-height:1.62;-webkit-font-smoothing:antialiased;
+    background-image:
+      radial-gradient(1100px 600px at 78% -12%, rgba(207,255,4,.05), transparent 60%),
+      linear-gradient(180deg,#0c0c0e,var(--bg) 320px);}
+  .page{max-width:980px;margin:0 auto;padding:0 24px 120px}
+  .col{max-width:var(--wrap)}
+
+  a{color:var(--hi);text-decoration:none;border-bottom:1px solid var(--line2)}
+  a:hover{border-color:var(--acid);color:#fff}
+  a:focus-visible{outline:2px solid var(--acid);outline-offset:3px;border-radius:2px}
+  code{font-family:var(--mono);font-size:.86em;color:#e7e7e2;
+    background:var(--bg2);border:1px solid var(--line);border-radius:5px;padding:.08em .38em}
+  pre{background:var(--bg1);border:1px solid var(--line);border-radius:12px;
+    padding:18px 20px;overflow-x:auto;font-size:.84rem;line-height:1.6}
+  pre code{background:transparent;border:none;padding:0;font-size:1em;color:#DADAD4}
+  pre .cmt{color:var(--dim)} pre .acc{color:var(--acid)} pre .str{color:var(--ok)}
+  em{color:var(--acid);font-style:normal}
+  strong{color:var(--hi);font-weight:600}
+  p{margin:.85rem 0}
+
+  header.mast{padding:64px 0 30px;border-bottom:1px solid var(--line)}
+  .mark{font-family:var(--mono);font-weight:700;font-size:.94rem;color:var(--hi);letter-spacing:.02em}
+  .mark .cur{color:var(--acid)}
+  .eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--acid-dim);margin:26px 0 14px;font-weight:600}
+  h1{font-size:clamp(2rem,5.2vw,3rem);line-height:1.06;letter-spacing:-.02em;
+    color:var(--hi);margin:0;text-wrap:balance;font-weight:650}
+  .dek{font-size:1.16rem;line-height:1.5;color:var(--tx);max-width:62ch;margin:20px 0 0}
+  .dek b{color:var(--hi)}
+  .meta{display:flex;flex-wrap:wrap;gap:10px 12px;margin-top:30px;font-family:var(--mono);font-size:.74rem}
+  .meta .m{border:1px solid var(--line);background:var(--bg1);border-radius:999px;
+    padding:6px 13px;color:var(--tx)}
+  .meta .m b{color:var(--hi);font-weight:600}
+  .meta .m.live b{color:var(--acid)}
+
+  .note{border:1px solid var(--line2);background:linear-gradient(180deg,var(--bg2),var(--bg1));
+    border-radius:12px;padding:18px 20px;margin:34px 0;position:relative}
+  .note .tag{font-family:var(--mono);font-size:.68rem;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--acid);display:block;margin-bottom:7px}
+  .note p{margin:0;color:var(--tx)}
+
+  section{padding-top:56px}
+  .sec-eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.15em;text-transform:uppercase;
+    color:var(--dim);margin-bottom:12px}
+  h2{font-size:1.72rem;line-height:1.12;letter-spacing:-.015em;color:var(--hi);margin:0 0 6px;
+    text-wrap:balance;font-weight:640}
+  h3{font-size:1.12rem;color:var(--hi);margin:34px 0 4px;font-weight:620;letter-spacing:-.01em}
+  .lead{font-size:1.04rem;color:var(--tx);max-width:64ch}
+
+  .toc{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-top:26px}
+  .toc a{border:1px solid var(--line);background:var(--bg1);border-radius:11px;padding:15px 16px;
+    display:block;color:var(--tx)}
+  .toc a:hover{border-color:var(--line2);background:var(--bg2)}
+  .toc .k{font-family:var(--mono);font-size:.7rem;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--acid-dim);display:block;margin-bottom:5px}
+  .toc .t{color:var(--hi);font-weight:600;font-size:.98rem}
+  .toc .d{font-size:.82rem;color:var(--dim);margin-top:3px}
+
+  figure{margin:30px 0 12px;border:1px solid var(--line);border-radius:14px;background:var(--bg1);overflow:hidden}
+  figcaption{font-family:var(--mono);font-size:.72rem;letter-spacing:.06em;color:var(--dim);
+    padding:12px 18px;border-bottom:1px solid var(--line);background:var(--bg2);
+    display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  figcaption b{color:var(--hi);letter-spacing:.02em;text-transform:none}
+  .fig-body{padding:24px 18px}
+  .scroll{overflow-x:auto}
+  .legend{display:flex;flex-wrap:wrap;gap:16px;padding:14px 18px;border-top:1px solid var(--line);
+    background:var(--bg2);font-family:var(--mono);font-size:.74rem;color:var(--tx)}
+  .legend .lg{display:inline-flex;align-items:center;gap:7px}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+  .dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.gap{background:var(--gap)}
+  .dot.acid{background:var(--acid)}
+
+  .seq{display:flex;align-items:stretch;gap:0;min-width:680px}
+  .seq .node{flex:1;border:1px solid var(--line2);border-radius:12px;background:var(--bg2);
+    padding:16px 16px 18px;position:relative}
+  .seq .arrow{flex:0 0 42px;display:flex;align-items:center;justify-content:center;color:var(--dim)}
+  .seq .arrow svg{width:24px;height:24px}
+  .seq .n-k{font-family:var(--mono);font-size:.72rem;color:var(--acid);letter-spacing:.08em}
+  .seq .n-t{color:var(--hi);font-weight:640;margin:8px 0 4px;font-size:1.02rem}
+  .seq .n-d{font-size:.83rem;color:var(--dim);line-height:1.45}
+  .seq .indep{margin-top:14px;font-family:var(--mono);font-size:.7rem;color:var(--ok);
+    border-top:1px dashed var(--line2);padding-top:10px}
+  .seq .dep{margin-top:14px;font-family:var(--mono);font-size:.7rem;color:var(--warn);
+    border-top:1px dashed var(--line2);padding-top:10px}
+
+  table{border-collapse:collapse;width:100%;font-size:.9rem}
+  .matrix{min-width:760px}
+  th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+  thead th{font-family:var(--mono);font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--dim);font-weight:600;background:var(--bg2);border-bottom:1px solid var(--line2)}
+  tbody tr:last-child td{border-bottom:none}
+  .layer{color:var(--hi);font-weight:600}
+  .layer small{display:block;color:var(--dim);font-weight:400;font-family:var(--mono);font-size:.72rem;
+    margin-top:2px;letter-spacing:.02em}
+  .cell{white-space:nowrap;font-family:var(--mono);font-size:.8rem;font-weight:600}
+  .cell.ok{color:var(--ok)} .cell.warn{color:var(--warn)} .cell.gap{color:var(--gap)}
+  .cell .sub{display:block;font-weight:400;color:var(--dim);font-size:.72rem;white-space:normal;margin-top:2px}
+  td.ok-bg{background:var(--okbg)} td.warn-bg{background:var(--warnbg)} td.gap-bg{background:var(--gapbg)}
+  .bnote{color:var(--tx);font-size:.86rem}
+
+  /* byte-field frame layout */
+  .frame{display:flex;min-width:700px;font-family:var(--mono);text-align:center}
+  .fld{border:1px solid var(--line2);border-left:none;background:var(--bg2);padding:10px 8px 12px;min-width:64px}
+  .fld:first-child{border-left:1px solid var(--line2);border-radius:9px 0 0 9px}
+  .fld:last-child{border-radius:0 9px 9px 0}
+  .fld .fn{color:var(--hi);font-size:.8rem;font-weight:600}
+  .fld .fb{color:var(--dim);font-size:.68rem;margin-top:3px;letter-spacing:.04em}
+  .fld.pay{background:rgba(207,255,4,.06);border-color:var(--acid-dim)}
+  .fld.pay .fn{color:var(--acid)}
+  .framecap{font-family:var(--mono);font-size:.74rem;color:var(--dim);margin-top:10px}
+
+  /* dispatcher / pipeline steps */
+  .steps{display:flex;align-items:center;gap:0;flex-wrap:nowrap;min-width:700px}
+  .step{border:1px solid var(--line2);border-radius:9px;background:var(--bg2);padding:9px 13px;
+    font-family:var(--mono);font-size:.78rem;color:var(--tx);white-space:nowrap}
+  .step small{display:block;color:var(--dim);font-size:.66rem;margin-top:2px}
+  .step.new{border-color:var(--acid);color:var(--acid);background:rgba(207,255,4,.07);font-weight:600}
+  .step.err{border-color:var(--gapln);color:var(--gap)}
+  .sarrow{flex:0 0 26px;text-align:center;color:var(--dim)}
+
+  /* nested trust boxes */
+  .trustwrap{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media (max-width:760px){.trustwrap{grid-template-columns:1fr}}
+  .trust{font-family:var(--mono)}
+  .ttitle{font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px}
+  .ttitle.today{color:var(--gap)} .ttitle.target{color:var(--ok)}
+  .box{border:1px solid var(--line2);border-radius:12px;padding:13px;margin:0}
+  .box>.blabel{font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);
+    display:block;margin-bottom:10px}
+  .box.host{background:var(--bg1)}
+  .box.daemon{border-color:#4a5a2a;background:rgba(207,255,4,.03);margin-top:10px}
+  .box.daemon>.blabel{color:var(--acid-dim)}
+  .box.child{border-color:var(--line2);background:var(--bg2);margin-top:10px}
+  .box.wasi{border-color:var(--ok);background:var(--okbg);margin-top:10px}
+  .box.wasi>.blabel{color:var(--ok)}
+  .assets{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+  .chip{font-family:var(--mono);font-size:.72rem;border:1px solid var(--line2);border-radius:7px;
+    padding:5px 10px;color:var(--tx);background:var(--bg1);overflow-wrap:anywhere}
+  .chip.auth{border-color:var(--warnln);color:var(--warn)}
+  .chip.cred{border-color:var(--gapln);color:var(--gap)}
+  .chip.good{border-color:var(--okln);color:var(--ok)}
+  .chip.acid{border-color:var(--acid-dim);color:var(--acid)}
+  .brokerline{font-size:.76rem;color:var(--tx);margin-top:11px;line-height:1.5}
+  .brokerline b{color:var(--ok)}
+  .brokerline b.bad{color:var(--gap)}
+
+  /* vertical wall flow */
+  .walls{max-width:600px;margin:0 auto}
+  .flowrow{display:flex;justify-content:center;padding:5px 0}
+  .flowrow svg{width:20px;height:22px;color:var(--dim)}
+  .pill{border:1px solid var(--line2);border-radius:10px;background:var(--bg2);padding:12px 16px;text-align:center}
+  .pill.io{border-style:dashed;color:var(--dim);font-family:var(--mono);font-size:.82rem;
+    background:transparent;max-width:260px;margin:0 auto}
+  .pill.wall{border-color:var(--acid);background:rgba(207,255,4,.06)}
+  .pill .wk{font-family:var(--mono);font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--acid);display:block;margin-bottom:3px}
+  .pill .wt{color:var(--hi);font-weight:640}
+  .pill .ws{font-family:var(--mono);font-size:.76rem;color:var(--dim);margin-top:4px}
+
+  ul.facts{list-style:none;padding:0;margin:14px 0;max-width:68ch}
+  ul.facts li{position:relative;padding-left:22px;margin:9px 0;color:var(--tx)}
+  ul.facts li::before{content:"→";position:absolute;left:0;color:var(--acid-dim);font-family:var(--mono)}
+  ul.facts li b{color:var(--hi)}
+  .proof{font-family:var(--mono);font-size:.78rem;color:var(--dim);margin-top:8px}
+  .proof code{color:var(--ok);background:transparent;border:none;padding:0}
+
+  .kv{border:1px solid var(--line);border-radius:12px;overflow:hidden;margin:22px 0}
+  .kv .row{display:grid;grid-template-columns:150px 1fr;border-bottom:1px solid var(--line)}
+  .kv .row:last-child{border-bottom:none}
+  .kv .k{padding:11px 16px;font-family:var(--mono);font-size:.76rem;color:var(--dim);
+    letter-spacing:.06em;text-transform:uppercase;background:var(--bg2)}
+  .kv .k.acid{color:var(--acid)}
+  .kv .v{padding:11px 16px;color:var(--tx)}
+  .kv .v code{font-size:.82em}
+  .kv .v .why{display:block;font-family:var(--mono);font-size:.72rem;color:var(--dim);margin-top:5px}
+  .kv .v .rec{display:inline-block;font-family:var(--mono);font-size:.7rem;color:var(--ok);
+    border:1px solid var(--okln);border-radius:6px;padding:2px 8px;margin-top:7px}
+
+  .excl{border-left:2px solid var(--line2);padding-left:18px;margin:18px 0}
+  .excl .x{font-family:var(--mono);font-size:.78rem;color:var(--gap);margin-bottom:2px}
+  .excl p{margin:2px 0 16px;color:var(--tx);font-size:.94rem;max-width:66ch}
+
+  hr.rule{border:none;border-top:1px solid var(--line);margin:56px 0 0}
+  footer{margin-top:60px;padding-top:26px;border-top:1px solid var(--line);
+    font-family:var(--mono);font-size:.76rem;color:var(--dim);display:flex;justify-content:space-between;
+    flex-wrap:wrap;gap:10px}
+  @media (max-width:640px){
+    .kv .row{grid-template-columns:1fr}
+    .kv .k{border-bottom:1px solid var(--line)}
+    header.mast{padding-top:44px}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="mast">
+  <span class="mark">riz<span class="cur">▮</span></span>
+  <div class="eyebrow">Internal spec · 2026-07-19 · supersedes the 2026-06-10 broker phasing</div>
+  <h1>Lambda&#8209;shape purity &amp; the WASM capability suite</h1>
+  <p class="dek">Every function is <b>authored as a Lambda handler</b>; WASM guests reach
+    Postgres, HTTP, DynamoDB, Supabase and Clerk through a <b>daemon&#8209;brokered capability
+    layer</b> that never lets a credential cross the sandbox. Synthesized from three
+    independent designs (minimalist / capability&#8209;platform / DX&#8209;first) scored by a
+    three&#8209;judge adversarial panel, with every load&#8209;bearing repo claim verified
+    against source.</p>
+  <div class="meta">
+    <span class="m live">Status: <b>PROPOSED</b> — design only, nothing here is shipped</span>
+    <span class="m">Verified against: <b>main @ cfbda12 (v0.2.2)</b></span>
+    <span class="m">Requirements: <b>R1 · R2 · R3 · R4</b></span>
+    <span class="m">Delivery: <b>13 PRs</b> (PR0–PR12), each independently green</span>
+  </div>
+
+  <div class="toc">
+    <a href="#req"><span class="k">Ground truth</span><span class="t">Requirements R1–R4</span>
+      <span class="d">source of record — recovered from the orphaned cf6fc13</span></a>
+    <a href="#state"><span class="k">Verified</span><span class="t">Current state</span>
+      <span class="d">who conforms, who violates, what the broker already does</span></a>
+    <a href="#r1"><span class="k">R1</span><span class="t">riz-wasm &amp; conformance</span>
+      <span class="d">shim crate · wire negotiation · two-layer guarantee</span></a>
+    <a href="#r2"><span class="k">R2</span><span class="t">Capability suite</span>
+      <span class="d">daemon broker · UDS + tokens · five capability classes</span></a>
+    <a href="#r3"><span class="k">R3</span><span class="t">Templates ≠ examples</span>
+      <span class="d">six scaffolds · riz new · showcase-only examples</span></a>
+    <a href="#r4"><span class="k">R4</span><span class="t">Call transmission</span>
+      <span class="d">framed wire · admission fix · AOT cache · opt-in mux</span></a>
+    <a href="#migration"><span class="k">Delivery</span><span class="t">PR sequence</span>
+      <span class="d">PR0–PR12 with dependency notes</span></a>
+    <a href="#assurance"><span class="k">Assurance</span><span class="t">Tests · risks · questions</span>
+      <span class="d">what proves it, what could sink it, what needs an owner call</span></a>
+  </div>
+</header>
+
+<div class="note">
+  <span class="tag">Provenance</span>
+  <p>Commit <code>cf6fc13</code> ("Add riz hard-requirements doc") described these requirements but only
+  captured <code>.claude/settings.json</code>; the doc file never reached the tree and the
+  commit was reset away. <strong>This document is now the citable source of record.</strong>
+  Current-state claims were verified against <code>main @ cfbda12</code> (v0.2.2);
+  <code>src/broker/</code> and <code>src/process/wasm.rs</code> are unchanged since the deep
+  audit, and line refs into <code>config.rs</code>/<code>process/mod.rs</code> reflect cfbda12.</p>
+</div>
+
+<figure>
+  <figcaption><b>The design in four moves</b><span>shim first · then topology · then verbs · then wire</span></figcaption>
+  <div class="fig-body scroll">
+    <div class="seq">
+      <div class="node">
+        <span class="n-k">MOVE 1 · R1</span>
+        <div class="n-t">riz-wasm shim</div>
+        <div class="n-d">Published crate owns the loop; ships on the <em>current</em> wire — zero transport churn.</div>
+        <div class="indep">PR1 touches no src/ transport code</div>
+      </div>
+      <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 12h15M13 6l6 6-6 6"/></svg></div>
+      <div class="node">
+        <span class="n-k">MOVE 2 · R2</span>
+        <div class="n-t">Broker → daemon</div>
+        <div class="n-d">UDS + per-worker tokens; shared sqlx pool; secrets in exactly one process.</div>
+        <div class="dep">after ABI v2 — no raw pg_query guests left</div>
+      </div>
+      <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 12h15M13 6l6 6-6 6"/></svg></div>
+      <div class="node">
+        <span class="n-k">MOVE 3 · R2</span>
+        <div class="n-t">Five capability classes</div>
+        <div class="n-d">pg · http · dynamo · supabase · clerk behind the existing dispatcher seam.</div>
+        <div class="dep">each web/ claim lands with its pinned test</div>
+      </div>
+      <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 12h15M13 6l6 6-6 6"/></svg></div>
+      <div class="node">
+        <span class="n-k">MOVE 4 · R4</span>
+        <div class="n-t">Framed wire</div>
+        <div class="n-d">Version byte + frame id; one event serialization, no hot-path re-encode; default semantics unchanged; benches re-baselined atomically.</div>
+        <div class="dep">RIZ_WIRE negotiation keeps old guests alive</div>
+      </div>
+    </div>
+  </div>
+</figure>
+
+<!-- ================= REQUIREMENTS ================= -->
+<section id="req">
+  <div class="sec-eyebrow">Ground truth</div>
+  <h2>Requirements — source of record</h2>
+
+  <div class="kv">
+    <div class="row"><div class="k acid">R1 · purity</div><div class="v">
+      Every function is <strong>authored</strong> as a Lambda-style handler: APIGW v2 event in,
+      Lambda response out. The stdin line-JSON programming model dies as an authoring contract —
+      authors never write an event loop. Shims/SDKs own the loop. All examples conform; a
+      conformance test enforces it.</div></div>
+    <div class="row"><div class="k acid">R2 · capabilities</div><div class="v">
+      A brokered host capability layer for wasm32-wasi guests: outbound HTTP, Postgres via a
+      host-side sqlx pool, DynamoDB (SigV4), Supabase, Clerk. Secrets are brokered by the host —
+      guests never hold raw credentials. Capabilities are declared per-function in
+      <code>riz.toml</code>.</div></div>
+    <div class="row"><div class="k acid">R3 · separation</div><div class="v">
+      <code>templates/</code> (consumed by scaffolding) covers exactly six targets: wasm&nbsp;(rust),
+      rust, go, typescript&nbsp;(bun), typescript&nbsp;(node), python. <code>examples/lambdas/*</code>
+      become showcase apps that conform to R1 — proof, not starting points.</div></div>
+    <div class="row"><div class="k acid">R4 · scale</div><div class="v">
+      The gateway→runtime and guest→host call paths (wire format, pooling, concurrency,
+      backpressure) are designed for running riz exclusively at scale — especially WASM
+      capability calls.</div></div>
+  </div>
+
+  <p class="col">Constraints carried through the whole design: the <strong>AWS Lambda + API GW v2
+  wire contract is sacrosanct</strong> at the HTTP boundary; <code>docs/SAFETY.md</code> binds all
+  of <code>src/</code>; reject-not-queue backpressure everywhere; cargo-nextest only; site claims
+  land only with pinned tests (<code>tests/claims/registry.toml</code>).</p>
+</section>
+
+<!-- ================= CURRENT STATE ================= -->
+<section id="state">
+  <div class="sec-eyebrow">Verified against source</div>
+  <h2>Current state</h2>
+  <p class="lead">The audit's central surprise: the architecture already enforces R1 everywhere
+  except WASM — and upstream <code>#60</code> proved the gap by shipping a template with yet
+  another hand-written stdin loop.</p>
+
+  <figure>
+    <figcaption><b>R1 conformance by runtime</b><span>authoring surface · who owns the loop</span></figcaption>
+    <div class="fig-body scroll">
+      <table class="matrix">
+        <thead><tr><th>Runtime</th><th>Author writes</th><th>Loop owner</th><th>Transport today</th><th>R1</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="layer">Bun<small>runtime = "bun"</small></td>
+            <td class="bnote"><code>export const handler = async (event, ctx)</code></td>
+            <td class="bnote">assets/bun-adapter.mjs (embedded)</td>
+            <td class="bnote">stdio line-JSON</td>
+            <td class="ok-bg"><span class="cell ok">conforms</span></td>
+          </tr>
+          <tr>
+            <td class="layer">Node<small>runtime = "node"</small></td>
+            <td class="bnote"><code>export const handler</code> (plain .mjs today)</td>
+            <td class="bnote">assets/node-adapter.mjs (embedded)</td>
+            <td class="bnote">stdio line-JSON</td>
+            <td class="ok-bg"><span class="cell ok">conforms</span></td>
+          </tr>
+          <tr>
+            <td class="layer">Python<small>runtime = "python"</small></td>
+            <td class="bnote"><code>def lambda_handler(event, context)</code></td>
+            <td class="bnote">assets/python-adapter.py (embedded)</td>
+            <td class="bnote">stdio line-JSON</td>
+            <td class="ok-bg"><span class="cell ok">conforms</span></td>
+          </tr>
+          <tr>
+            <td class="layer">Rust<small>static binary</small></td>
+            <td class="bnote">official <code>lambda_runtime</code> — <code>run(service_fn(handler))</code></td>
+            <td class="bnote">AWS SDK, against riz's real per-worker Lambda Runtime API<span class="proof"> src/process/runtime_api.rs · static_binary.rs:41-45</span></td>
+            <td class="bnote">Lambda Runtime API (HTTP)</td>
+            <td class="ok-bg"><span class="cell ok">conforms<span class="sub">"no riz library" — kept, not replaced</span></span></td>
+          </tr>
+          <tr>
+            <td class="layer">Go<small>static binary</small></td>
+            <td class="bnote">official <code>aws-lambda-go</code> — <code>lambda.Start(handler)</code></td>
+            <td class="bnote">AWS SDK, same Runtime API path</td>
+            <td class="bnote">Lambda Runtime API (HTTP)</td>
+            <td class="ok-bg"><span class="cell ok">conforms<span class="sub">config.rs:802 doc comment is stale drift</span></span></td>
+          </tr>
+          <tr>
+            <td class="layer">WASM<small>wasm32-wasip1</small></td>
+            <td class="bnote">a hand-written stdin loop + envelope parsing + response framing, per guest</td>
+            <td class="bnote"><strong>the author</strong> — no shim exists<span class="proof"> echo-wasm/src/main.rs:14-28 · templates/wasm-http/src/main.rs</span></td>
+            <td class="bnote">stdio line-JSON</td>
+            <td class="gap-bg"><span class="cell gap">violates<span class="sub">echo-wasm · orders-wasm · wasm-http (#60) · both fixtures</span></span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="legend">
+      <span class="lg"><span class="dot ok"></span>15 of 17 examples/lambdas conform</span>
+      <span class="lg"><span class="dot gap"></span>every violator is a WASM guest</span>
+      <span class="lg"><span class="dot warn"></span>9 templates exist · 0 conformant for WASM</span>
+    </div>
+  </figure>
+
+  <ul class="facts">
+    <li><b>The broker beachhead is real and end-to-end tested — but per-child.</b> The
+      single-seam dispatcher (deny-by-default, payload caps, token bucket, reject-not-queue
+      inflight, deadline, audit) lives in <code>src/broker/mod.rs</code>, backed by one unpooled
+      tokio-postgres client <b>per wasm worker</b> (<code>src/broker/pg.rs:27-33</code>). Guests
+      reach it through raw <code>riz_broker</code> extern imports with the two-call
+      pg_query/read_response stash pattern. Limits silently multiply by
+      <code>concurrency</code>; credentials ride every child's env
+      (<code>RIZ_BROKER_RESOURCES</code>) with full-env inheritance; there is no shared pool.</li>
+    <li><b>The config seam already exists</b>: <code>[resources.pg.*]</code> +
+      <code>[function.X.capabilities.*]</code> (CapabilityGrant at <code>src/config.rs:354</code>,
+      CAPABILITY_TYPES at <code>:402</code>).</li>
+    <li><b>WASM execution</b>: wasm32-wasip1 sync core modules under wasmtime 45, one instance
+      per pool worker for the worker's life, full Cranelift JIT at every spawn
+      (<code>Engine::default()</code> + <code>Module::from_file</code>, wasm.rs:219-220), run in
+      a <code>riz __wasm-host</code> child so the capability boundary is an OS process boundary.</li>
+    <li><b>Transport today</b>: stdio line-JSON one-line-in/one-line-out, strictly one in-flight
+      per worker, semaphore try_acquire admission with an O(n) idle-worker scan that can
+      mis-serve two permit-holders (<code>src/process/mod.rs:195-214</code> — a verified
+      correctness bug, not just a perf smell). Rust/Go ride the Runtime API. Every overload path
+      already answers with explicit backpressure.</li>
+    <li><b>Templates</b>: 9 exist. The newest, wasm-http (#60, landed after this design's audit
+      began), is authored as the hand-written stdin loop R1 abolishes; typescript-http is Bun in disguise; nodejs-http is plain .mjs
+      JavaScript; three websocket variants sit outside the six targets; <code>riz init</code>
+      BUILTINS already leak two examples into the scaffold list
+      (<code>src/template_fetch.rs</code>).</li>
+  </ul>
+</section>
+
+<!-- ================= R1 ================= -->
+<section id="r1">
+  <div class="sec-eyebrow">R1 — Lambda-shape purity</div>
+  <h2>riz-wasm and the authoring contract</h2>
+  <p class="lead"><code>crates/riz-wasm</code> — a workspace member, <strong>published to
+  crates.io before any template depends on it</strong>. The API deliberately mirrors
+  <code>lambda_runtime</code> so Rust authors transfer directly from the rust template. A user's
+  whole file is <code>fn handler(...)</code> plus <code>fn main() { riz_wasm::run(handler) }</code>.</p>
+
+<pre><code><span class="cmt">// Value-first API — guaranteed path, no feature flags:</span>
+<span class="acc">pub fn</span> run(handler: <span class="acc">fn</span>(Event, Context) -&gt; Result&lt;Response, Error&gt;) -&gt; !
+<span class="cmt">// Event/Response are serde_json::Value newtypes with accessors; Context carries the
+// function name, request id (read from event.requestContext.requestId, empty string
+// when the event lacks it), and the deadline (remaining_time()).</span>
+
+<span class="cmt">// Typed events behind a default-on `typed-events` feature, ONLY if aws_lambda_events
+// compiles cleanly to wasm32-wasip1 (chrono/http feature graph must be CI-verified
+// before the feature ships; the Value path is the guaranteed fallback either way):</span>
+<span class="acc">pub fn</span> run_typed(
+    handler: <span class="acc">fn</span>(LambdaEvent&lt;ApiGatewayV2httpRequest&gt;) -&gt; Result&lt;ApiGatewayV2httpResponse, Error&gt;,
+) -&gt; !</code></pre>
+
+  <h3>Mechanics the shim owns (and deletes from every guest)</h3>
+  <ul class="facts">
+    <li><b>The event loop.</b> v1 speaks the <em>current</em> line-JSON envelope
+      (<code>{event, __riz_deadline_ms, __riz_function_name}</code>) so PR1 touches zero
+      <code>src/</code> transport code.</li>
+    <li><b>Wire negotiation, driven by the guest's marker.</b> At module load the host reads the
+      shim's exported ABI marker (<code>riz_abi_v1</code> now, <code>riz_abi_v2</code> once the
+      framed wire ships), selects the highest wire the guest supports, and sets
+      <code>RIZ_WIRE</code> to the <em>selected</em> version at spawn; the shim treats
+      <code>RIZ_WIRE</code> as authoritative (absence = line-JSON v1); a missing or unknown
+      marker fails closed at load with an actionable error instead of a hung pipe. Compiled
+      .wasm artifacts outlive riz upgrades on the invocation wire — negotiation is mandatory,
+      not optional. (The capability ABI makes one sanctioned pre-1.0 break in PR4.)</li>
+    <li><b>The capability ABI.</b> Typed <code>riz_wasm::cap::{pg, http, dynamo, supabase,
+      clerk}</code> clients wrap the raw imports; guests never write <code>unsafe extern</code>
+      blocks.</li>
+    <li><b>The marker itself.</b> <code>riz_abi_v1</code> is an exported symbol (survives
+      wasm-opt better than custom sections), doubling as an artifact-level conformance signal.</li>
+  </ul>
+
+  <p class="col">Rust and Go need no shim: the official AWS SDKs against riz's Runtime API
+  <em>are</em> the R1 contract for static binaries, and replacing them would trade away the
+  run-unmodified-on-AWS claim for nothing.</p>
+
+  <h3>Conformance — a two-layer public guarantee</h3>
+  <p class="col">Claims-registry-pinned: <strong>"every runtime is authored as a Lambda handler;
+  authors never write an event loop."</strong></p>
+
+  <figure>
+    <figcaption><b>Two layers, one guarantee</b><span>fast static scan · real scaffold-boot proof</span></figcaption>
+    <div class="fig-body">
+      <div class="trustwrap">
+        <div class="trust">
+          <div class="ttitle target">Layer 1 · static — default nextest run</div>
+          <div class="box host"><span class="blabel">tests/lambda_shape_conformance.rs</span>
+            <div class="brokerline">Walks the handler-source trees — <b>templates/*/</b>,
+              <b>examples/lambdas/*/</b>, <b>examples/ai-chat/</b>, <b>examples/typescript-todo/</b>
+              (demo/smoke tooling like examples/demo.py and smoke-all.sh is outside scope by
+              construction) — and fails on banned wire
+              tokens per runtime: <code>process.stdin</code>/<code>readline(</code> (TS/JS),
+              <code>sys.stdin</code> (Python), <code>io::stdin</code>/<code>wasm_import_module</code>
+              (Rust/wasm), <code>__riz_deadline_ms</code>/<code>__riz_function_name</code>
+              (everywhere). Those strings may exist only under src/, assets/, crates/riz-wasm/,
+              tests/fixtures/. A narrow allowlist with adjacent justification comments exists
+              from day one — grep-shaped scans false-positive on comments and legitimately match
+              in shims.</div>
+            <div class="brokerline">Positive checks: exported handler symbols ·
+              <code>lambda_handler</code> for Python · template manifests depend on the
+              sanctioned SDK · every template riz.toml parses via the real Config loader ·
+              the template-directory set maps <b>1:1 onto RuntimeKind</b> via an explicit
+              variant→template map — scaffold coverage enforced by test, not prose.</div>
+          </div>
+        </div>
+        <div class="trust">
+          <div class="ttitle target">Layer 2 · behavioral — isolated nextest binary</div>
+          <div class="box host"><span class="blabel">tests/template_smoke_all.rs</span>
+            <div class="brokerline">Like e2e_smoke_all (default filter becomes
+              <code>-E 'not binary(e2e_smoke_all) and not binary(template_smoke_all)'</code>;
+              CLAUDE.md + CI updated in the same PR). Sets <code>RIZ_TEMPLATE_REPO</code> to the
+              repo root, scaffolds all six targets through the real <code>riz new</code> path,
+              builds the compiled three (cached target dirs in CI), boots <code>riz run</code>
+              headless, asserts a full APIGW v2 roundtrip per template — including context
+              fields (request id, decreasing remaining-time).</div>
+            <div class="brokerline">The authorizer simple-response shape
+              (<code>{isAuthorized}</code>) is a legitimate second response contract, but no
+              template is an authorizer — that exemption applies to the auth examples and lives
+              in e2e_smoke_all, which exercises them; the static layer stays
+              response-shape-agnostic.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </figure>
+</section>
+
+<!-- ================= R2 ================= -->
+<section id="r2">
+  <div class="sec-eyebrow">R2 — WASM capability suite</div>
+  <h2>The broker moves into the daemon</h2>
+  <p class="lead">This topology change is what makes three sentences of R2 <em>structurally</em>
+  true rather than aspirational: a shared host-side pool exists, <code>max_inflight</code>/
+  <code>rate_per_sec</code> finally mean per-function (today they silently multiply by
+  <code>concurrency</code>), and credentials exist in exactly one process.</p>
+
+  <figure>
+    <figcaption><b>Topology — today vs. target</b><span>where the broker, pool and secrets live</span></figcaption>
+    <div class="fig-body">
+      <div class="trustwrap">
+        <div class="trust">
+          <div class="ttitle today">Today — broker inside every child</div>
+          <div class="box host"><span class="blabel">riz daemon</span>
+            <div class="assets"><span class="chip">gateway</span><span class="chip">router</span><span class="chip">pools</span></div>
+            <div class="box child"><span class="blabel">__wasm-host child × concurrency</span>
+              <div class="assets">
+                <span class="chip">wasmtime + guest</span>
+                <span class="chip">broker + limit state</span>
+                <span class="chip">tokio runtime + block_on</span>
+                <span class="chip cred">1 unpooled pg client</span>
+                <span class="chip cred">full env incl. every DSN</span>
+              </div>
+              <div class="brokerline"><b class="bad">limits × concurrency</b> · N cold pg
+                connections · secrets in every child's process env · per-child tokio runtime +
+                block_on bridge (wasm.rs:197-201)</div>
+            </div>
+          </div>
+        </div>
+        <div class="trust">
+          <div class="ttitle target">Target — daemon-brokered</div>
+          <div class="box host"><span class="blabel">riz daemon</span>
+            <div class="assets"><span class="chip">gateway</span><span class="chip">router</span><span class="chip">pools</span></div>
+            <div class="box daemon"><span class="blabel">broker service — src/broker/{server,wire,client}.rs</span>
+              <div class="assets">
+                <span class="chip acid">supervised UDS accept loop</span>
+                <span class="chip acid">per-(function,grant) limits</span>
+                <span class="chip good">sqlx::PgPool · shared reqwest</span>
+                <span class="chip cred">ALL credentials — only here</span>
+              </div>
+              <div class="brokerline">connection bound = count of granted workers · bounded
+                per-connection buffers · the largest new supervised-loop surface in src/ in
+                months — <b>gate-clean under Power of 10 from the first commit</b> (bounded
+                channels, no unwrap/indexing, supervised loop contract), budgeted as part of the
+                work, not cleanup</div>
+            </div>
+            <div class="box child"><span class="blabel">__wasm-host child × concurrency</span>
+              <div class="assets">
+                <span class="chip">wasmtime + guest</span>
+                <span class="chip">sync UnixStream client</span>
+                <span class="chip auth">RIZ_BROKER_TOKEN (32-byte, per worker)</span>
+              </div>
+              <div class="brokerline"><b>no tokio, no creds, no pool</b> — scrubbed env;
+                SO_RCVTIMEO/SO_SNDTIMEO = call_timeout_ms + slack, so a wedged daemon connection
+                answers a structured <code>timeout</code> envelope instead of hanging the guest,
+                then reconnects with backoff under supervision</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="legend">
+      <span class="lg"><span class="dot gap"></span>credential exposure</span>
+      <span class="lg"><span class="dot warn"></span>auth material</span>
+      <span class="lg"><span class="dot acid"></span>new safety-critical surface (Power-of-10 gate-clean from first commit)</span>
+    </div>
+  </figure>
+
+  <h3>Auth — never caller-supplied identity</h3>
+  <ul class="facts">
+    <li>At spawn the daemon issues each <em>granted</em> worker a random 32-byte token
+      (<code>RIZ_BROKER_TOKEN</code> + <code>RIZ_BROKER_SOCK</code>); the daemon maps
+      token→function. SO_PEERCRED uid check layered on top; socket dir 0700, socket 0600.</li>
+    <li>Every worker runs as the same uid, so a function-<em>name</em> handshake would let any
+      compromised worker — including native bun/node ones — claim another function's grants.
+      Tokens, not names.</li>
+    <li>Grantless functions get <b>no socket and no token</b>; the host import answers the
+      structured <code>denied</code> envelope locally with zero IPC.</li>
+  </ul>
+
+  <h3>BCP — broker call protocol</h3>
+  <figure>
+    <figcaption><b>BCP frame</b><span>UDS · v1 = strict request/response · headroom reserved</span></figcaption>
+    <div class="fig-body scroll">
+      <div class="frame">
+        <div class="fld" style="flex:2"><div class="fn">len</div><div class="fb">u32 LE · capped</div></div>
+        <div class="fld"><div class="fn">ver</div><div class="fb">u8</div></div>
+        <div class="fld" style="flex:1.6"><div class="fn">type</div><div class="fb">u8 · HELLO/CALL/REPLY</div></div>
+        <div class="fld" style="flex:1.4"><div class="fn">flags</div><div class="fb">u16 · MORE reserved</div></div>
+        <div class="fld" style="flex:1.6"><div class="fn">call_id</div><div class="fb">u64</div></div>
+        <div class="fld pay" style="flex:4"><div class="fn">payload</div><div class="fb">CALL: u16 verb_len | verb | u16 grant_len | grant | JSON body</div></div>
+      </div>
+      <p class="framecap">v1 semantics are strict request/response — a sync wasip1 guest can have
+      exactly one capability call in flight, so call-id multiplexing and chunked streaming buy
+      nothing today. The ver byte, flags and call_id keep mux/streaming reachable without a wire
+      break when preview2 guests or non-WASM SDK clients arrive. JSON stays the body encoding
+      (matches the shipped closed error set). HELLO carries the token + abi version; a bad token
+      closes the connection.</p>
+    </div>
+  </figure>
+
+  <h3>The dispatcher seam — unchanged ordering, now per-function</h3>
+  <figure>
+    <figcaption><b>Every brokered verb funnels through one seam</b><span>src/broker/mod.rs — ordering preserved verbatim</span></figcaption>
+    <div class="fig-body scroll">
+      <div class="steps">
+        <span class="step">deny-by-default<small>grant exists + type match</small></span><span class="sarrow">→</span>
+        <span class="step">request cap<small>before any parse</small></span><span class="sarrow">→</span>
+        <span class="step">rate limit<small>token bucket</small></span><span class="sarrow">→</span>
+        <span class="step">inflight cap<small>try_acquire — reject, never queue</small></span><span class="sarrow">→</span>
+        <span class="step">deadline<small>races backend I/O</small></span><span class="sarrow">→</span>
+        <span class="step">response cap<small>before bytes reach guest</small></span><span class="sarrow">→</span>
+        <span class="step new">audit<small>→ telemetry pipeline, not just tracing</small></span>
+      </div>
+      <p class="framecap">Closed error set unchanged: <code>denied · throttled · timeout ·
+      too_large · bad_request · backend</code>. Unknown verb → <code>bad_request</code>.</p>
+    </div>
+  </figure>
+
+  <h3>Guest ABI v2 — one dispatcher import</h3>
+  <p class="col">The per-verb imports collapse to
+  <code>riz_capability.call(verb_ptr, verb_len, grant_ptr, grant_len, req_ptr, req_len) → i32</code>
+  plus the existing <code>read_response</code> stash pattern, with the same
+  <code>guest_range</code> bounds checks. Collapsing happens only after PR1 has migrated every
+  non-fixture guest onto riz-wasm; the raw-extern fixtures (broker-wasm, guard-wasm) are kept raw
+  <em>deliberately</em> — they are the adversarial coverage of the guest_range/fail-closed ABI
+  paths — and update alongside the import they exist to attack.</p>
+
+  <h3>Secrets brokering</h3>
+  <ul class="facts">
+    <li>All credentials resolve inside the daemon at startup (fail-fast on missing env vars for
+      any referenced resource) and never enter child processes, argv, config values, or guest
+      memory. <code>RIZ_BROKER_RESOURCES</code> and <code>--broker-grants</code> are deleted.</li>
+    <li>Children get a scrubbed env: <code>env_clear()</code> then an explicit per-runtime
+      allowlist — PATH, HOME (bun/node resolution), SSL_CERT_FILE, locale/proxy vars where
+      needed, <code>AWS_LAMBDA_*</code> for RuntimeApi workers (<b>env_clear must precede the
+      explicit .env() calls</b> or Rust/Go pools break at spawn), RIZ_* control vars, plus the
+      function's declared <code>env</code>/<code>stage_variables</code> as the documented escape
+      hatch.</li>
+    <li>Proven by an all-six-runtimes e2e smoke in the same PR and a <b>secrets canary test</b>:
+      a canary DSN asserted absent from guest-observable bytes <em>and</em> from a dump of the
+      child's actual process environment.</li>
+  </ul>
+
+  <h3>The five capability classes</h3>
+  <p class="col">Verb namespace <code>&lt;type&gt;.&lt;op&gt;</code>. Grant vocabulary — mode,
+  max_inflight, rate_per_sec, call_timeout_ms, max_request_bytes, max_response_bytes — reused
+  verbatim from <code>CapabilityGrant</code>; CAPABILITY_TYPES widens to
+  <code>["pg","http","dynamo","supabase","clerk"]</code>.</p>
+
+  <figure>
+    <figcaption><b>Capability matrix</b><span>verbs · resource config · backend discipline</span></figcaption>
+    <div class="fig-body scroll">
+      <table class="matrix">
+        <thead><tr><th>Capability</th><th>Verbs</th><th>Resource config</th><th>Backend</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="layer">pg</td>
+            <td class="bnote"><code>pg.query</code></td>
+            <td class="bnote"><code>[resources.pg.&lt;n&gt;]</code> dsn_env, max_connections=5, acquire_timeout_ms, statement_timeout_ms</td>
+            <td class="bnote"><code>sqlx::PgPool</code>, rustls; read-only grants run inside <code>BEGIN READ ONLY</code> (PG enforces, not SQL inspection); the existing text-param/<code>$1::type</code> cast convention and scalar decode matrix ported and re-verified</td>
+          </tr>
+          <tr>
+            <td class="layer">http</td>
+            <td class="bnote"><code>http.fetch</code></td>
+            <td class="bnote"><code>[resources.http.&lt;n&gt;]</code> base_url, auth = {kind="bearer"|"header", token_env, header}</td>
+            <td class="bnote">shared reqwest client; daemon injects auth headers host-side — "guests never hold raw credentials" extends to arbitrary third-party APIs</td>
+          </tr>
+          <tr>
+            <td class="layer">dynamo</td>
+            <td class="bnote"><code>dynamo.get_item / put_item / query / delete_item</code></td>
+            <td class="bnote"><code>[resources.dynamo.&lt;n&gt;]</code> region, table, endpoint_url?, *_env? (else host AWS chain)</td>
+            <td class="bnote"><b>aws-sigv4 + aws-credential-types crates</b> — request signing is never hand-rolled; signing strictly daemon-side; mode=read-only restricts to GetItem/Query</td>
+          </tr>
+          <tr>
+            <td class="layer">supabase</td>
+            <td class="bnote"><code>supabase.rest</code></td>
+            <td class="bnote"><code>[resources.supabase.&lt;n&gt;]</code> url, service_key_env</td>
+            <td class="bnote">PostgREST passthrough; daemon injects apikey/Authorization; mode=read-only → GET only. Supabase-as-Postgres stays a plain pg resource — this grant type exists for RLS-aware REST</td>
+          </tr>
+          <tr>
+            <td class="layer">clerk</td>
+            <td class="bnote"><code>clerk.get_user · clerk.verify_token</code></td>
+            <td class="bnote"><code>[resources.clerk.&lt;n&gt;]</code> secret_key_env</td>
+            <td class="bnote">api.clerk.com with host-held secret; JWKS cached daemon-side. Gateway-side Clerk JWT auth (src/auth/jwt.rs) is unchanged and separate</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </figure>
+
+  <p class="col">Per-type scoping keys extend the <strong>grant</strong>, never the resource:
+  <code>http</code> grants add <code>methods</code>; <code>dynamo</code> grants add
+  <code>key_prefix</code> (optional partition-key prefix, enforced before signing);
+  <code>supabase</code> grants add <code>path_prefix</code> + <code>methods</code>;
+  <code>clerk</code> grants add <code>operations</code>. Resources hold connection and credential
+  config only. Grant and resource structs gain <code>#[serde(deny_unknown_fields)]</code> so a
+  misplaced key fails at config load instead of parsing as silence.</p>
+
+  <div class="note">
+    <span class="tag">http hardening — mandatory for any http grant</span>
+    <p>The default grant shape is resource-pinned: the guest supplies a <em>relative path</em>
+    under the resource's <code>base_url</code> and never holds an absolute URL;
+    <code>allow_origins</code> (exact scheme+host+port) exists as the generic mode. Either way,
+    the daemon resolves DNS and <strong>refuses private/link-local IPs after resolution</strong>
+    (DNS-rebinding an allowlisted host into 10.0.0.1 is otherwise an internal-network probe),
+    redirects are re-validated against the same rules, and <code>methods</code> allowlists apply.
+    Response bodies respect max_response_bytes with no streaming in v1.</p>
+  </div>
+
+  <h3>Declaration example</h3>
+<pre><code><span class="acc">[resources.pg.main]</span>
+dsn_env = <span class="str">"RIZ_PG_MAIN_DSN"</span>
+max_connections = 10
+
+<span class="acc">[resources.http.stripe]</span>
+base_url = <span class="str">"https://api.stripe.com"</span>
+auth = { kind = <span class="str">"bearer"</span>, token_env = <span class="str">"STRIPE_SECRET_KEY"</span> }
+
+<span class="acc">[function.orders]</span>
+runtime = <span class="str">"wasm"</span>
+handler = <span class="str">"./orders/target/wasm32-wasip1/release/orders.wasm"</span>
+
+<span class="acc">[function.orders.capabilities.db]</span>
+type = <span class="str">"pg"</span>
+resource = <span class="str">"pg.main"</span>
+mode = <span class="str">"read-write"</span>
+max_inflight = 4
+
+<span class="acc">[function.orders.capabilities.payments]</span>
+type = <span class="str">"http"</span>
+resource = <span class="str">"http.stripe"</span>
+methods = [<span class="str">"POST"</span>]
+rate_per_sec = 20</code></pre>
+
+  <p class="col">Grants stay <strong>WASM-only at config validation this cycle</strong>. The
+  token+UDS design is the documented path to <code>@riz/capabilities</code> (bun/node),
+  <code>riz-capabilities</code> (pip) and a Go module later — same socket, same frames, same
+  grant table; the validation gate lifts per runtime as each SDK ships with tests.</p>
+</section>
+
+<!-- ================= R3 ================= -->
+<section id="r3">
+  <div class="sec-eyebrow">R3 — templates ≠ examples</div>
+  <h2>Six templates, showcase examples, <code>riz new</code></h2>
+  <p class="lead"><strong>"Templates are starting points; examples are proof."</strong> That
+  sentence opens both READMEs and the scaffold list. <code>riz init</code> is renamed
+  <code>riz new</code> — clean rename, no alias (greenfield rule; R3 names it). The fetch
+  machinery (src/template_fetch.rs) is reused untouched. <code>riz new --list</code> prints two
+  sections: <em>Templates</em> (six, labeled with the authoring language) and <em>Example
+  starters</em> (ai-chat, typescript-todo). Missing arg prints the list; no interactive picker
+  (TUI rule).</p>
+
+  <figure>
+    <figcaption><b>The six templates</b><span>directory names carry R3's wording · map asserted 1:1 with RuntimeKind by test</span></figcaption>
+    <div class="fig-body scroll">
+      <table class="matrix">
+        <thead><tr><th>RuntimeKind</th><th>Template</th><th>Authoring surface</th></tr></thead>
+        <tbody>
+          <tr><td class="layer">Bun</td><td class="bnote"><code>templates/typescript-bun</code></td>
+            <td class="bnote">index.ts, typed handler via <code>@types/aws-lambda</code> devDependency — zero riz import</td></tr>
+          <tr><td class="layer">Node</td><td class="bnote"><code>templates/typescript-node</code></td>
+            <td class="bnote"><b>real TypeScript</b> on Node's native type stripping; floor Node ≥ 22.18 stated in README and preflight-checked at scaffold</td></tr>
+          <tr><td class="layer">Python</td><td class="bnote"><code>templates/python</code></td>
+            <td class="bnote"><code>def lambda_handler(event, context)</code></td></tr>
+          <tr><td class="layer">Rust</td><td class="bnote"><code>templates/rust</code></td>
+            <td class="bnote">official <code>lambda_runtime</code> + aws_lambda_events; "no riz library, runs unmodified on AWS" header kept</td></tr>
+          <tr><td class="layer">Go</td><td class="bnote"><code>templates/go</code></td>
+            <td class="bnote">official <code>aws-lambda-go</code>; gains the <code>[server]</code> block the others carry</td></tr>
+          <tr><td class="layer">Wasm</td><td class="bnote"><code>templates/wasm-rust</code></td>
+            <td class="bnote">wasm-http (stdin-loop authored, #60) rewritten as the <b>first consumer of riz-wasm</b> and renamed; handler + <code>riz_wasm::run</code>; commented-out capability grant block; README notes <code>rustup target add wasm32-wasip1</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="legend">
+      <span class="lg"><span class="dot acid"></span>every template README: exactly three
+      commands, a one-line handler contract, and a "WebSocket variant" pointer to
+      examples/chat</span>
+      <span class="lg"><span class="dot warn"></span>the three websocket templates are deleted
+      as scaffold targets — WS stays fully in product scope; examples/chat is the WS showcase;
+      a WS starter remains one <code>--ref</code> away</span>
+    </div>
+  </figure>
+
+  <h3>Examples after the reshuffle</h3>
+  <figure>
+    <figcaption><b>Showcase-only examples</b><span>every entry a Lambda handler</span></figcaption>
+    <div class="fig-body">
+      <div class="trustwrap">
+        <div class="trust">
+          <div class="ttitle target">examples/ — showcase</div>
+          <div class="box host">
+            <div class="assets">
+              <span class="chip good">agent-tools — MCP flagship</span>
+              <span class="chip good">crud-accounts — REST flagship</span>
+              <span class="chip good">chat — WS flagship</span>
+              <span class="chip acid">orders-wasm — capability flagship (pg grant in PR5)</span>
+              <span class="chip good">events + auth-allow/deny-bun — authorizer contract + 401 deny path</span>
+              <span class="chip good">ai-chat · typescript-todo</span>
+            </div>
+            <div class="brokerline">orders-wasm rewritten on riz-wasm — ~35 lines of protocol
+              code deleted; examples/README.md becomes the showcase index and opens with the
+              conformance guarantee.</div>
+          </div>
+        </div>
+        <div class="trust">
+          <div class="ttitle today">Demoted or deleted</div>
+          <div class="box host">
+            <div class="assets">
+              <span class="chip">echo-{bun,node,python,rust,go,wasm} → tests/fixtures/parity/</span>
+              <span class="chip">chat-python · chat-rust → tests/fixtures/parity/</span>
+              <span class="chip cred">ping — deleted</span>
+              <span class="chip cred">accounts — deleted (path-params/rawQueryString/cache notes fold into crud-accounts)</span>
+            </div>
+            <div class="brokerline">The echo legs serve runtime_parity_echo, not teaching;
+              echo-python's parity-shape drift (missing authorizer/invocationCount fields) gets
+              fixed during the move. web/examples.html's "cleanest how-do-I-write-a-handler
+              reference" claim moves to the templates in the same PR. Fleet configs and smoke
+              scripts re-pointed; gitignore fixes land in PR0.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </figure>
+</section>
+
+<!-- ================= R4 ================= -->
+<section id="r4">
+  <div class="sec-eyebrow">R4 — call transmission at scale</div>
+  <h2>RWP — the framed invocation wire</h2>
+  <p class="lead">For stdio runtimes (bun, node, python, wasm, guards). Rust/Go keep the
+  per-worker AWS Lambda Runtime API unchanged — the "unmodified official binaries" claim is
+  load-bearing, and Lambda execution semantics forbid pipelining there; they scale via pool
+  size.</p>
+
+  <figure>
+    <figcaption><b>RWP frame</b><span>codec in src/process/proto.rs · ~40 lines per embedded adapter · atomic cutover</span></figcaption>
+    <div class="fig-body scroll">
+      <div class="frame">
+        <div class="fld" style="flex:2"><div class="fn">len</div><div class="fb">u32 LE · 16 MiB cap</div></div>
+        <div class="fld"><div class="fn">ver</div><div class="fb">u8</div></div>
+        <div class="fld" style="flex:1.4"><div class="fn">type</div><div class="fb">u8</div></div>
+        <div class="fld" style="flex:1.2"><div class="fn">flags</div><div class="fb">u16</div></div>
+        <div class="fld" style="flex:1.6"><div class="fn">id</div><div class="fb">u64</div></div>
+        <div class="fld" style="flex:2"><div class="fn">deadline</div><div class="fb">u64 unix ms</div></div>
+        <div class="fld pay" style="flex:3.4"><div class="fn">payload</div><div class="fb">INVOKE: raw pre-serialized APIGW v2 event bytes</div></div>
+      </div>
+      <p class="framecap">Types: HELLO (worker→host, JSON <code>{"abi":1,"max_inflight":N}</code>,
+      clamped by host config — never trust the worker side) · INVOKE · RESPONSE · ERROR · CANCEL ·
+      PING/PONG · GUARD. Guard workers share the framing, not the invocation payload semantics:
+      guard traffic rides the GUARD type with the existing guard envelopes as payloads (response
+      envelope in, verdict out). Static metadata (function name) rides env, not per-frame.
+      Adapters ship inside the binary, so the cutover is atomic with no version skew; the
+      published riz-wasm crate is the one non-embedded client and negotiates via RIZ_WIRE
+      (absence = line-JSON v1).</p>
+    </div>
+  </figure>
+
+  <h3>Perf levers, in order of leverage</h3>
+  <div class="kv">
+    <div class="row"><div class="k acid">1 · serialize once</div><div class="v">
+      The gateway serializes the APIGW event to bytes once; those exact bytes are the INVOKE
+      payload. Deletes one full serde re-encode each way (today's build_envelope_payload
+      struct→envelope pass).</div></div>
+    <div class="row"><div class="k acid">2 · admission fix</div><div class="v">
+      Replace the semaphore + O(n) try_lock scan with a per-pool free-list of worker slots
+      carrying <strong>generation stamps</strong> — checked at dispatch, purged and reissued on
+      respawn, so a crashed worker's stale slot can never route a request to a dead process and
+      reject-not-queue is preserved through crash-respawn windows.
+      <span class="why">the current permit-held-but-no-handle arm is already an error path; the
+      redesign defines this behavior explicitly, with a property test over
+      acquire/release/respawn interleavings</span></div></div>
+    <div class="row"><div class="k acid">3 · AOT cache</div><div class="v">
+      The daemon precompiles each module once to
+      <code>~/.riz/cache/cwasm/&lt;blake3&gt;-wt&lt;wasmtime-major&gt;-&lt;config-hash&gt;.cwasm</code>;
+      children <code>Module::deserialize_file</code> (one new <code>unsafe</code> with a SAFETY
+      proof: host-generated file, hash-named, 0700 dir). Cache key includes wasmtime version +
+      Config hash — .cwasm artifacts are version-specific — with recompile-on-mismatch fallback;
+      tests cover truncation <em>and</em> version mismatch. Respawn drops from full Cranelift JIT
+      to mmap.</div></div>
+    <div class="row"><div class="k acid">4 · opt-in mux</div><div class="v">
+      <code>worker_concurrency</code> riz.toml key, <strong>default 1 everywhere</strong> — AWS
+      Lambda guarantees one concurrent event per execution environment, and handlers legally rely
+      on it (crud-accounts' module-level Map); that rationale ships verbatim as the
+      semantic-departure warning. When opted in (bun/node only): N invocations on one event loop
+      matched by frame id, per-worker bounded dispatch queues, crash accounting = one breaker
+      increment per worker death (never per in-flight id), all in-flight ids resolve 502 —
+      regression-tested. CANCEL applies to multiplexed JS workers; a sync wasip1 guest cannot
+      observe it — kill is the only lever there, kill-when-idle preferred where the deadline
+      allows. <span class="why">lands only with bench evidence — PR11</span></div></div>
+  </div>
+
+  <div class="note">
+    <span class="tag">Benchmark discipline</span>
+    <p>The 91,419 req/s · p99 845µs headline is quoted on four public surfaces
+    (benches/README, CONTRIBUTING, CAPABILITY-CARD, web/index.html) and benches/README.md:50
+    names stdin/stdout in its methodology. The bench re-run and every quoting surface move in
+    <strong>one commit</strong> with the wire cutover, enforced via the claims registry — no
+    stale-claims window. The CI-gated dispatch floor from #61
+    (<code>tests/perf_http_floor.rs</code>) must stay green through every transport PR — it is
+    the structural-regression tripwire for exactly this kind of change.</p>
+  </div>
+
+  <p class="col"><strong>Broker-path cost accounting:</strong> the UDS hop adds ~20–60µs versus
+  the old in-child block_on — noise against millisecond backend I/O, repaid immediately by real
+  connection pooling (N workers share <code>max_connections</code> instead of N cold clients) and
+  per-function-correct limits.</p>
+</section>
+
+<!-- ================= SECURITY ================= -->
+<section id="security">
+  <div class="sec-eyebrow">Layered · mostly unchanged</div>
+  <h2>Security model</h2>
+  <figure>
+    <figcaption><b>Seven layers</b><span>a capability call must survive all of them</span></figcaption>
+    <div class="fig-body">
+      <div class="walls">
+        <div class="pill io">guest handler code</div>
+        <div class="flowrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 4v15M6 13l6 6 6-6"/></svg></div>
+        <div class="pill wall"><span class="wk">1 · WASI sandbox</span><span class="wt">deny-by-default</span>
+          <div class="ws">no fs beyond preopens · no ambient net — unchanged</div></div>
+        <div class="flowrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 4v15M6 13l6 6 6-6"/></svg></div>
+        <div class="pill wall"><span class="wk">2 · ABI bounds</span><span class="wt">guest_range checks</span>
+          <div class="ws">every (ptr,len) validated before any host allocation — pattern retained for v2</div></div>
+        <div class="flowrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 4v15M6 13l6 6 6-6"/></svg></div>
+        <div class="pill wall"><span class="wk">3 · BCP token auth</span><span class="wt">token → one grant table</span>
+          <div class="ws">SO_PEERCRED · 0700/0600 · grantless functions get no socket</div></div>
+        <div class="flowrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 4v15M6 13l6 6 6-6"/></svg></div>
+        <div class="pill wall"><span class="wk">4 · dispatcher</span><span class="wt">per-grant limit envelope</span>
+          <div class="ws">deny → caps → rate → inflight → deadline → response cap → audit</div></div>
+        <div class="flowrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 4v15M6 13l6 6 6-6"/></svg></div>
+        <div class="pill wall"><span class="wk">5 · OS layer</span><span class="wt">rlimits · Landlock · seccomp-BPF (#52) · pdeathsig</span>
+          <div class="ws">unchanged</div></div>
+        <div class="flowrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 4v15M6 13l6 6 6-6"/></svg></div>
+        <div class="pill wall"><span class="wk">6 · secrets locality</span><span class="wt">credentials exist in exactly one process</span>
+          <div class="ws">the daemon — never child env, argv, config, or guest memory</div></div>
+        <div class="flowrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 4v15M6 13l6 6 6-6"/></svg></div>
+        <div class="pill wall"><span class="wk">7 · SSRF hardening</span><span class="wt">http grants</span>
+          <div class="ws">post-DNS private-IP refusal · redirect re-validation · resource-pinned base_url default</div></div>
+        <div class="flowrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 4v15M6 13l6 6 6-6"/></svg></div>
+        <div class="pill io">backend (Postgres · HTTP origin · DynamoDB · Supabase · Clerk)</div>
+      </div>
+    </div>
+  </figure>
+</section>
+
+<!-- ================= MIGRATION ================= -->
+<section id="migration">
+  <div class="sec-eyebrow">Delivery</div>
+  <h2>Migration — PR sequence</h2>
+  <p class="lead">Greenfield rule (pre-1.0; v0.2.x releases exist but the standing rule is that
+  only the wire contract is sacrosanct): renames and deletes land without deprecation shims.
+  Every PR passes the full gate — fmt, clippy -D warnings, safety-check --gate, nextest
+  workspace, isolated smoke binaries. <strong>No PR leaves the repo describing a wire or a
+  scaffold that doesn't exist yet.</strong></p>
+
+  <div class="kv">
+    <div class="row"><div class="k">PR0</div><div class="v"><strong>Drift + source of record</strong> —
+      independent, ships first. This spec; supersedes-notes into the 2026-06-10 broker design
+      (S3/KV phasing) and v1-roadmap item #2; fix live drift — server.json:32 "Five runtimes",
+      examples/README.md counts, examples/demo.py "FIVE", CONTRIBUTING stale layout notes,
+      RuntimeKind::Go doc comment (config.rs:802 still claims line-JSON); gitignore __pycache__ +
+      the committed echo-go binary; CLAUDE.md lockstep list gains server.json,
+      examples/README.md, examples/demo.py, templates/.</div></div>
+    <div class="row"><div class="k">PR1</div><div class="v"><strong>riz-wasm on the current wire</strong> (R1 core) —
+      crates/riz-wasm wrapping the <em>current</em> envelope and <em>current</em> pg_query ABI:
+      zero src/ transport changes. Migrate echo-wasm and orders-wasm (broker-wasm and guard-wasm
+      stay raw-extern deliberately — adversarial ABI fixtures; tests/fixtures/ is scan-exempt).
+      Static conformance layer (examples scope) + claims entry.
+      <span class="why">publish riz-wasm to crates.io at the end of this PR (or pin a git dep) —
+      before any template depends on it</span></div></div>
+    <div class="row"><div class="k">PR2</div><div class="v"><strong>Templates six-pack + riz new</strong> (R3) —
+      renames; real-TypeScript node template; wasm-http rewritten on riz-wasm as wasm-rust
+      (deleting its hand-written stdin loop); websocket templates deleted; BUILTINS categories;
+      conformance extended to templates/; template_smoke_all lands (isolated binary; CLAUDE.md
+      test commands updated); README / web/start.html / CAPABILITY-CARD / llms.txt swept.</div></div>
+    <div class="row"><div class="k">PR3</div><div class="v"><strong>Examples reshuffle</strong> (R3) —
+      parity legs + chat mirrors to tests/fixtures/parity/ (fix echo-python drift); delete
+      ping/accounts; re-point fleets and suites; examples/README showcase index;
+      web/examples.html claim rewrite.</div></div>
+    <div class="row"><div class="k">PR4</div><div class="v"><strong>Guest ABI v2</strong> —
+      single riz_capability.call dispatcher import; delete pg_query; riz-wasm internals updated,
+      author API unchanged (the shim absorbing this churn is why it shipped first). A sanctioned
+      pre-1.0 ABI break under the greenfield rule: riz-wasm 0.2 publishes in lockstep; a binary
+      still importing pg_query fails closed at module load with an actionable error naming the
+      stale import ("rebuild against riz-wasm ≥ 0.2"). Raw-extern fixtures update here.</div></div>
+    <div class="row"><div class="k">PR5</div><div class="v"><strong>Broker to daemon + real pool</strong>
+      (R2/R4 pivot, one PR — an interim daemon-side <em>unpooled</em> client would serialize all
+      functions' pg traffic and is explicitly rejected). UDS service, token handshake,
+      per-(function,grant) limit state, sync child client (child loses its tokio runtime),
+      sqlx::PgPool with max_connections, RIZ_BROKER_RESOURCES/--broker-grants deleted,
+      merge-blocking desync + tombstone tests, deny.toml/SBOM review for the sqlx tree.
+      Capstone in the same PR: orders-wasm gains its pg grant — the capability flagship PR12
+      markets. <span class="why">deadpool-postgres over tokio-postgres is the pre-agreed fallback
+      if sqlx fails the gate — owner sign-off, open question 1</span></div></div>
+    <div class="row"><div class="k">PR6</div><div class="v"><strong>Env scrubbing</strong> —
+      env_clear + per-runtime allowlist (ordering: env_clear precedes explicit .env() calls;
+      AWS_LAMBDA_* preserved for RuntimeApi workers); [function.X.env] escape hatch documented;
+      all-six e2e smoke + secrets canary test in the same PR.</div></div>
+    <div class="row"><div class="k">PR7</div><div class="v"><strong>http capability</strong> + SSRF hardening.</div></div>
+    <div class="row"><div class="k">PR8</div><div class="v"><strong>dynamo capability</strong> —
+      aws-sigv4 crates; AWS test vectors + a mock that recomputes and byte-compares signatures;
+      deny.toml/SBOM gate review for aws-sigv4 + aws-credential-types.</div></div>
+    <div class="row"><div class="k">PR9</div><div class="v"><strong>supabase + clerk</strong> —
+      thin backends over the http machinery; pinned tests; security.html confinement statements.
+      Each capability's web/ claim lands only with its pinned test, per repo rule.</div></div>
+    <div class="row"><div class="k">PR10</div><div class="v"><strong>RWP framed wire</strong> —
+      proto.rs codec + adapter updates + RIZ_WIRE negotiation + admission free-list + AOT cache
+      (blake3 dep passes the same deny.toml/SBOM gate review); bench re-run and all four headline
+      surfaces updated <strong>in the same commit</strong>.</div></div>
+    <div class="row"><div class="k">PR11</div><div class="v"><strong>Opt-in multiplexing</strong> —
+      only with bench evidence; default 1; crash-with-inflight regression tests.</div></div>
+    <div class="row"><div class="k">PR12</div><div class="v"><strong>Positioning sweep</strong> —
+      "Lambda-shaped handlers, unmodified" extended across all six runtimes; "no riz library"
+      re-scoped to Rust/Go with "riz-wasm shim" alongside; CONTRIBUTING new-runtime recipe
+      rewritten around the two sanctioned transports; CAPABILITY-CARD roadmap row (S3+KV)
+      replaced by the shipped suite; orders-wasm capability-flagship arc told on web/.</div></div>
+  </div>
+</section>
+
+<!-- ================= ASSURANCE ================= -->
+<section id="assurance">
+  <div class="sec-eyebrow">Assurance</div>
+  <h2>Testing strategy</h2>
+  <ul class="facts">
+    <li><b>Capability integration tests</b>, one per capability, mirroring the proven
+      wasm_broker_pg process-tree pattern (riz → __wasm-host → guest → UDS → daemon → mock
+      backend): http (local origin asserting auth-header injection, origin pinning, denied
+      absolute-URL attempt, too_large) · dynamo (mock that <em>verifies SigV4 canonicalization</em>
+      before answering) · supabase (PostgREST-shaped mock) · clerk (local JWKS + minted JWT).</li>
+    <li><b>Broker cross-cutting</b>: per-function limit tombstone (concurrency=4 workers, grant
+      max_inflight=1, 4 simultaneous calls → exactly 1 admitted, 3 throttled) · scrubbed-env
+      assertion · missing-secret-at-startup failure · closed-error-set exhaustiveness ·
+      daemon-kill mid-call desync (guest receives <code>error{code:backend}</code>, worker
+      survives, next invocation succeeds) — merge-blocking, not follow-ups.</li>
+    <li><b>Transport</b>: codec property tests (roundtrip, truncated header, oversize, unknown
+      type) · wire-version fallback (RIZ_WIRE absent → line-JSON still answers) · multiplex
+      correctness (distinct payloads on one worker, matched by id, no cross-talk) ·
+      crash-with-inflight (all ids 502, breaker +1 exactly) · backpressure ladder (saturation →
+      429, never queued) · AOT warm/cold/corrupt/version-mismatch · free-list property test over
+      respawn interleavings.</li>
+    <li><b>Nextest discipline</b>: the leak signal is load-bearing — the broker service gets an
+      explicit shutdown path and every new child (scaffolded fleets, __wasm-host under the new
+      topology) tears down deterministically; the two smoke binaries stay excluded from the
+      default filter.</li>
+  </ul>
+
+  <h2 style="margin-top:48px">Risks</h2>
+  <div class="excl">
+    <div class="x">1 · aws_lambda_events may not compile to wasm32-wasip1</div>
+    <p>chrono/http feature graph. Mitigated: typed events are a feature, the Value path is
+    guaranteed, CI verifies the target before the template ships.</p>
+    <div class="x">2 · sqlx's tree may trip the deny.toml/SBOM gate</div>
+    <p>Mitigated: the PgBackend trait keeps the swap contained; deadpool-postgres fallback
+    pre-agreed (open question 1).</p>
+    <div class="x">3 · env_clear breaks workers relying on inherited vars</div>
+    <p>Mitigated: explicit per-runtime allowlist, escape hatch, all-six smoke + canary in the
+    same PR.</p>
+    <div class="x">4 · broker shares fate with HTTP serving</div>
+    <p>It moves into the gateway process. Mitigated by the supervised accept loop, bounded
+    buffers, connection bounds, and the merge-blocking desync test.</p>
+    <div class="x">5 · template_smoke_all builds three toolchains per CI run</div>
+    <p>Mitigated: cached target dirs, isolated binary outside the default filter, an explicit
+    flake budget — otherwise it gets deleted in anger within a month.</p>
+    <div class="x">6 · wire cutover invalidates published bench numbers</div>
+    <p>Mitigated by the atomic re-baseline rule and the #61 dispatch floor staying green.</p>
+    <div class="x">7 · static conformance scanning is gameable and false-positive-prone</div>
+    <p>It is the fast layer only; the behavioral layer (template boot-smoke + parity matrix) is
+    the real guarantee.</p>
+  </div>
+
+  <h2 style="margin-top:48px">Open questions — recommendation attached</h2>
+  <div class="kv">
+    <div class="row"><div class="k">1 · pool crate</div><div class="v">Does R2's "sqlx pool" bind
+      to the crate or to "a shared host-side pool"?
+      <span class="rec">recommend: sqlx first; deadpool-postgres over the proven tokio-postgres
+      if the supply-chain gate objects</span></div></div>
+    <div class="row"><div class="k">2 · node floor</div><div class="v">Node ≥ 22.18 native type
+      stripping, or keep .mjs and read the target as "Node, TS-friendly"?
+      <span class="rec">recommend: ≥ 22.18, preflight-checked at scaffold</span></div></div>
+    <div class="row"><div class="k">3 · supabase scope</div><div class="v">supabase.rest +
+      PG-wire now; Storage/Auth verbs later?
+      <span class="rec">recommend: rest + pg now, defer the rest</span></div></div>
+    <div class="row"><div class="k">4 · clerk verbs</div><div class="v">get_user + verify_token,
+      or a wider Backend-API passthrough?
+      <span class="rec">recommend: the two verbs</span></div></div>
+    <div class="row"><div class="k">5 · non-WASM SDKs</div><div class="v">Keep grants WASM-only
+      this cycle with the UDS+token path documented, or pull @riz/capabilities (bun/node) into
+      scope now?
+      <span class="rec">recommend: WASM-only this cycle</span></div></div>
+    <div class="row"><div class="k">6 · platform</div><div class="v">The UDS + 0700 socket model
+      assumes unix — darwin+linux remains the commitment?
+      <span class="rec">recommend: yes</span></div></div>
+    <div class="row"><div class="k">7 · example pruning</div><div class="v">Deleting ping +
+      accounts is in PR3 per the greenfield rule; say the word to keep the roster stable
+      instead.
+      <span class="rec">recommend: delete</span></div></div>
+  </div>
+
+  <h2 style="margin-top:48px">Supersedes</h2>
+  <ul class="facts">
+    <li><code>docs/superpowers/specs/2026-06-10-wasm-resource-broker-design.md</code> — the
+      threat model, dispatcher ordering, and closed error set carry forward unchanged; the
+      <em>phasing</em> (v1.1 KV / v2 S3+Dynamo / v2 http_fetch / v3 WIT) is replaced by this
+      document's capability suite and PR sequence. KV and S3 verbs are no longer planned for
+      this cycle.</li>
+    <li><code>docs/plans/v1-roadmap.md</code> item #2 — the stdin-adapter mechanics described
+      there are replaced by riz-wasm + RWP; the wasm template lands via PR2 here.</li>
+  </ul>
+</section>
+
+<hr class="rule">
+<footer>
+  <span>riz · lambda-shape purity &amp; WASM capability suite spec</span>
+  <span>docs/superpowers/specs/2026-07-19 · verified @ cfbda12 (v0.2.2)</span>
+</footer>
+
+</div>
+</body>
+</html>
