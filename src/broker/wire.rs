@@ -114,7 +114,10 @@ impl Frame {
             .try_into()
             .map_err(|_| WireError::Truncated)?;
         let call_id = u64::from_le_bytes(id_bytes);
-        let payload = body.get(HEADER_TAIL..).ok_or(WireError::Truncated)?.to_vec();
+        let payload = body
+            .get(HEADER_TAIL..)
+            .ok_or(WireError::Truncated)?
+            .to_vec();
         Ok(Frame {
             ver,
             frame_type,
@@ -235,7 +238,9 @@ mod tests {
 
     #[test]
     fn unknown_type_decodes_not_panics() {
-        let mut bytes = Frame::new(FrameType::Call, 1, b"x".to_vec()).encode().unwrap();
+        let mut bytes = Frame::new(FrameType::Call, 1, b"x".to_vec())
+            .encode()
+            .unwrap();
         bytes[5] = 99; // frame_type byte
         let f = Frame::decode_body(&bytes[4..]).expect("decode");
         assert_eq!(f.frame_type, FrameType::Unknown(99));
@@ -257,7 +262,10 @@ mod tests {
 
     #[test]
     fn short_declared_len_is_rejected() {
-        assert_eq!(Frame::declared_body_len(3u32.to_le_bytes()), Err(WireError::Truncated));
+        assert_eq!(
+            Frame::declared_body_len(3u32.to_le_bytes()),
+            Err(WireError::Truncated)
+        );
     }
 
     #[test]

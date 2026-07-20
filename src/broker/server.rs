@@ -76,7 +76,10 @@ impl BrokerHandle {
             ("RIZ_BROKER_TOKEN".to_string(), token.clone()),
             (
                 "RIZ_BROKER_TIMEOUT_MS".to_string(),
-                self.shared.max_call_timeout_ms.saturating_add(250).to_string(),
+                self.shared
+                    .max_call_timeout_ms
+                    .saturating_add(250)
+                    .to_string(),
             ),
         ]
     }
@@ -116,7 +119,10 @@ impl BrokerService {
         for (name, func) in &granted {
             let backends = super::pg::backends_for_function(&func.capabilities, &config.resources)
                 .map_err(|e| anyhow::anyhow!("broker setup for function '{name}': {e}"))?;
-            brokers.insert((*name).clone(), Arc::new(Broker::new(&func.capabilities, backends)));
+            brokers.insert(
+                (*name).clone(),
+                Arc::new(Broker::new(&func.capabilities, backends)),
+            );
             let token = mint_token_hex()?;
             tokens.insert(token.clone(), (*name).clone());
             function_token.insert((*name).clone(), token);

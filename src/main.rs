@@ -1342,9 +1342,8 @@ async fn async_main() -> anyhow::Result<()> {
     let broker_service = broker::server::BrokerService::start(&config).await?;
     let broker_handle = broker_service.as_ref().map(|s| s.handle());
 
-    let process_manager = Arc::new(
-        process::ProcessManager::new(riz_state.clone()).with_broker(broker_handle),
-    );
+    let process_manager =
+        Arc::new(process::ProcessManager::new(riz_state.clone()).with_broker(broker_handle));
 
     // Spawn one process pool per function. Each spawned process bumps
     // cold_starts on the matching FunctionState.

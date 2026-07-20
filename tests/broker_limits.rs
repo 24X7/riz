@@ -82,9 +82,9 @@ async fn max_inflight_admits_one_and_throttles_the_rest() {
     for _ in 0..CALLERS {
         let broker = broker.clone();
         let req = req.clone();
-        handles.push(tokio::spawn(
-            async move { broker.dispatch("pg.query", "db", &req).await },
-        ));
+        handles.push(tokio::spawn(async move {
+            broker.dispatch("pg.query", "db", &req).await
+        }));
     }
 
     // Let the admitted call reach the (now blocked) backend and the rest get
