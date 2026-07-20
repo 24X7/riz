@@ -19,6 +19,15 @@ All notable changes to riz are documented here. The format follows
   conformance test, and `tests/template_smoke_all.rs` scaffolds, builds, and
   boots every template as an isolated smoke suite.
 
+### Security
+
+- Workers no longer inherit the daemon's full environment. Every worker is
+  spawned with `env_clear()` plus a conservative allowlist (PATH, HOME, locale,
+  TLS-root and proxy vars, and riz's own non-secret control vars), so a
+  resource DSN or any other daemon secret lives in exactly one process — the
+  daemon. A function's own `[function.X.env]` remains the documented escape
+  hatch. Enforced by a secrets-canary test.
+
 ### Fixed
 
 - Lambda proxy responses with `null` or missing `cookies` / `headers` /

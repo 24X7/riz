@@ -140,6 +140,50 @@ pub(super) async fn spawn_with_cold_start_record(
     Ok(handle)
 }
 
+/// The only daemon-env vars a worker inherits after `env_clear()`. Everything
+/// else — DSNs, API keys, the daemon's own secrets — stays in the daemon.
+/// This is deliberately conservative: a runtime that provably needs another
+/// var earns it here (with the all-six e2e smoke as the proof), never a
+/// blanket passthrough. A function's own secrets go through `[function.X.env]`.
+const SCRUBBED_ENV_ALLOWLIST: &[&str] = &[
+    // Toolchain + resolution: find the interpreter/binary and its caches.
+    "PATH",
+    "HOME",
+    "TMPDIR",
+    // Locale + timezone: correct text handling in node/python/bun.
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TZ",
+    "TERM",
+    // TLS roots for a handler's own outbound HTTPS (script runtimes are not
+    // WASI-sandboxed; wasm guests reach the network only through the broker).
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    // Egress proxy configuration, both cases.
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+    // riz's OWN control vars — non-secret, and passed by exact name so a
+    // user's `RIZ_`-prefixed DSN or secret is NOT auto-forwarded (that is the
+    // canary test's guarantee). RIZ_TEST_BASE_URL points a WebSocket handler
+    // at the live @connections endpoint (an ephemeral port under test).
+    "RIZ_TEST_BASE_URL",
+];
+
+/// Copy the allowlisted base vars that are present in the daemon env onto the
+/// child command. Called right after `env_clear()`.
+fn apply_base_env(cmd: &mut tokio::process::Command) {
+    for &key in SCRUBBED_ENV_ALLOWLIST {
+        if let Some(val) = std::env::var_os(key) {
+            cmd.env(key, val);
+        }
+    }
+}
+
 #[tracing::instrument(skip(cfg, registry, log_tx, broker_env), fields(handler = ?cfg.handler, runtime = ?cfg.runtime))]
 pub(super) async fn spawn_process(
     cfg: &FunctionConfig,
@@ -152,6 +196,15 @@ pub(super) async fn spawn_process(
     let transport_kind = runtime.transport();
     tracing::debug!(runtime = runtime.name(), handler = ?cfg.handler, ?transport_kind, "spawning lambda process");
     let mut cmd = runtime.spawn_command(cfg);
+
+    // SCRUB THE ENVIRONMENT. A worker must not inherit the daemon's full env —
+    // that is where resource DSNs and other secrets live, and secrets exist in
+    // exactly one process (the daemon). `spawn_command` set only program+argv
+    // (the adapters never touch env), so clearing here is safe, and it MUST
+    // come before every `.env()` below — including the AWS_LAMBDA_* vars a
+    // RuntimeApi worker needs, which are re-added explicitly.
+    cmd.env_clear();
+    apply_base_env(&mut cmd);
 
     // Broker env for a granted wasm worker: its per-function token + socket.
     // Empty for grantless functions. Set before the per-function env below so
@@ -446,6 +499,23 @@ mod tests {
             msg.contains("failed to spawn"),
             "generic context kept: {msg}"
         );
+    }
+
+    #[test]
+    fn scrub_allowlist_excludes_secrets_and_dsns() {
+        // The allowlist is a passthrough set for non-secret toolchain/locale
+        // vars; a DSN or secret-shaped name must never be on it (those reach a
+        // worker only via the explicit `[function.X.env]` escape hatch).
+        assert!(SCRUBBED_ENV_ALLOWLIST.contains(&"PATH"));
+        assert!(!SCRUBBED_ENV_ALLOWLIST.contains(&"RIZ_PG_MAIN_DSN"));
+        assert!(!SCRUBBED_ENV_ALLOWLIST.contains(&"RIZ_SECRET_CANARY"));
+        assert!(!SCRUBBED_ENV_ALLOWLIST.contains(&"DATABASE_URL"));
+        // riz's own control vars are allowed by EXACT name, never a RIZ_*
+        // wildcard — so a user's RIZ_-prefixed secret is not swept in.
+        assert!(SCRUBBED_ENV_ALLOWLIST.contains(&"RIZ_TEST_BASE_URL"));
+        assert!(SCRUBBED_ENV_ALLOWLIST
+            .iter()
+            .all(|v| *v != "RIZ_BROKER_TOKEN"));
     }
 
     /// A stdio child spawned WITHOUT piped stdin must surface as a spawn
