@@ -30,6 +30,18 @@ All notable changes to riz are documented here. The format follows
   SIGTERM drain — and asserts riz survives with no orphaned processes. Added
   as `tests/perf_regression.rs` and `tests/chaos.rs` (isolated CI steps).
 
+- **`dynamo` brokered capability.** A WASM guest reads/writes DynamoDB
+  through the broker: `dynamo.get_item | put_item | query | delete_item` over
+  the DynamoDB JSON 1.0 HTTP API. The daemon injects `TableName`, **SigV4-signs
+  the request host-side** (via the maintained `aws-sigv4` crate — never
+  hand-rolled, never the full AWS SDK), and never lets a key or a signature
+  cross to the guest. `mode = "read-only"` restricts the op set to
+  `GetItem`/`Query`; a grant `key_prefix` constrains partition-key values,
+  enforced before signing. `[resources.dynamo.<name>]` (region/table/
+  endpoint_url/credential envs). Guest API: `riz_wasm::cap::dynamo`. Signing
+  correctness is proven by a mock that independently re-signs each request and
+  byte-compares the signature.
+
 - **`http` brokered capability.** A WASM guest can now reach an outbound HTTP
   origin through the broker: `[resources.http.<name>]` pins the origin
   (`base_url`) and the daemon injects auth host-side, so the guest names a

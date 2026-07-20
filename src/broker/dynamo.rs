@@ -87,8 +87,9 @@ impl DynamoBackend {
             let env = name
                 .as_ref()
                 .ok_or_else(|| format!("dynamo resource requires {what} in v1"))?;
-            std::env::var(env)
-                .map_err(|_| format!("dynamo {what} env '{env}' is not set in the host environment"))
+            std::env::var(env).map_err(|_| {
+                format!("dynamo {what} env '{env}' is not set in the host environment")
+            })
         };
         let access_key_id = resolve(&res.access_key_id_env, "access_key_id_env")?;
         let secret_access_key = resolve(&res.secret_access_key_env, "secret_access_key_env")?;
@@ -125,8 +126,8 @@ impl DynamoBackend {
         read_only: bool,
         key_prefix: Option<&str>,
     ) -> Result<PgRows, String> {
-        let op = DynamoOp::from_verb(verb)
-            .ok_or_else(|| format!("unknown dynamo verb '{verb}'"))?;
+        let op =
+            DynamoOp::from_verb(verb).ok_or_else(|| format!("unknown dynamo verb '{verb}'"))?;
         if read_only && !op.is_read_only() {
             return Err(format!(
                 "grant is read-only; '{verb}' is a mutating operation"
@@ -174,7 +175,8 @@ impl DynamoBackend {
         if !(200..300).contains(&status) {
             return Err(format!("dynamo returned {status}: {text}"));
         }
-        let value: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+        let value: serde_json::Value =
+            serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
         Ok(PgRows {
             rows: vec![serde_json::json!({ "status": status, "body": value })],
         })
@@ -210,9 +212,13 @@ impl DynamoBackend {
             ("content-type", "application/x-amz-json-1.0"),
             ("x-amz-target", op.target()),
         ];
-        let signable =
-            SignableRequest::new("POST", &self.endpoint, headers.into_iter(), SignableBody::Bytes(body))
-                .map_err(|e| format!("sigv4 signable: {e}"))?;
+        let signable = SignableRequest::new(
+            "POST",
+            &self.endpoint,
+            headers.into_iter(),
+            SignableBody::Bytes(body),
+        )
+        .map_err(|e| format!("sigv4 signable: {e}"))?;
         let out = sign(signable, &params).map_err(|e| format!("sigv4 sign: {e}"))?;
         let (instructions, _sig) = out.into_parts();
         Ok(instructions
@@ -298,12 +304,16 @@ secret_access_key_env = "RIZ_DDB_SK"
             "credential scope: {auth}"
         );
         assert!(
-            auth.contains("SignedHeaders=") && auth.contains("host") && auth.contains("x-amz-target"),
+            auth.contains("SignedHeaders=")
+                && auth.contains("host")
+                && auth.contains("x-amz-target"),
             "signed headers: {auth}"
         );
         assert!(auth.contains("Signature="), "signature present: {auth}");
         assert!(
-            headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("x-amz-date")),
+            headers
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("x-amz-date")),
             "x-amz-date added"
         );
     }
@@ -318,14 +328,12 @@ secret_access_key_env = "RIZ_DDB_SK"
 
     #[test]
     fn key_prefix_enforced_on_key_and_item() {
-        let mut ok: serde_json::Map<String, serde_json::Value> = serde_json::from_str(
-            r#"{"Key": {"pk": {"S": "tenant-42#order-1"}}}"#,
-        )
-        .unwrap();
-        assert!(enforce_key_prefix(DynamoOp::GetItem, &mut ok, "tenant-42#").is_ok());
+        let ok: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(r#"{"Key": {"pk": {"S": "tenant-42#order-1"}}}"#).unwrap();
+        assert!(enforce_key_prefix(DynamoOp::GetItem, &ok, "tenant-42#").is_ok());
 
-        let mut bad: serde_json::Map<String, serde_json::Value> =
+        let bad: serde_json::Map<String, serde_json::Value> =
             serde_json::from_str(r#"{"Key": {"pk": {"S": "tenant-99#x"}}}"#).unwrap();
-        assert!(enforce_key_prefix(DynamoOp::GetItem, &mut bad, "tenant-42#").is_err());
+        assert!(enforce_key_prefix(DynamoOp::GetItem, &bad, "tenant-42#").is_err());
     }
 }
