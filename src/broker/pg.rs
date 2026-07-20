@@ -6,13 +6,17 @@
 //! story); `sslmode=disable` DSNs use plain TCP (local PG, CI mocks).
 //!
 //! Production posture:
-//! - **Lazy connect, self-healing**: the connection is established on first
-//!   use and dropped on any connection-level error so the next call
-//!   reconnects — a flapping backend degrades to per-call errors, never a
-//!   wedged worker.
+//! - **Shared host-side pool**: one `deadpool` pool of tokio-postgres clients
+//!   per `[resources.pg.<name>]`, sized by `max_connections`. Every granted
+//!   function and every worker shares it — the connection cap is on the
+//!   backend, never multiplied by `concurrency`. A brokered call waits at
+//!   most `acquire_timeout_ms` for a free connection before the dispatcher
+//!   returns `throttled`. A recycled connection that has died is dropped and
+//!   replaced by the pool — a flapping backend degrades to per-call errors,
+//!   never a wedged host.
 //! - **Server-side statement timeout** (`[resources.pg.x] statement_timeout_ms`)
-//!   is applied on connect — a second line of defense behind the broker's
-//!   own per-call deadline.
+//!   is applied on every new connection — a second line of defense behind the
+//!   broker's own per-call deadline.
 //! - **read-only grants** run every query inside a `READ ONLY` transaction:
 //!   writes are refused by Postgres itself, not by SQL inspection.
 //! - **Params are text-typed** (`$1::int` style casts in SQL when a typed
@@ -22,19 +26,19 @@
 use super::{PgBackend, PgRows};
 use crate::config::PgResourceConfig;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio_postgres::types::Type;
 
 pub struct TokioPgBackend {
-    dsn: String,
-    statement_timeout_ms: u64,
-    /// Lazily-established client; dropped on connection errors so the next
-    /// call reconnects.
-    client: tokio::sync::Mutex<Option<tokio_postgres::Client>>,
+    pool: deadpool_postgres::Pool,
+    acquire_timeout: Duration,
 }
 
 impl TokioPgBackend {
-    /// Build from a resource config; resolves the DSN from `dsn_env` NOW so
-    /// a missing env var is a startup error, not a first-request surprise.
+    /// Build from a resource config; resolves the DSN from `dsn_env` NOW so a
+    /// missing env var is a daemon-startup error, not a first-request
+    /// surprise. Constructs the shared pool but does not connect yet — pooled
+    /// connections open lazily and self-heal.
     pub fn from_resource(res: &PgResourceConfig) -> Result<Self, String> {
         let dsn = std::env::var(&res.dsn_env).map_err(|_| {
             format!(
@@ -42,64 +46,74 @@ impl TokioPgBackend {
                 res.dsn_env
             )
         })?;
-        Ok(Self {
-            dsn,
-            statement_timeout_ms: res.statement_timeout_ms,
-            client: tokio::sync::Mutex::new(None),
-        })
-    }
-
-    async fn connect(&self) -> Result<tokio_postgres::Client, String> {
         let pg_config: tokio_postgres::Config =
-            self.dsn.parse().map_err(|e| format!("invalid DSN: {e}"))?;
+            dsn.parse().map_err(|e| format!("invalid DSN: {e}"))?;
         let use_tls = !matches!(
             pg_config.get_ssl_mode(),
             tokio_postgres::config::SslMode::Disable
         );
+        let statement_timeout_ms = res.statement_timeout_ms;
 
-        let client = if use_tls {
+        let mgr_config = deadpool_postgres::ManagerConfig {
+            recycling_method: deadpool_postgres::RecyclingMethod::Fast,
+        };
+        let manager = if use_tls {
             let mut roots = rustls::RootCertStore::empty();
             roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
             let tls_config = rustls::ClientConfig::builder()
                 .with_root_certificates(roots)
                 .with_no_client_auth();
             let tls = tokio_postgres_rustls::MakeRustlsConnect::new(tls_config);
-            let (client, connection) = pg_config
-                .connect(tls)
-                .await
-                .map_err(|e| format!("pg connect (tls) failed: {e}"))?;
-            // The connection future drives the socket; it ends when the
-            // client drops or the backend hangs up.
-            tokio::spawn(async move {
-                if let Err(e) = connection.await {
-                    tracing::warn!(target: "riz::broker", "pg connection ended: {e}");
-                }
-            });
-            client
+            deadpool_postgres::Manager::from_config(pg_config, tls, mgr_config)
         } else {
-            let (client, connection) = pg_config
-                .connect(tokio_postgres::NoTls)
-                .await
-                .map_err(|e| format!("pg connect failed: {e}"))?;
-            tokio::spawn(async move {
-                if let Err(e) = connection.await {
-                    tracing::warn!(target: "riz::broker", "pg connection ended: {e}");
-                }
-            });
-            client
+            // deadpool's Manager is generic over the TLS connector; NoTls and
+            // the rustls connector are distinct types, so each branch builds
+            // its own Manager and pool. Boxed behind the same Pool type below.
+            return Self::no_tls_pool(pg_config, mgr_config, statement_timeout_ms, res);
         };
-
-        // Server-side statement timeout — defense in depth behind the
-        // broker's per-call deadline.
-        client
-            .batch_execute(&format!(
-                "SET statement_timeout = {}",
-                self.statement_timeout_ms
-            ))
-            .await
-            .map_err(|e| format!("failed to set statement_timeout: {e}"))?;
-        Ok(client)
+        let pool = deadpool_postgres::Pool::builder(manager)
+            .max_size(res.max_connections as usize)
+            .post_create(post_create_hook(statement_timeout_ms))
+            .build()
+            .map_err(|e| format!("pg pool build failed: {e}"))?;
+        Ok(Self {
+            pool,
+            acquire_timeout: Duration::from_millis(res.acquire_timeout_ms),
+        })
     }
+
+    fn no_tls_pool(
+        pg_config: tokio_postgres::Config,
+        mgr_config: deadpool_postgres::ManagerConfig,
+        statement_timeout_ms: u64,
+        res: &PgResourceConfig,
+    ) -> Result<Self, String> {
+        let manager =
+            deadpool_postgres::Manager::from_config(pg_config, tokio_postgres::NoTls, mgr_config);
+        let pool = deadpool_postgres::Pool::builder(manager)
+            .max_size(res.max_connections as usize)
+            .post_create(post_create_hook(statement_timeout_ms))
+            .build()
+            .map_err(|e| format!("pg pool build failed: {e}"))?;
+        Ok(Self {
+            pool,
+            acquire_timeout: Duration::from_millis(res.acquire_timeout_ms),
+        })
+    }
+}
+
+/// A `post_create` hook that stamps the server-side statement timeout onto
+/// every freshly-opened pooled connection.
+fn post_create_hook(statement_timeout_ms: u64) -> deadpool_postgres::Hook {
+    deadpool_postgres::Hook::async_fn(move |client, _| {
+        Box::pin(async move {
+            client
+                .batch_execute(&format!("SET statement_timeout = {statement_timeout_ms}"))
+                .await
+                .map_err(deadpool_postgres::HookError::Backend)?;
+            Ok(())
+        })
+    })
 }
 
 #[async_trait::async_trait]
@@ -110,34 +124,18 @@ impl PgBackend for TokioPgBackend {
         params: &[serde_json::Value],
         read_only: bool,
     ) -> Result<PgRows, String> {
-        let mut guard = self.client.lock().await;
-        if guard.is_none() {
-            *guard = Some(self.connect().await?);
-        }
-        let Some(client) = guard.as_mut() else {
-            // Unreachable by the two lines above — but a broker must fail
-            // CLOSED, never panic: a panicking broker kills the whole wasm
-            // host, so an impossible state denies this one call instead.
-            return Err("pg backend: no client after connect".to_string());
-        };
-
-        let result = run_query(client, sql, params, read_only).await;
-        match result {
-            Ok(rows) => Ok(rows),
-            Err(e) => {
-                // Connection-level failure → drop the client so the next
-                // call reconnects. Query-level errors keep the connection.
-                if client.is_closed() {
-                    *guard = None;
-                }
-                Err(e)
-            }
-        }
+        // Wait at most acquire_timeout for a pooled connection; exhaustion is
+        // surfaced as `throttled` by the dispatcher, never an unbounded wait.
+        let mut client = tokio::time::timeout(self.acquire_timeout, self.pool.get())
+            .await
+            .map_err(|_| "pool acquire timed out".to_string())?
+            .map_err(|e| format!("pool acquire failed: {e}"))?;
+        run_query(&mut client, sql, params, read_only).await
     }
 }
 
 async fn run_query(
-    client: &mut tokio_postgres::Client,
+    client: &mut deadpool_postgres::Object,
     sql: &str,
     params: &[serde_json::Value],
     read_only: bool,
