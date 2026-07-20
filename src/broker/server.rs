@@ -142,7 +142,7 @@ impl BrokerService {
         // enough for warm workers plus a respawn overlap, never unbounded.
         let conn_budget: usize = granted
             .iter()
-            .map(|(_, f)| (f.concurrency as usize).saturating_mul(2).max(2))
+            .map(|(_, f)| f.concurrency.saturating_mul(2).max(2))
             .sum();
 
         let shared = Arc::new(BrokerShared {
