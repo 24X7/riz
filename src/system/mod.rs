@@ -6,6 +6,7 @@ pub mod health;
 pub mod mcp;
 pub mod metrics;
 pub mod openai_compat;
+pub mod openapi;
 pub mod ready;
 pub mod registry;
 
@@ -39,6 +40,7 @@ pub fn system_surface(config: &crate::config::Config) -> Vec<(&'static str, Vec<
         ),
         ("_riz_deploy", vec!["POST /deploy".into()]),
         ("_riz_cache", vec!["POST /cache/invalidate".into()]),
+        ("_riz_openapi", vec!["GET /openapi.json".into()]),
     ];
     if config.gateway.enabled() {
         out.push((
