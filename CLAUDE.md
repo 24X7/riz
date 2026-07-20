@@ -37,9 +37,12 @@ Run before every push (CI enforces all of them):
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 ./scripts/safety-check.sh --gate
-cargo nextest run --workspace -E 'not binary(e2e_smoke_all) and not binary(template_smoke_all)'
+cargo nextest run --workspace -E 'not binary(e2e_smoke_all) and not binary(template_smoke_all) and not binary(perf_regression) and not binary(chaos)'
 cargo nextest run --test e2e_smoke_all   # isolated: boots the example fleet
 cargo nextest run --test template_smoke_all  # isolated: scaffolds + boots all six templates
+cargo nextest run --test perf_regression --no-capture  # isolated: throughput/latency floor + trend
+cargo nextest run --test chaos               # isolated: deliberate fault injection
+# or the whole flow in one command: scripts/validate.sh
 ```
 
 - **cargo-nextest only, never `cargo test`** — process-per-test isolation and

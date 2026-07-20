@@ -98,7 +98,7 @@ jobs:
       # itself. Both steps are in this gating job, so either failing fails CI.
       - name: cargo nextest run (unit + integration, excl. e2e fleet)
         # --no-fail-fast: surface every failure in one run, not just the first.
-        run: cargo nextest run --workspace --no-fail-fast -E 'not binary(e2e_smoke_all) and not binary(template_smoke_all)'
+        run: cargo nextest run --workspace --no-fail-fast -E 'not binary(e2e_smoke_all) and not binary(template_smoke_all) and not binary(perf_regression) and not binary(chaos)'
 
       # The end-to-end smoke harness, isolated so the full example fleet has the
       # whole runner. Boots the real riz binary against examples/riz.all.toml and
@@ -112,6 +112,20 @@ jobs:
       # (tests/template_smoke_all.rs). Isolated for the same reason as above.
       - name: cargo nextest run (template smoke — scaffold + boot all six, isolated)
         run: cargo nextest run --test template_smoke_all
+
+      # Performance floor + trend, scoped to the built binary. Machine-portable
+      # asserts (floor + tail ratios) always run; the tight baseline band is
+      # opt-in via RIZ_PERF_GATE so a noisy runner never flakes.
+      - name: cargo nextest run (perf regression — floor + trend, isolated)
+        run: cargo nextest run --test perf_regression --no-capture
+
+      # Deliberate fault injection (saturation, worker crash, breaker, broker
+      # loss, SIGTERM drain, no orphans). Isolated so chaos never flakes the
+      # main suite.
+      - name: cargo nextest run (chaos — fault injection, isolated)
+        # Cap parallelism: 6 fault-injection tests each boot a riz fleet;
+        # a small runner contends and times out otherwise.
+        run: cargo nextest run --test chaos --test-threads 2
 
   # Supply-chain gate (deny.toml): RUSTSEC advisories, an SPDX license
   # allowlist, banned/wildcard crates, and registry provenance. Advisories are

@@ -21,6 +21,15 @@ All notable changes to riz are documented here. The format follows
 
 ### Added
 
+- **End-to-end validation flow.** `scripts/validate.sh` runs the whole
+  proof-of-life in one command against the built binary: the example fleet
+  (all six runtimes + control plane), the `riz new` scaffold journey, a
+  performance floor + trend (HTTP and brokered-capability throughput/latency),
+  and a chaos suite that deliberately injects failures — pool saturation,
+  worker SIGKILL, the crash-loop circuit breaker, broker backend loss, and
+  SIGTERM drain — and asserts riz survives with no orphaned processes. Added
+  as `tests/perf_regression.rs` and `tests/chaos.rs` (isolated CI steps).
+
 - **`http` brokered capability.** A WASM guest can now reach an outbound HTTP
   origin through the broker: `[resources.http.<name>]` pins the origin
   (`base_url`) and the daemon injects auth host-side, so the guest names a
