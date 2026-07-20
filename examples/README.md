@@ -1,10 +1,18 @@
 # riz Examples
 
-**Templates are starting points; examples are proof.** Every handler here is
-authored as a pure AWS Lambda handler — event in, response out, never an event
-loop — and `tests/lambda_shape_conformance.rs` enforces that statically for
-every file in this tree. Scaffolding lives in `templates/` (`riz new --list`);
-these are showcase apps you read, boot, and steal from.
+**Templates start you fast; starters are full apps; examples are proof.** Every
+handler here is authored as a pure AWS Lambda handler — event in, response out,
+never an event loop — and `tests/lambda_shape_conformance.rs` enforces that
+statically for every file in this tree. Three tiers, and which one a scaffold is
+is a *declared* property (`BuiltinKind`), not a guess from its directory:
+
+- **Templates** (`templates/`) — one minimal per-runtime skeleton, the fast
+  start for a language: `riz new <lang>`.
+- **Starters** (`ai-chat`, `typescript-todo`) — full-stack app skeletons you
+  scaffold and build on: `riz new ai-chat`. They live under `examples/` yet are
+  as scaffoldable as any template — `riz new --list` shows both.
+- **Examples** (`lambdas/`) — showcase handlers you read, boot, and steal from.
+  Not scaffold sources; they are proof, booted by `tests/e2e_smoke_all.rs`.
 
 ## Prerequisites
 

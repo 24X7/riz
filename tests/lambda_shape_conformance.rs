@@ -177,8 +177,8 @@ fn template_set_maps_one_to_one_onto_runtime_kinds() {
     // … and BUILTINS advertises exactly the same six template rows.
     let mut advertised: Vec<String> = riz::template_fetch::BUILTINS
         .iter()
-        .filter(|(_, subdir, ..)| riz::template_fetch::is_template_row(subdir))
-        .map(|(name, ..)| name.to_string())
+        .filter(|b| b.kind == riz::template_fetch::BuiltinKind::Template)
+        .map(|b| b.name.to_string())
         .collect();
     advertised.sort();
     assert_eq!(

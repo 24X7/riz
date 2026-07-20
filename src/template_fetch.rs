@@ -21,59 +21,114 @@ use std::path::{Path, PathBuf};
 /// Overridable via `RIZ_TEMPLATE_REPO` (git URL or local path) for forks/tests.
 const DEFAULT_REPO: &str = "https://github.com/24X7/riz";
 
-/// Built-in templates: (name, subdir-in-repo, scenario, language). These are
-/// the "out of the box" set `riz new --list` shows — still fetched from git,
+/// The role a built-in scaffold plays in `riz new --list`. A *declared*
+/// property, not inferred from the subdir path: the two full-stack starters
+/// live under `examples/` yet are as scaffoldable as any template — the old
+/// `starts_with("templates/")` guess could never express that. Read-only
+/// showcase handlers (`examples/lambdas/*`) are a third tier that is not
+/// scaffoldable and so has no row here at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuiltinKind {
+    /// One minimal per-runtime skeleton — the fast start for a language.
+    /// Exactly one per `RuntimeKind` (lockstep asserted by
+    /// tests/lambda_shape_conformance.rs).
+    Template,
+    /// A full-stack app skeleton (API + client) — a richer starting point,
+    /// still scaffoldable via `riz new`. Fetched from `examples/`.
+    Starter,
+}
+
+/// A built-in scaffold `riz new --list` advertises — still fetched from git,
 /// never embedded. Anyone can also point `riz new` at their own `owner/repo`.
-/// Templates are starting points; examples are proof. The first six rows are
-/// the per-runtime scaffold set (one per `RuntimeKind` variant — a lockstep
-/// asserted by tests/lambda_shape_conformance.rs); rows under `examples/` are
-/// full example starters, listed in their own section.
-pub const BUILTINS: &[(&str, &str, &str, &str)] = &[
-    (
+/// Templates start you fast; starters are full apps; examples are proof.
+pub struct Builtin {
+    /// The `riz new <name>` short name.
+    pub name: &'static str,
+    /// Subdir within the default repo this scaffold is fetched from.
+    pub subdir: &'static str,
+    /// One-word scenario shown in the list.
+    pub scenario: &'static str,
+    /// Human language / stack description.
+    pub language: &'static str,
+    /// Per-runtime template or full-stack starter.
+    pub kind: BuiltinKind,
+}
+
+/// Terse constructor so the table below stays a dense, scannable grid.
+const fn b(
+    name: &'static str,
+    subdir: &'static str,
+    scenario: &'static str,
+    language: &'static str,
+    kind: BuiltinKind,
+) -> Builtin {
+    Builtin {
+        name,
+        subdir,
+        scenario,
+        language,
+        kind,
+    }
+}
+
+pub const BUILTINS: &[Builtin] = &[
+    b(
         "typescript-bun",
         "templates/typescript-bun",
         "HTTP",
         "TypeScript on Bun",
+        BuiltinKind::Template,
     ),
-    (
+    b(
         "typescript-node",
         "templates/typescript-node",
         "HTTP",
         "TypeScript on Node.js (native type stripping, node >= 22.18)",
+        BuiltinKind::Template,
     ),
-    ("python", "templates/python", "HTTP", "Python"),
-    (
+    b(
+        "python",
+        "templates/python",
+        "HTTP",
+        "Python",
+        BuiltinKind::Template,
+    ),
+    b(
         "rust",
         "templates/rust",
         "HTTP",
         "Rust (official lambda_runtime)",
+        BuiltinKind::Template,
     ),
-    ("go", "templates/go", "HTTP", "Go (official aws-lambda-go)"),
-    (
+    b(
+        "go",
+        "templates/go",
+        "HTTP",
+        "Go (official aws-lambda-go)",
+        BuiltinKind::Template,
+    ),
+    b(
         "wasm-rust",
         "templates/wasm-rust",
         "HTTP",
         "Rust → wasm32-wasip1 on riz-wasm (WASI sandbox)",
+        BuiltinKind::Template,
     ),
-    (
+    b(
         "typescript-todo",
         "examples/typescript-todo",
         "Full-stack",
         "TS/Bun API + React/Vite client",
+        BuiltinKind::Starter,
     ),
-    (
+    b(
         "ai-chat",
         "examples/ai-chat",
         "Full-stack AI",
         "React chat UI + Bun agent loop via the LLM gateway",
+        BuiltinKind::Starter,
     ),
 ];
-
-/// True for BUILTINS rows that are per-runtime scaffold templates (vs the
-/// example starters fetched from `examples/`).
-pub fn is_template_row(subdir: &str) -> bool {
-    subdir.starts_with("templates/")
-}
 
 /// A resolved template source.
 #[derive(Debug, Clone, PartialEq)]
@@ -147,17 +202,17 @@ pub fn default_dir_name(spec: &str) -> String {
 /// overrides any `#ref` embedded in the spec.
 pub fn resolve(spec: &str, cli_ref: Option<&str>) -> anyhow::Result<Source> {
     // 1. Built-in name → a subdir of the default repo.
-    if let Some((_, subdir, _, _)) = BUILTINS.iter().find(|(n, ..)| *n == spec) {
+    if let Some(builtin) = BUILTINS.iter().find(|b| b.name == spec) {
         let base = default_repo();
         let reference = cli_ref.map(str::to_string);
         // A local default-repo override (used by tests/forks) → copy locally.
         if looks_local(&base) {
-            return Ok(Source::Local(PathBuf::from(base).join(subdir)));
+            return Ok(Source::Local(PathBuf::from(base).join(builtin.subdir)));
         }
         return Ok(Source::Git {
             repo: base,
             reference,
-            subdir: Some((*subdir).to_string()),
+            subdir: Some(builtin.subdir.to_string()),
         });
     }
 
@@ -499,6 +554,56 @@ mod tests {
                 assert_eq!(subdir.as_deref(), Some("examples/typescript-todo"))
             }
             other => panic!("expected Git, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn builtin_kinds_partition_templates_and_starters() {
+        let templates = BUILTINS
+            .iter()
+            .filter(|b| b.kind == BuiltinKind::Template)
+            .count();
+        let starters = BUILTINS
+            .iter()
+            .filter(|b| b.kind == BuiltinKind::Starter)
+            .count();
+        assert_eq!(templates, 6, "one template per runtime");
+        assert_eq!(starters, 2, "typescript-todo + ai-chat");
+
+        // The kind is declared, but must still agree with where each lives:
+        // templates under templates/, starters under examples/.
+        for entry in BUILTINS {
+            match entry.kind {
+                BuiltinKind::Template => assert!(
+                    entry.subdir.starts_with("templates/"),
+                    "{} is a Template but not under templates/",
+                    entry.name
+                ),
+                BuiltinKind::Starter => assert!(
+                    entry.subdir.starts_with("examples/"),
+                    "{} is a Starter but not under examples/",
+                    entry.name
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn starters_are_scaffoldable() {
+        std::env::remove_var("RIZ_TEMPLATE_REPO");
+        // A starter resolves through the same `riz new` path as a template —
+        // the whole point of keeping it scaffoldable rather than demoting it.
+        for name in ["typescript-todo", "ai-chat"] {
+            let kind = BUILTINS.iter().find(|b| b.name == name).map(|b| b.kind);
+            assert_eq!(
+                kind,
+                Some(BuiltinKind::Starter),
+                "{name} should be a Starter"
+            );
+            assert!(
+                resolve(name, None).is_ok(),
+                "{name} must resolve via riz new"
+            );
         }
     }
 

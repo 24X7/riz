@@ -212,26 +212,37 @@ enum McpCmd {
 }
 
 fn print_template_list() {
-    println!("Templates are starting points; examples are proof.\n");
+    use template_fetch::BuiltinKind;
+    println!("Templates start you fast; starters are full apps; examples are proof.\n");
+
     println!("Templates (one per runtime; fetched from git, never embedded):\n");
     println!("  {:<18} {:<12} LANGUAGE", "TEMPLATE", "SCENARIO");
-    for (name, subdir, scenario, lang) in template_fetch::BUILTINS {
-        if template_fetch::is_template_row(subdir) {
-            println!("  {name:<18} {scenario:<12} {lang}");
+    for b in template_fetch::BUILTINS {
+        if b.kind == BuiltinKind::Template {
+            println!("  {:<18} {:<12} {}", b.name, b.scenario, b.language);
         }
     }
-    println!("\nExample starters (full apps to fetch and explore):\n");
-    println!("  {:<18} {:<12} LANGUAGE", "EXAMPLE", "SCENARIO");
-    for (name, subdir, scenario, lang) in template_fetch::BUILTINS {
-        if !template_fetch::is_template_row(subdir) {
-            println!("  {name:<18} {scenario:<12} {lang}");
+
+    println!("\nStarters (full-stack apps to scaffold and build on):\n");
+    println!("  {:<18} {:<12} LANGUAGE", "STARTER", "SCENARIO");
+    for b in template_fetch::BUILTINS {
+        if b.kind == BuiltinKind::Starter {
+            println!("  {:<18} {:<12} {}", b.name, b.scenario, b.language);
         }
     }
+
+    println!("\nExamples (read-only proof — boot and read, not `riz new` sources):\n");
+    println!("  see examples/lambdas/ in the riz repo — showcase handlers you copy from.");
+
     println!("\nUsage:");
-    println!("  riz new <template> [dir] [--ref <ref>] [--git]   # an official name above");
-    println!("  riz new <owner>/<repo>[/<subdir>][#ref] [dir]    # any GitHub repo or subdir");
-    println!("  riz new <git-url|local-path> [dir]               # any git URL or local path");
-    println!("\nTemplates always load from a git location — set RIZ_TEMPLATE_REPO to use a fork.");
+    println!("  riz new <template|starter> [dir] [--ref <ref>] [--git]  # an official name above");
+    println!(
+        "  riz new <owner>/<repo>[/<subdir>][#ref] [dir]           # any GitHub repo or subdir"
+    );
+    println!(
+        "  riz new <git-url|local-path> [dir]                      # any git URL or local path"
+    );
+    println!("\nScaffolds always load from a git location — set RIZ_TEMPLATE_REPO to use a fork.");
 }
 
 /// Scaffold a project by FETCHING a template from a git location (or local
