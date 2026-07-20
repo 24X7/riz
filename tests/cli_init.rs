@@ -243,10 +243,19 @@ fn list_enumerates_official_templates_including_full_stack() {
     for gone in ["typescript-websocket", "python-websocket", "rust-websocket"] {
         assert!(!stdout.contains(gone), "--list must not offer {gone}");
     }
-    // Two sections: per-runtime templates vs full example starters.
+    // Three tiers now: per-runtime templates, full-stack starters (still
+    // scaffoldable), and a pointer to the read-only showcase examples.
     assert!(
-        stdout.contains("Example starters"),
-        "expected the example-starters section"
+        stdout.contains("Templates ("),
+        "expected the per-runtime templates section"
+    );
+    assert!(
+        stdout.contains("Starters ("),
+        "expected the full-stack starters section"
+    );
+    assert!(
+        stdout.contains("Examples ("),
+        "expected the read-only examples pointer"
     );
     // It must advertise the bring-your-own-repo path.
     assert!(stdout.contains("owner") && stdout.contains("repo"));
