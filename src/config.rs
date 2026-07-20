@@ -340,10 +340,27 @@ pub struct PgResourceConfig {
     /// Server-side statement timeout applied to brokered queries.
     #[serde(default = "default_pg_statement_timeout_ms")]
     pub statement_timeout_ms: u64,
+    /// Max connections in the shared host-side pool for this resource. All
+    /// granted functions and workers share this one pool — the cap is on the
+    /// backend, not multiplied by concurrency.
+    #[serde(default = "default_pg_max_connections")]
+    pub max_connections: u32,
+    /// How long a brokered call waits for a free pooled connection before the
+    /// dispatcher returns `throttled`.
+    #[serde(default = "default_pg_acquire_timeout_ms")]
+    pub acquire_timeout_ms: u64,
 }
 
 fn default_pg_statement_timeout_ms() -> u64 {
     2_000
+}
+
+fn default_pg_max_connections() -> u32 {
+    5
+}
+
+fn default_pg_acquire_timeout_ms() -> u64 {
+    1_000
 }
 
 /// `[function.<fn>.capabilities.<grant>]` — one capability grant. The grant
@@ -1193,8 +1210,9 @@ impl Config {
             if !matches!(func.runtime, RuntimeKind::Wasm) {
                 return Err(format!(
                     "function '{name}' grants capability '{gname}' but runtime is \
-                     '{}' — broker capabilities are WASM-only in v1 (the broker \
-                     rides the __wasm-host sandbox boundary)",
+                     '{}' — broker capabilities are WASM-only this cycle; the \
+                     per-runtime capability SDKs (@riz/capabilities, riz-capabilities, \
+                     a Go module) land later over the same broker socket",
                     func.runtime.as_str()
                 ));
             }
