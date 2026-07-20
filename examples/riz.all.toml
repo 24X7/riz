@@ -221,6 +221,21 @@ sandbox = "wasi"
 path = "/orders"
 method = "POST"
 
+# Capability flagship: uncomment to persist priced orders through the brokered
+# Postgres grant. The guest names the grant `db`, never a DSN — credentials
+# stay host-side, resolved from RIZ_PG_MAIN_DSN at daemon startup. Without this
+# block orders-wasm still prices orders and returns `persisted: false`.
+#
+# [resources.pg.main]
+# dsn_env = "RIZ_PG_MAIN_DSN"
+# max_connections = 5
+#
+# [function.orders-wasm.capabilities.db]
+# type = "pg"
+# resource = "pg.main"
+# mode = "read-write"
+# max_inflight = 4
+
 # ─────────────── Authorizers ───────────────
 # The two auth handlers below are LIVE functions referenced from other
 # functions' `[function.X.authorizer]` blocks. They must be registered as
