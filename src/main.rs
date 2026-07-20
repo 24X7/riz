@@ -1311,8 +1311,6 @@ async fn async_main() -> anyhow::Result<()> {
         .validate()
         .map_err(|e| anyhow::anyhow!("invalid config: {e}"))?;
 
-    export_broker_resources(&config);
-
     if let Some(result) = dispatch_config_report(&cli, &config) {
         return result;
     }
@@ -1337,7 +1335,16 @@ async fn async_main() -> anyhow::Result<()> {
     let riz_state = Arc::new(state::RizState::new());
     register_function_states(&riz_state, &config).await;
 
-    let process_manager = Arc::new(process::ProcessManager::new(riz_state.clone()));
+    // The daemon-side capability broker: one supervised UDS service that owns
+    // the shared pools, the per-function limit state, and every credential.
+    // `None` when no function declares capabilities. DSNs resolve here, so a
+    // missing dsn_env is a daemon-startup error (fail-fast).
+    let broker_service = broker::server::BrokerService::start(&config).await?;
+    let broker_handle = broker_service.as_ref().map(|s| s.handle());
+
+    let process_manager = Arc::new(
+        process::ProcessManager::new(riz_state.clone()).with_broker(broker_handle),
+    );
 
     // Spawn one process pool per function. Each spawned process bumps
     // cold_starts on the matching FunctionState.
@@ -1398,23 +1405,13 @@ async fn async_main() -> anyhow::Result<()> {
         sup.shutdown().await;
     }
 
-    serve_result
-}
-
-/// Resource broker: hand the [resources] definitions to wasm pool children
-/// through the process environment. Children inherit this plus the DSN env
-/// vars the resources name — grants travel per-function in argv (see
-/// WasmRuntime::spawn_command); credentials never appear in argv or config.
-fn export_broker_resources(config: &config::Config) {
-    if config
-        .functions
-        .values()
-        .any(|f| !f.capabilities.is_empty())
-    {
-        if let Ok(json) = serde_json::to_string(&config.resources) {
-            std::env::set_var("RIZ_BROKER_RESOURCES", json);
-        }
+    // Stop the broker accept loop and unlink its socket dir (no-op if no
+    // function had capabilities).
+    if let Some(broker) = broker_service {
+        broker.shutdown().await;
     }
+
+    serve_result
 }
 
 /// The config-report subcommands (`validate` / `routes`): they need the

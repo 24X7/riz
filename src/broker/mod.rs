@@ -30,7 +30,9 @@
 //! Error codes are a closed set the guest can match on: `denied`,
 //! `throttled`, `timeout`, `too_large`, `bad_request`, `backend`.
 
+pub mod client;
 pub mod pg;
+pub mod server;
 pub mod wire;
 
 use crate::config::CapabilityGrant;
@@ -170,6 +172,20 @@ impl Broker {
             })
             .collect();
         Self { grants }
+    }
+
+    /// Dispatch one capability verb against a named grant. This is the daemon-
+    /// side seam every brokered call funnels through: it maps the verb string
+    /// to its handler (`"pg.query"` today) and answers the closed-set
+    /// `bad_request` envelope for anything else. Always returns response bytes.
+    pub async fn dispatch(&self, verb: &str, grant_name: &str, request: &[u8]) -> Vec<u8> {
+        match verb {
+            "pg.query" => self.pg_query(grant_name, request).await,
+            other => error_bytes(
+                ErrorCode::BadRequest,
+                &format!("unknown capability verb {other:?} — this riz knows: pg.query"),
+            ),
+        }
     }
 
     /// The single dispatcher: `pg_query` against a named grant. Always
