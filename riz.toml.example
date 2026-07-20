@@ -73,3 +73,13 @@ method = "ANY"
 #
 # [function.orders.capabilities.payments]
 # type = "http"; resource = "http.stripe"; methods = ["POST"]; rate_per_sec = 20
+#
+# [resources.dynamo.orders]
+# region = "us-east-1"
+# table = "orders"
+# access_key_id_env = "AWS_ACCESS_KEY_ID"        # credentials live host-side
+# secret_access_key_env = "AWS_SECRET_ACCESS_KEY"
+#
+# [function.orders.capabilities.store]
+# type = "dynamo"; resource = "dynamo.orders"; mode = "read-write"
+# key_prefix = "tenant-42#"    # partition keys must start with this prefix

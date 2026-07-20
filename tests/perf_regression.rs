@@ -254,16 +254,14 @@ fn maybe_gate_or_update_baseline(report: &serde_json::Value) {
         return;
     };
     let baseline: serde_json::Value = serde_json::from_str(&raw).expect("baseline json");
-    // Higher-is-better metrics gate on a lower bound; latency metrics gate on
-    // an upper bound (1/BASELINE_BAND slack).
-    for key in ["http_rps"] {
-        let (cur, base) = (num(report, key), num(&baseline, key));
-        assert!(
-            base <= 0.0 || cur >= base * BASELINE_BAND,
-            "perf gate: {key} {cur:.0} < {:.0} ({BASELINE_BAND}x baseline {base:.0})",
-            base * BASELINE_BAND
-        );
-    }
+    // Throughput gates on a lower bound (higher is better)…
+    let (cur_rps, base_rps) = (num(report, "http_rps"), num(&baseline, "http_rps"));
+    assert!(
+        base_rps <= 0.0 || cur_rps >= base_rps * BASELINE_BAND,
+        "perf gate: http_rps {cur_rps:.0} < {:.0} ({BASELINE_BAND}x baseline {base_rps:.0})",
+        base_rps * BASELINE_BAND
+    );
+    // …latency metrics gate on an upper bound (1/BASELINE_BAND slack).
     for key in ["http_p99_ms", "cap_p99_ms"] {
         let (cur, base) = (num(report, key), num(&baseline, key));
         assert!(

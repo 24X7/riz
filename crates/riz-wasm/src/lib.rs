@@ -356,6 +356,57 @@ pub mod cap {
             })
         }
     }
+
+    /// DynamoDB through the host broker (`dynamo`-type grants). The guest sends
+    /// item-level DynamoDB JSON (minus `TableName`, which the daemon injects)
+    /// and never holds a key or a signature — the daemon SigV4-signs host-side.
+    pub mod dynamo {
+        pub use super::CapError;
+
+        fn call(
+            verb: &str,
+            grant: &str,
+            request: &serde_json::Value,
+        ) -> Result<serde_json::Value, CapError> {
+            let bytes = super::raw_call(verb, grant, request.to_string().as_bytes())?;
+            let rows = super::envelope_rows(&bytes)?;
+            let row = rows
+                .into_iter()
+                .next()
+                .ok_or_else(|| super::local_err("backend", "dynamo response had no row"))?;
+            Ok(row.get("body").cloned().unwrap_or(serde_json::Value::Null))
+        }
+
+        /// `GetItem` — `request` carries `Key` (DynamoDB JSON). Returns the
+        /// DynamoDB response body (e.g. `{ "Item": { ... } }`).
+        pub fn get_item(
+            grant: &str,
+            request: &serde_json::Value,
+        ) -> Result<serde_json::Value, CapError> {
+            call("dynamo.get_item", grant, request)
+        }
+        /// `PutItem` — `request` carries `Item`. (Denied on a read-only grant.)
+        pub fn put_item(
+            grant: &str,
+            request: &serde_json::Value,
+        ) -> Result<serde_json::Value, CapError> {
+            call("dynamo.put_item", grant, request)
+        }
+        /// `Query` — `request` carries the key-condition expression.
+        pub fn query(
+            grant: &str,
+            request: &serde_json::Value,
+        ) -> Result<serde_json::Value, CapError> {
+            call("dynamo.query", grant, request)
+        }
+        /// `DeleteItem` — `request` carries `Key`. (Denied on a read-only grant.)
+        pub fn delete_item(
+            grant: &str,
+            request: &serde_json::Value,
+        ) -> Result<serde_json::Value, CapError> {
+            call("dynamo.delete_item", grant, request)
+        }
+    }
 }
 
 #[cfg(test)]
