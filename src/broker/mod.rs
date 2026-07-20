@@ -34,6 +34,7 @@ pub mod client;
 pub mod dynamo;
 pub mod http;
 pub mod pg;
+pub mod s3;
 pub mod server;
 pub mod wire;
 
@@ -69,6 +70,7 @@ pub enum GrantBackend {
     Pg(Arc<dyn PgBackend>),
     Http(Arc<http::HttpBackend>),
     Dynamo(Arc<dynamo::DynamoBackend>),
+    S3(Arc<s3::S3Backend>),
 }
 
 /// A grant armed with its runtime limit state.
@@ -244,12 +246,14 @@ impl Broker {
             "dynamo.get_item" | "dynamo.put_item" | "dynamo.query" | "dynamo.delete_item" => {
                 "dynamo"
             }
+            "s3.get_object" | "s3.put_object" | "s3.list_objects" | "s3.delete_object" => "s3",
             other => {
                 return Err((
                     ErrorCode::BadRequest,
                     format!(
                         "unknown capability verb {other:?} — this riz knows: pg.query, \
-                         http.fetch, dynamo.get_item/put_item/query/delete_item"
+                         http.fetch, dynamo.get_item/put_item/query/delete_item, \
+                         s3.get_object/put_object/list_objects/delete_object"
                     ),
                 ))
             }
@@ -366,6 +370,13 @@ impl Broker {
                     .await
                     .map_err(|e| (ErrorCode::Backend, e))
             }
+            (v, GrantBackend::S3(backend)) if v.starts_with("s3.") => {
+                let read_only = grant.cfg.mode == "read-only";
+                backend
+                    .call(v, request, read_only, grant.cfg.key_prefix.as_deref())
+                    .await
+                    .map_err(|e| (ErrorCode::Backend, e))
+            }
             // A grant/verb-class mismatch was already rejected in
             // dispatch_inner; this arm keeps the match total and fails closed.
             _ => Err((
@@ -410,6 +421,12 @@ pub fn backends_for_function(
                     format!("grant '{gname}': unknown resource '{}'", grant.resource)
                 })?;
                 GrantBackend::Dynamo(Arc::new(dynamo::DynamoBackend::from_resource(res)?))
+            }
+            "s3" => {
+                let res = resources.s3.get(rname).ok_or_else(|| {
+                    format!("grant '{gname}': unknown resource '{}'", grant.resource)
+                })?;
+                GrantBackend::S3(Arc::new(s3::S3Backend::from_resource(res)?))
             }
             other => {
                 return Err(format!(

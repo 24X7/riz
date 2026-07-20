@@ -349,6 +349,11 @@ pub struct ResourcesConfig {
     /// request with SigV4 host-side; the guest sends item-level JSON only.
     #[serde(default)]
     pub dynamo: IndexMap<String, DynamoResourceConfig>,
+    /// `[resources.s3.<name>]` — S3 buckets. The daemon signs every request
+    /// with SigV4 host-side; the guest names an object key and never holds a
+    /// key or a signature.
+    #[serde(default)]
+    pub s3: IndexMap<String, S3ResourceConfig>,
 }
 
 /// One named DynamoDB table. Credentials resolve host-side (from the named env
@@ -368,6 +373,33 @@ pub struct DynamoResourceConfig {
     pub endpoint_url: Option<String>,
     /// Env var holding the access key id. With both key envs omitted, the
     /// daemon uses the standard AWS credential chain at request time.
+    #[serde(default)]
+    pub access_key_id_env: Option<String>,
+    /// Env var holding the secret access key.
+    #[serde(default)]
+    pub secret_access_key_env: Option<String>,
+    /// Env var holding an optional session token (STS).
+    #[serde(default)]
+    pub session_token_env: Option<String>,
+}
+
+/// One named S3 bucket. Credentials resolve host-side (from the named env
+/// vars) and never cross to the guest; the daemon SigV4-signs each request.
+/// Mirrors `DynamoResourceConfig` — only `bucket` replaces `table`.
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct S3ResourceConfig {
+    /// AWS region (e.g. `us-east-1`), used in the SigV4 credential scope and
+    /// the default endpoint.
+    pub region: String,
+    /// The bucket every brokered op targets.
+    pub bucket: String,
+    /// Override the endpoint (e.g. `http://localhost:9000` for MinIO or a test
+    /// mock). When set, requests use path-style (`<endpoint>/<bucket>/<key>`);
+    /// when omitted, virtual-hosted `https://<bucket>.s3.<region>.amazonaws.com`.
+    #[serde(default)]
+    pub endpoint_url: Option<String>,
+    /// Env var holding the access key id.
     #[serde(default)]
     pub access_key_id_env: Option<String>,
     /// Env var holding the secret access key.
@@ -510,8 +542,9 @@ fn default_grant_max_response_bytes() -> usize {
 
 /// Capability classes the broker understands. `pg` covers Neon, Supabase, and
 /// any Postgres wire; `http` brokers outbound HTTP to an operator-pinned
-/// origin with host-injected auth and SSRF hardening.
-pub const CAPABILITY_TYPES: &[&str] = &["pg", "http", "dynamo"];
+/// origin with host-injected auth and SSRF hardening; `dynamo` and `s3` are
+/// SigV4-signed host-side.
+pub const CAPABILITY_TYPES: &[&str] = &["pg", "http", "dynamo", "s3"];
 
 /// Telemetry / observability config (`[telemetry]`).
 ///
@@ -1375,6 +1408,13 @@ impl Config {
                 return Err(format!(
                     "function '{name}' capability '{gname}' references resource \
                      \"{}\" but no [resources.dynamo.{rname}] block is declared",
+                    grant.resource
+                ));
+            }
+            if rtype == "s3" && !self.resources.s3.contains_key(rname) {
+                return Err(format!(
+                    "function '{name}' capability '{gname}' references resource \
+                     \"{}\" but no [resources.s3.{rname}] block is declared",
                     grant.resource
                 ));
             }
