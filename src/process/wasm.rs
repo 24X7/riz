@@ -223,7 +223,7 @@ fn run_host_inner(args: &[String]) -> wasmtime::Result<()> {
     let mut linker: Linker<HostCtx> = Linker::new(&engine);
     p1::add_to_linker_sync(&mut linker, |t: &mut HostCtx| &mut t.wasi)
         .context("failed to wire WASIp1 into the linker")?;
-    add_broker_imports(&mut linker).context("failed to wire broker imports")?;
+    add_capability_imports(&mut linker).context("failed to wire capability imports")?;
 
     let mut builder = WasiCtxBuilder::new();
     builder.inherit_stdin().inherit_stdout().inherit_stderr();
@@ -248,6 +248,7 @@ fn run_host_inner(args: &[String]) -> wasmtime::Result<()> {
     );
     let instance = linker
         .instantiate(&mut store, &module)
+        .map_err(stale_abi_hint)
         .context("failed to instantiate wasm module")?;
     let start = instance
         .get_typed_func::<(), ()>(&mut store, "_start")
@@ -283,23 +284,61 @@ fn guest_range(ptr: i32, len: i32, mem_size: usize) -> Option<(usize, usize)> {
     Some((ptr, len))
 }
 
-/// The guest-facing broker ABI (import module `riz_broker`), v1:
+/// Sanctioned pre-1.0 ABI break (spec 2026-07-19, PR4): the v1 per-verb
+/// `riz_broker.*` imports are gone. A module still importing them fails
+/// closed with an actionable rebuild hint instead of a bare unknown-import
+/// error; every other error passes through untouched.
+fn stale_abi_hint(e: wasmtime::Error) -> wasmtime::Error {
+    if format!("{e:?}").contains("riz_broker") {
+        wasmtime::format_err!(
+            "{e:#} — this module was built against the pre-0.2 riz-wasm \
+             capability ABI; rebuild against riz-wasm >= 0.2"
+        )
+    } else {
+        e
+    }
+}
+
+/// The closed-set `bad_request` envelope for a verb no dispatcher arm knows.
+/// Pure so the dispatch contract is unit-testable without a wasm store.
+fn unknown_verb_envelope(verb: &str) -> Vec<u8> {
+    serde_json::json!({
+        "ok": false,
+        "error": {
+            "code": "bad_request",
+            "message": format!("unknown capability verb {verb:?} — this riz knows: pg.query"),
+        }
+    })
+    .to_string()
+    .into_bytes()
+}
+
+/// The guest-facing capability ABI (import module `riz_capability`), v2:
 ///
-/// - `pg_query(grant_ptr, grant_len, req_ptr, req_len) -> i32`
+/// - `call(verb_ptr, verb_len, grant_ptr, grant_len, req_ptr, req_len) -> i32`
+///   ONE dispatcher import for every brokered verb — new capabilities are new
+///   verb strings (`"pg.query"`, later `"http.fetch"`, …), never new imports.
 ///   Runs the brokered call; the response (success or error envelope, always
 ///   JSON) is stashed host-side. Returns the stashed length, or -1 for an
 ///   ABI-level fault (out-of-bounds pointers). With no grants armed this
-///   still answers — with a `denied` envelope, never a trap.
+///   still answers — with a `denied` envelope, never a trap. An unknown verb
+///   answers the closed-set `bad_request` envelope.
 /// - `read_response(dst_ptr, dst_cap) -> i32`
 ///   Copies the stashed response into guest memory and clears the stash;
 ///   returns the length. If `dst_cap` is too small, copies nothing and
 ///   returns the needed length (stash persists; call again with a bigger
 ///   buffer). 0 when nothing is stashed.
-fn add_broker_imports(linker: &mut wasmtime::Linker<HostCtx>) -> wasmtime::Result<()> {
+///
+/// v1's per-verb `riz_broker.pg_query` import is gone (sanctioned pre-1.0
+/// break): a module still importing it fails instantiation with an
+/// actionable rebuild hint — see `run_host_inner`.
+fn add_capability_imports(linker: &mut wasmtime::Linker<HostCtx>) -> wasmtime::Result<()> {
     linker.func_wrap(
-        "riz_broker",
-        "pg_query",
+        "riz_capability",
+        "call",
         |mut caller: wasmtime::Caller<'_, HostCtx>,
+         verb_ptr: i32,
+         verb_len: i32,
          grant_ptr: i32,
          grant_len: i32,
          req_ptr: i32,
@@ -308,38 +347,47 @@ fn add_broker_imports(linker: &mut wasmtime::Linker<HostCtx>) -> wasmtime::Resul
             let Some(wasmtime::Extern::Memory(memory)) = caller.get_export("memory") else {
                 return -1;
             };
-            // Bounds-check both ranges against the guest's own memory size
+            // Bounds-check every range against the guest's own memory size
             // before allocating host buffers — the allocation is thereby
             // proportional to memory the guest itself already paid for.
             let mem_size = memory.data_size(&caller);
+            let Some((verb_ptr, verb_len)) = guest_range(verb_ptr, verb_len, mem_size) else {
+                return -1;
+            };
             let Some((grant_ptr, grant_len)) = guest_range(grant_ptr, grant_len, mem_size) else {
                 return -1;
             };
             let Some((req_ptr, req_len)) = guest_range(req_ptr, req_len, mem_size) else {
                 return -1;
             };
+            let mut verb_buf = vec![0u8; verb_len];
             let mut grant_buf = vec![0u8; grant_len];
             let mut req_buf = vec![0u8; req_len];
-            if memory.read(&caller, grant_ptr, &mut grant_buf).is_err()
+            if memory.read(&caller, verb_ptr, &mut verb_buf).is_err()
+                || memory.read(&caller, grant_ptr, &mut grant_buf).is_err()
                 || memory.read(&caller, req_ptr, &mut req_buf).is_err()
             {
                 return -1;
             }
+            let verb = String::from_utf8_lossy(&verb_buf).into_owned();
             let grant = String::from_utf8_lossy(&grant_buf).into_owned();
             let (broker, rt) = {
                 let ctx = caller.data();
                 (ctx.broker.clone(), ctx.rt.clone())
             };
-            let response = match (broker, rt) {
-                (Some(broker), Some(rt)) => rt.block_on(broker.pg_query(&grant, &req_buf)),
-                // No grants armed: deny-by-default, as an envelope the guest
-                // can parse — never a trap.
-                _ => serde_json::json!({
-                    "ok": false,
-                    "error": {"code": "denied", "message": "function has no capability grants"}
-                })
-                .to_string()
-                .into_bytes(),
+            let response = match verb.as_str() {
+                "pg.query" => match (broker, rt) {
+                    (Some(broker), Some(rt)) => rt.block_on(broker.pg_query(&grant, &req_buf)),
+                    // No grants armed: deny-by-default, as an envelope the
+                    // guest can parse — never a trap.
+                    _ => serde_json::json!({
+                        "ok": false,
+                        "error": {"code": "denied", "message": "function has no capability grants"}
+                    })
+                    .to_string()
+                    .into_bytes(),
+                },
+                other => unknown_verb_envelope(other),
             };
             let len = response.len() as i32;
             caller.data_mut().stash = response;
@@ -347,7 +395,7 @@ fn add_broker_imports(linker: &mut wasmtime::Linker<HostCtx>) -> wasmtime::Resul
         },
     )?;
     linker.func_wrap(
-        "riz_broker",
+        "riz_capability",
         "read_response",
         |mut caller: wasmtime::Caller<'_, HostCtx>, dst_ptr: i32, dst_cap: i32| -> i32 {
             let stash_len = caller.data().stash.len() as i32;
@@ -375,6 +423,58 @@ fn add_broker_imports(linker: &mut wasmtime::Linker<HostCtx>) -> wasmtime::Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_verb_answers_the_closed_set_bad_request() {
+        let bytes = unknown_verb_envelope("s3.get");
+        let v: serde_json::Value = serde_json::from_slice(&bytes).expect("valid envelope json");
+        assert_eq!(v["ok"], false);
+        assert_eq!(v["error"]["code"], "bad_request");
+        let msg = v["error"]["message"].as_str().unwrap_or_default();
+        assert!(msg.contains("s3.get"), "message names the verb: {msg}");
+    }
+
+    #[test]
+    fn stale_riz_broker_import_fails_with_rebuild_hint() {
+        // A pre-0.2 guest importing the deleted v1 ABI must fail closed with
+        // an actionable message, not a bare unknown-import linker error.
+        let engine = wasmtime::Engine::default();
+        let wat = r#"(module
+            (import "riz_broker" "pg_query" (func (param i32 i32 i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (func (export "_start"))
+        )"#;
+        let module = wasmtime::Module::new(&engine, wat).expect("wat parses");
+        let mut linker: wasmtime::Linker<HostCtx> = wasmtime::Linker::new(&engine);
+        add_capability_imports(&mut linker).expect("wire capability imports");
+        let wasi = wasmtime_wasi::WasiCtxBuilder::new().build_p1();
+        let mut store = wasmtime::Store::new(
+            &engine,
+            HostCtx {
+                wasi,
+                broker: None,
+                rt: None,
+                stash: Vec::new(),
+            },
+        );
+        let err = linker
+            .instantiate(&mut store, &module)
+            .map_err(stale_abi_hint)
+            .expect_err("stale import must not instantiate");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("rebuild against riz-wasm >= 0.2"),
+            "hint missing: {msg}"
+        );
+    }
+
+    #[test]
+    fn unrelated_instantiation_errors_pass_through_unhinted() {
+        let e = wasmtime::format_err!("boom: something else");
+        let out = format!("{:#}", stale_abi_hint(e));
+        assert!(!out.contains("riz-wasm >= 0.2"));
+        assert!(out.contains("boom"));
+    }
 
     fn s(v: &[&str]) -> Vec<String> {
         v.iter().map(|x| x.to_string()).collect()

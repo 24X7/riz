@@ -12,11 +12,19 @@
 
 use std::io::{self, BufRead, Write};
 
-#[link(wasm_import_module = "riz_broker")]
+#[link(wasm_import_module = "riz_capability")]
 extern "C" {
-    /// Run a brokered Postgres query; the JSON response (ok or error
-    /// envelope) is stashed host-side. Returns its length, or -1.
-    fn pg_query(grant_ptr: *const u8, grant_len: i32, req_ptr: *const u8, req_len: i32) -> i32;
+    /// Capability ABI v2: ONE dispatcher import for every brokered verb.
+    /// Runs the call; the JSON response (ok or error envelope) is stashed
+    /// host-side. Returns its length, or -1 for an ABI fault.
+    fn call(
+        verb_ptr: *const u8,
+        verb_len: i32,
+        grant_ptr: *const u8,
+        grant_len: i32,
+        req_ptr: *const u8,
+        req_len: i32,
+    ) -> i32;
     /// Copy the stashed response into `dst` and clear the stash. Returns the
     /// length; if `dst_cap` was too small, copies nothing and returns the
     /// needed length.
@@ -24,9 +32,12 @@ extern "C" {
 }
 
 fn brokered_pg_query(grant: &str, request: &serde_json::Value) -> String {
+    let verb = "pg.query";
     let req = request.to_string();
     let len = unsafe {
-        pg_query(
+        call(
+            verb.as_ptr(),
+            verb.len() as i32,
             grant.as_ptr(),
             grant.len() as i32,
             req.as_ptr(),
@@ -34,7 +45,7 @@ fn brokered_pg_query(grant: &str, request: &serde_json::Value) -> String {
         )
     };
     if len < 0 {
-        return r#"{"ok":false,"error":{"code":"abi","message":"pg_query returned -1"}}"#.into();
+        return r#"{"ok":false,"error":{"code":"abi","message":"call returned -1"}}"#.into();
     }
     let mut buf = vec![0u8; len as usize];
     let written = unsafe { read_response(buf.as_mut_ptr(), buf.len() as i32) };
