@@ -333,6 +333,37 @@ pub struct ResourcesConfig {
     /// origin and injects auth host-side; the guest supplies a relative path.
     #[serde(default)]
     pub http: IndexMap<String, HttpResourceConfig>,
+    /// `[resources.dynamo.<name>]` — DynamoDB tables. The daemon signs every
+    /// request with SigV4 host-side; the guest sends item-level JSON only.
+    #[serde(default)]
+    pub dynamo: IndexMap<String, DynamoResourceConfig>,
+}
+
+/// One named DynamoDB table. Credentials resolve host-side (from the named env
+/// vars, or the standard AWS chain when omitted) and never cross to the guest;
+/// the daemon SigV4-signs each request.
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DynamoResourceConfig {
+    /// AWS region (e.g. `us-east-1`), used in the SigV4 credential scope and
+    /// the default endpoint.
+    pub region: String,
+    /// The table every brokered op targets.
+    pub table: String,
+    /// Override the endpoint (e.g. `http://localhost:8000` for DynamoDB Local
+    /// or a test mock). Default: `https://dynamodb.<region>.amazonaws.com`.
+    #[serde(default)]
+    pub endpoint_url: Option<String>,
+    /// Env var holding the access key id. With both key envs omitted, the
+    /// daemon uses the standard AWS credential chain at request time.
+    #[serde(default)]
+    pub access_key_id_env: Option<String>,
+    /// Env var holding the secret access key.
+    #[serde(default)]
+    pub secret_access_key_env: Option<String>,
+    /// Env var holding an optional session token (STS).
+    #[serde(default)]
+    pub session_token_env: Option<String>,
 }
 
 /// One named outbound-HTTP origin. The guest names the grant and supplies a
@@ -442,6 +473,11 @@ pub struct CapabilityGrant {
     /// non-http grant types.
     #[serde(default)]
     pub methods: Vec<String>,
+    /// `dynamo`-grant scoping: if set, the partition-key VALUE of every
+    /// brokered op must start with this prefix (checked before signing).
+    /// Ignored by non-dynamo grant types.
+    #[serde(default)]
+    pub key_prefix: Option<String>,
 }
 
 fn default_grant_mode() -> String {
@@ -463,7 +499,7 @@ fn default_grant_max_response_bytes() -> usize {
 /// Capability classes the broker understands. `pg` covers Neon, Supabase, and
 /// any Postgres wire; `http` brokers outbound HTTP to an operator-pinned
 /// origin with host-injected auth and SSRF hardening.
-pub const CAPABILITY_TYPES: &[&str] = &["pg", "http"];
+pub const CAPABILITY_TYPES: &[&str] = &["pg", "http", "dynamo"];
 
 /// Telemetry / observability config (`[telemetry]`).
 ///
@@ -1295,6 +1331,13 @@ impl Config {
                 return Err(format!(
                     "function '{name}' capability '{gname}' references resource \
                      \"{}\" but no [resources.http.{rname}] block is declared",
+                    grant.resource
+                ));
+            }
+            if rtype == "dynamo" && !self.resources.dynamo.contains_key(rname) {
+                return Err(format!(
+                    "function '{name}' capability '{gname}' references resource \
+                     \"{}\" but no [resources.dynamo.{rname}] block is declared",
                     grant.resource
                 ));
             }
