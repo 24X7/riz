@@ -31,6 +31,7 @@
 //! `throttled`, `timeout`, `too_large`, `bad_request`, `backend`.
 
 pub mod client;
+pub mod dynamo;
 pub mod http;
 pub mod pg;
 pub mod server;
@@ -67,6 +68,7 @@ pub struct PgRows {
 pub enum GrantBackend {
     Pg(Arc<dyn PgBackend>),
     Http(Arc<http::HttpBackend>),
+    Dynamo(Arc<dynamo::DynamoBackend>),
 }
 
 /// A grant armed with its runtime limit state.
@@ -239,11 +241,15 @@ impl Broker {
         let expected_type = match verb {
             "pg.query" => "pg",
             "http.fetch" => "http",
+            "dynamo.get_item" | "dynamo.put_item" | "dynamo.query" | "dynamo.delete_item" => {
+                "dynamo"
+            }
             other => {
                 return Err((
                     ErrorCode::BadRequest,
                     format!(
-                        "unknown capability verb {other:?} — this riz knows: pg.query, http.fetch"
+                        "unknown capability verb {other:?} — this riz knows: pg.query, \
+                         http.fetch, dynamo.get_item/put_item/query/delete_item"
                     ),
                 ))
             }
@@ -353,6 +359,13 @@ impl Broker {
                     .await
                     .map_err(|e| (ErrorCode::Backend, e))
             }
+            (v, GrantBackend::Dynamo(backend)) if v.starts_with("dynamo.") => {
+                let read_only = grant.cfg.mode == "read-only";
+                backend
+                    .call(v, request, read_only, grant.cfg.key_prefix.as_deref())
+                    .await
+                    .map_err(|e| (ErrorCode::Backend, e))
+            }
             // A grant/verb-class mismatch was already rejected in
             // dispatch_inner; this arm keeps the match total and fails closed.
             _ => Err((
@@ -391,6 +404,12 @@ pub fn backends_for_function(
                     format!("grant '{gname}': unknown resource '{}'", grant.resource)
                 })?;
                 GrantBackend::Http(Arc::new(http::HttpBackend::from_resource(res)?))
+            }
+            "dynamo" => {
+                let res = resources.dynamo.get(rname).ok_or_else(|| {
+                    format!("grant '{gname}': unknown resource '{}'", grant.resource)
+                })?;
+                GrantBackend::Dynamo(Arc::new(dynamo::DynamoBackend::from_resource(res)?))
             }
             other => {
                 return Err(format!(
