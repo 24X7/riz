@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>riz — AWS conformance corpus &amp; capability completion spec</title>
+<style>
+  :root{
+    --bg:#0A0A0B; --bg1:#111114; --bg2:#17171C; --bg3:#1d1d23;
+    --line:#2A2A31; --line2:#3A3A44;
+    --hi:#F3F3EE; --tx:#B7B7B2; --dim:#807F7C;
+    --acid:#CFFF04; --acid-dim:#A9CE12;
+    --ok:#7CE38B; --okbg:rgba(124,227,139,.12); --okln:rgba(124,227,139,.32);
+    --warn:#F5C451; --warnbg:rgba(245,196,81,.12); --warnln:rgba(245,196,81,.34);
+    --gap:#F07167; --gapbg:rgba(240,113,103,.12); --gapln:rgba(240,113,103,.34);
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --wrap:74ch;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);font-family:var(--sans);
+    font-size:16px;line-height:1.62;-webkit-font-smoothing:antialiased;
+    background-image:
+      radial-gradient(1100px 600px at 78% -12%, rgba(207,255,4,.05), transparent 60%),
+      linear-gradient(180deg,#0c0c0e,var(--bg) 320px);}
+  .page{max-width:980px;margin:0 auto;padding:0 24px 120px}
+  .col{max-width:var(--wrap)}
+
+  a{color:var(--hi);text-decoration:none;border-bottom:1px solid var(--line2)}
+  a:hover{border-color:var(--acid);color:#fff}
+  a:focus-visible{outline:2px solid var(--acid);outline-offset:3px;border-radius:2px}
+  code{font-family:var(--mono);font-size:.86em;color:#e7e7e2;
+    background:var(--bg2);border:1px solid var(--line);border-radius:5px;padding:.08em .38em}
+  pre{background:var(--bg1);border:1px solid var(--line);border-radius:12px;
+    padding:18px 20px;overflow-x:auto;font-size:.84rem;line-height:1.6}
+  pre code{background:transparent;border:none;padding:0;font-size:1em;color:#DADAD4}
+  pre .cmt{color:var(--dim)} pre .acc{color:var(--acid)} pre .str{color:var(--ok)}
+  em{color:var(--acid);font-style:normal}
+  strong{color:var(--hi);font-weight:600}
+  p{margin:.85rem 0}
+
+  header.mast{padding:64px 0 30px;border-bottom:1px solid var(--line)}
+  .mark{font-family:var(--mono);font-weight:700;font-size:.94rem;color:var(--hi);letter-spacing:.02em}
+  .mark .cur{color:var(--acid)}
+  .eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--acid-dim);margin:26px 0 14px;font-weight:600}
+  h1{font-size:clamp(2rem,5.2vw,3rem);line-height:1.06;letter-spacing:-.02em;
+    color:var(--hi);margin:0;text-wrap:balance;font-weight:650}
+  .dek{font-size:1.16rem;line-height:1.5;color:var(--tx);max-width:62ch;margin:20px 0 0}
+  .dek b{color:var(--hi)}
+  .meta{display:flex;flex-wrap:wrap;gap:10px 12px;margin-top:30px;font-family:var(--mono);font-size:.74rem}
+  .meta .m{border:1px solid var(--line);background:var(--bg1);border-radius:999px;
+    padding:6px 13px;color:var(--tx)}
+  .meta .m b{color:var(--hi);font-weight:600}
+  .meta .m.live b{color:var(--acid)}
+
+  .note{border:1px solid var(--line2);background:linear-gradient(180deg,var(--bg2),var(--bg1));
+    border-radius:12px;padding:18px 20px;margin:34px 0;position:relative}
+  .note .tag{font-family:var(--mono);font-size:.68rem;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--acid);display:block;margin-bottom:7px}
+  .note p{margin:0;color:var(--tx)}
+  .note.warn{border-color:var(--warnln)} .note.warn .tag{color:var(--warn)}
+
+  section{padding-top:56px}
+  .sec-eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.15em;text-transform:uppercase;
+    color:var(--dim);margin-bottom:12px}
+  h2{font-size:1.72rem;line-height:1.12;letter-spacing:-.015em;color:var(--hi);margin:0 0 6px;
+    text-wrap:balance;font-weight:640}
+  h3{font-size:1.12rem;color:var(--hi);margin:34px 0 4px;font-weight:620;letter-spacing:-.01em}
+  .lead{font-size:1.04rem;color:var(--tx);max-width:64ch}
+
+  .toc{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-top:26px}
+  .toc a{border:1px solid var(--line);background:var(--bg1);border-radius:11px;padding:15px 16px;
+    display:block;color:var(--tx)}
+  .toc a:hover{border-color:var(--line2);background:var(--bg2)}
+  .toc .k{font-family:var(--mono);font-size:.7rem;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--acid-dim);display:block;margin-bottom:5px}
+  .toc .t{color:var(--hi);font-weight:600;font-size:.98rem}
+  .toc .d{font-size:.82rem;color:var(--dim);margin-top:3px}
+
+  figure{margin:30px 0 12px;border:1px solid var(--line);border-radius:14px;background:var(--bg1);overflow:hidden}
+  figcaption{font-family:var(--mono);font-size:.72rem;letter-spacing:.06em;color:var(--dim);
+    padding:12px 18px;border-bottom:1px solid var(--line);background:var(--bg2);
+    display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  figcaption b{color:var(--hi);letter-spacing:.02em;text-transform:none}
+  .fig-body{padding:24px 18px}
+  .scroll{overflow-x:auto}
+  .legend{display:flex;flex-wrap:wrap;gap:16px;padding:14px 18px;border-top:1px solid var(--line);
+    background:var(--bg2);font-family:var(--mono);font-size:.74rem;color:var(--tx)}
+  .legend .lg{display:inline-flex;align-items:center;gap:7px}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+  .dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.gap{background:var(--gap)}
+  .dot.acid{background:var(--acid)}
+
+  .seq{display:flex;align-items:stretch;gap:0;min-width:680px}
+  .seq .node{flex:1;border:1px solid var(--line2);border-radius:12px;background:var(--bg2);
+    padding:16px 16px 18px;position:relative}
+  .seq .arrow{flex:0 0 42px;display:flex;align-items:center;justify-content:center;color:var(--dim)}
+  .seq .arrow svg{width:24px;height:24px}
+  .seq .n-k{font-family:var(--mono);font-size:.72rem;color:var(--acid);letter-spacing:.08em}
+  .seq .n-t{color:var(--hi);font-weight:640;margin:8px 0 4px;font-size:1.02rem}
+  .seq .n-d{font-size:.83rem;color:var(--dim);line-height:1.45}
+  .seq .indep{margin-top:14px;font-family:var(--mono);font-size:.7rem;color:var(--ok);
+    border-top:1px dashed var(--line2);padding-top:10px}
+  .seq .dep{margin-top:14px;font-family:var(--mono);font-size:.7rem;color:var(--warn);
+    border-top:1px dashed var(--line2);padding-top:10px}
+
+  table{border-collapse:collapse;width:100%;font-size:.9rem}
+  .matrix{min-width:760px}
+  th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+  thead th{font-family:var(--mono);font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--dim);font-weight:600;background:var(--bg2);border-bottom:1px solid var(--line2)}
+  tbody tr:last-child td{border-bottom:none}
+  .layer{color:var(--hi);font-weight:600}
+  .layer small{display:block;color:var(--dim);font-weight:400;font-family:var(--mono);font-size:.72rem;
+    margin-top:2px;letter-spacing:.02em}
+  .cell{white-space:nowrap;font-family:var(--mono);font-size:.8rem;font-weight:600}
+  .cell.ok{color:var(--ok)} .cell.warn{color:var(--warn)} .cell.gap{color:var(--gap)}
+  .cell .sub{display:block;font-weight:400;color:var(--dim);font-size:.72rem;white-space:normal;margin-top:2px}
+  td.ok-bg{background:var(--okbg)} td.warn-bg{background:var(--warnbg)} td.gap-bg{background:var(--gapbg)}
+  .bnote{color:var(--tx);font-size:.86rem}
+
+  .steps{display:flex;align-items:center;gap:0;flex-wrap:nowrap;min-width:700px}
+  .step{border:1px solid var(--line2);border-radius:9px;background:var(--bg2);padding:9px 13px;
+    font-family:var(--mono);font-size:.78rem;color:var(--tx);white-space:nowrap}
+  .step small{display:block;color:var(--dim);font-size:.66rem;margin-top:2px}
+  .step.new{border-color:var(--acid);color:var(--acid);background:rgba(207,255,4,.07);font-weight:600}
+  .step.err{border-color:var(--gapln);color:var(--gap)}
+  .sarrow{flex:0 0 26px;text-align:center;color:var(--dim)}
+
+  .trustwrap{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media (max-width:760px){.trustwrap{grid-template-columns:1fr}}
+  .trust{font-family:var(--mono)}
+  .ttitle{font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px}
+  .ttitle.today{color:var(--gap)} .ttitle.target{color:var(--ok)}
+  .box{border:1px solid var(--line2);border-radius:12px;padding:13px;margin:0}
+  .box>.blabel{font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);
+    display:block;margin-bottom:10px}
+  .box.host{background:var(--bg1)}
+  .box.daemon{border-color:#4a5a2a;background:rgba(207,255,4,.03);margin-top:10px}
+  .box.daemon>.blabel{color:var(--acid-dim)}
+  .box.child{border-color:var(--line2);background:var(--bg2);margin-top:10px}
+  .box.wasi{border-color:var(--ok);background:var(--okbg);margin-top:10px}
+  .box.wasi>.blabel{color:var(--ok)}
+  .assets{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+  .chip{font-family:var(--mono);font-size:.72rem;border:1px solid var(--line2);border-radius:7px;
+    padding:5px 10px;color:var(--tx);background:var(--bg1);overflow-wrap:anywhere}
+  .chip.auth{border-color:var(--warnln);color:var(--warn)}
+  .chip.cred{border-color:var(--gapln);color:var(--gap)}
+  .chip.good{border-color:var(--okln);color:var(--ok)}
+  .chip.acid{border-color:var(--acid-dim);color:var(--acid)}
+
+  ul.facts{list-style:none;padding:0;margin:14px 0;max-width:68ch}
+  ul.facts li{position:relative;padding-left:22px;margin:9px 0;color:var(--tx)}
+  ul.facts li::before{content:"→";position:absolute;left:0;color:var(--acid-dim);font-family:var(--mono)}
+  ul.facts li b{color:var(--hi)}
+  .proof{font-family:var(--mono);font-size:.78rem;color:var(--dim);margin-top:8px}
+  .proof code{color:var(--ok);background:transparent;border:none;padding:0}
+
+  .kv{border:1px solid var(--line);border-radius:12px;overflow:hidden;margin:22px 0}
+  .kv .row{display:grid;grid-template-columns:150px 1fr;border-bottom:1px solid var(--line)}
+  .kv .row:last-child{border-bottom:none}
+  .kv .k{padding:11px 16px;font-family:var(--mono);font-size:.76rem;color:var(--dim);
+    letter-spacing:.06em;text-transform:uppercase;background:var(--bg2)}
+  .kv .k.acid{color:var(--acid)}
+  .kv .v{padding:11px 16px;color:var(--tx)}
+  .kv .v code{font-size:.82em}
+  .kv .v .why{display:block;font-family:var(--mono);font-size:.72rem;color:var(--dim);margin-top:5px}
+  .kv .v .rec{display:inline-block;font-family:var(--mono);font-size:.7rem;color:var(--ok);
+    border:1px solid var(--okln);border-radius:6px;padding:2px 8px;margin-top:7px}
+
+  .excl{border-left:2px solid var(--line2);padding-left:18px;margin:18px 0}
+  .excl .x{font-family:var(--mono);font-size:.78rem;color:var(--gap);margin-bottom:2px}
+  .excl p{margin:2px 0 16px;color:var(--tx);font-size:.94rem;max-width:66ch}
+
+  hr.rule{border:none;border-top:1px solid var(--line);margin:56px 0 0}
+  footer{margin-top:60px;padding-top:26px;border-top:1px solid var(--line);
+    font-family:var(--mono);font-size:.76rem;color:var(--dim);display:flex;justify-content:space-between;
+    flex-wrap:wrap;gap:10px}
+  @media (max-width:640px){
+    .kv .row{grid-template-columns:1fr}
+    .kv .k{border-bottom:1px solid var(--line)}
+    header.mast{padding-top:44px}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="mast">
+  <span class="mark">riz<span class="cur">▮</span></span>
+  <div class="eyebrow">Internal spec · 2026-07-20 · follows the shape-purity program (#66–#68, tranches 1–6)</div>
+  <h1>AWS conformance corpus &amp; capability completion</h1>
+  <p class="dek">Prove riz runs <b>AWS's own Lambda samples, unmodified</b>, by pinning them
+    and booting them under a clone-and-test harness — then close the four remaining
+    surface gaps that a real dogfood exposed: a first-class <b>templates ≠ starters ≠ examples</b>
+    split, an <b>s3</b> broker verb for WASM, an <b>autogenerated OpenAPI</b> document served
+    as a route, and <b>global environment variables</b>. Grounded by four independent recon
+    passes; every load-bearing claim carries a <code>file:line</code> anchor into current source.</p>
+  <div class="meta">
+    <span class="m live">Status: <b>PROPOSED</b> — design only, nothing here is shipped</span>
+    <span class="m">Verified against: <b>main @ 7f72bc3 (v0.2.2)</b></span>
+    <span class="m">Owner asks: <b>C1 · C2 · C3 · C4 · C5</b></span>
+    <span class="m">Delivery: <b>5 tranches</b>, each independently green</span>
+  </div>
+
+  <div class="toc">
+    <a href="#asks"><span class="k">Ground truth</span><span class="t">The five asks</span>
+      <span class="d">owner's compact directive, as requirements C1–C5</span></a>
+    <a href="#state"><span class="k">Verified</span><span class="t">Current state</span>
+      <span class="d">what the four recon passes found in source</span></a>
+    <a href="#c1"><span class="k">C1</span><span class="t">Global env</span>
+      <span class="d">top-level [env] · precedence · scrub interaction · reload fix</span></a>
+    <a href="#c2"><span class="k">C2</span><span class="t">Templates ≠ starters ≠ examples</span>
+      <span class="d">explicit kind · three tiers · riz new stays whole</span></a>
+    <a href="#c3"><span class="k">C3</span><span class="t">AWS conformance corpus</span>
+      <span class="d">pinned manifest · clone-and-test · HTTP/v2 subset</span></a>
+    <a href="#c4"><span class="k">C4</span><span class="t">s3 broker verb</span>
+      <span class="d">SigV4 REST · WASM-only · mirrors dynamo, 13 edit points</span></a>
+    <a href="#c5"><span class="k">C5</span><span class="t">OpenAPI route</span>
+      <span class="d">a fourth pass over the route table · /openapi.json</span></a>
+    <a href="#delivery"><span class="k">Delivery</span><span class="t">Tranche sequence</span>
+      <span class="d">T1–T5 with dependency notes and gates</span></a>
+    <a href="#assurance"><span class="k">Assurance</span><span class="t">Tests · risks · scope</span>
+      <span class="d">what proves it, what could sink it, what stays out</span></a>
+  </div>
+</header>
+
+<div class="note">
+  <span class="tag">Provenance</span>
+  <p>This program follows the shape-purity work (PRs #66–#68 plus tranches 1–6). Its five items
+  are the owner's compact directive of 2026-07-20, verbatim in intent: <em>put real AWS examples in
+  with a process to clone and test; rethink examples vs. scaffold templates and add more e2e examples;
+  add an s3 broker for WASM; autogenerate OpenAPI docs like the MCP server and expose them as a route;
+  add global environment variables.</em> Two forks were resolved by owner call and are locked below.
+  Current-state claims were verified against <code>main @ 7f72bc3</code> (v0.2.2) by four parallel
+  read-only recon passes; each seam carries its <code>file:line</code>.</p>
+</div>
+
+<div class="note">
+  <span class="tag">Decisions locked (owner, 2026-07-20)</span>
+  <p><strong>AWS corpus lives as pinned live clones, not vendored snapshots</strong> — a manifest of
+  <code>(repo, commit, subdir)</code>; an isolated nextest binary clones each into scratch, builds,
+  boots under riz, asserts, tears down, and skips cleanly when offline. Strongest claim
+  ("their real code, pinned"), zero repo bloat. <strong>The two full-stack starters stay
+  scaffoldable</strong> — <code>riz new ai-chat</code> keeps working; the templates/examples line is
+  drawn with an explicit <code>kind</code>, not a directory-name guess.</p>
+</div>
+
+<!-- ============================================================ -->
+<section id="asks">
+  <div class="sec-eyebrow">Ground truth</div>
+  <h2>The five asks</h2>
+  <p class="lead col">One directive, five separable deliverables. Each is a tranche; each ships
+  independently green. C3 is the positioning centerpiece; C1, C4, C5 are self-contained; C2 is the
+  keystone C3 hangs off of.</p>
+
+  <div class="kv col">
+    <div class="row"><div class="k acid">C1</div><div class="v"><strong>Global environment variables.</strong>
+      A top-level <code>[env]</code> table in <code>riz.toml</code>, merged into every function's environment,
+      with <code>[function.X.env]</code> overriding it. Removes the per-function copy-paste that env scrubbing
+      (tranche 6) surfaced.</div></div>
+    <div class="row"><div class="k acid">C2</div><div class="v"><strong>Templates ≠ starters ≠ examples.</strong>
+      Separate fast-start scaffolds from read-only proof, and encode the distinction explicitly instead of
+      by a <code>starts_with("templates/")</code> string check. Add more e2e examples.</div></div>
+    <div class="row"><div class="k acid">C3</div><div class="v"><strong>AWS conformance corpus + clone-and-test.</strong>
+      Bring AWS's own official Lambda samples in as a pinned corpus and a harness that clones, builds, boots
+      under riz, and asserts — proving riz runs the reference implementation's code unmodified.</div></div>
+    <div class="row"><div class="k acid">C4</div><div class="v"><strong>s3 broker verb for WASM.</strong>
+      The broker has <code>pg</code> / <code>http</code> / <code>dynamo</code>; <code>s3</code> is missing.
+      Add <code>get/put/list/delete_object</code>, SigV4-signed host-side, WASM-only — the last capability the
+      sandboxed guest can't self-connect for.</div></div>
+    <div class="row"><div class="k acid">C5</div><div class="v"><strong>OpenAPI document, autogenerated, as a route.</strong>
+      Generate an OpenAPI 3.1 document from the same route table that already feeds the MCP tool list, and serve
+      it at <code>/openapi.json</code>.</div></div>
+  </div>
+
+  <div class="excl col">
+    <div class="x">OUT OF SCOPE — stated, not omitted</div>
+    <p><b>Non-HTTP event sources.</b> AWS's sample corpus is heavily SQS/SNS/S3-notification/DynamoDB-stream/
+    EventBridge-triggered. Those are out of riz's scope by decision. C3 pulls the <b>HTTP / API Gateway v2</b>
+    subset only, and the manifest records which event shape each sample targets.</p>
+    <p><b>Broker use by non-WASM runtimes.</b> Bun/Node/Python/Rust/Go handlers are not network-sandboxed — they
+    open their own S3/Postgres/HTTP connections. The broker (and the new <code>s3</code> verb) exist for the WASM
+    guest, the only network-sandboxed runtime. AWS ships no WASM samples, so nothing in C3 exercises the broker;
+    C3 is a <b>runtime-compat</b> proof, C4 is a <b>capability</b> addition. They do not overlap.</p>
+    <p><b>A rendered docs viewer.</b> C5 delivers the machine-readable <code>/openapi.json</code> only. A Swagger/
+    Redoc-style <code>/docs</code> HTML viewer is a natural follow-on but not in this program.</p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="state">
+  <div class="sec-eyebrow">Verified against main @ 7f72bc3</div>
+  <h2>Current state</h2>
+  <p class="lead col">What four parallel recon passes established in source — the seam each tranche moves,
+  and the one that is a genuine pre-existing bug.</p>
+
+  <figure>
+    <figcaption><span>Where each ask lands</span><b>recon → source</b></figcaption>
+    <div class="fig-body scroll">
+      <table class="matrix">
+        <thead><tr><th>Ask</th><th>What exists today</th><th>What's missing</th><th>Key anchor</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="layer">C1 <small>global env</small></td>
+            <td>Per-function <code>[function.X.env]</code> only; child env assembled with last-writer-wins ordering after <code>env_clear()</code>.</td>
+            <td class="cell gap">no top-level <code>[env]</code><span class="sub">every function repeats shared vars</span></td>
+            <td class="cell">pool.rs:206–241<span class="sub">merge point 214–218</span></td>
+          </tr>
+          <tr>
+            <td class="layer">C2 <small>taxonomy</small></td>
+            <td>Six per-runtime <code>templates/</code>; seven <code>examples/lambdas/</code>; two full-stack starters that <em>also</em> scaffold.</td>
+            <td class="cell gap">no explicit kind<span class="sub">split is a string-prefix guess</span></td>
+            <td class="cell">template_fetch.rs:74<span class="sub">is_template_row()</span></td>
+          </tr>
+          <tr>
+            <td class="layer">C3 <small>AWS corpus</small></td>
+            <td>riz-authored examples + a shell fleet smoke; phynd-search proved one real Rust lambda runs unmodified.</td>
+            <td class="cell gap">no external corpus<span class="sub">no clone-and-test harness</span></td>
+            <td class="cell">e2e_smoke_all.rs:56<span class="sub">delegates to smoke-all.sh</span></td>
+          </tr>
+          <tr>
+            <td class="layer">C4 <small>s3 verb</small></td>
+            <td>Broker dispatches <code>pg</code> / <code>http</code> / <code>dynamo</code>; SigV4 crates already vendored; WASM-only enforcement generic.</td>
+            <td class="cell gap">no <code>s3</code> backend<span class="sub">guest can't reach object storage</span></td>
+            <td class="cell">broker/mod.rs:68–72<span class="sub">GrantBackend enum</span></td>
+          </tr>
+          <tr>
+            <td class="layer">C5 <small>OpenAPI</small></td>
+            <td>Three generation passes over the live function table (MCP tools, llms.txt, registry JSON); all hand-built JSON Schema.</td>
+            <td class="cell gap">no OpenAPI pass<span class="sub">no /openapi.json route</span></td>
+            <td class="cell">mcp/tools.rs:47–101<span class="sub">tools_list_value</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="legend"><span class="lg"><span class="dot gap"></span>missing surface this program adds</span>
+      <span class="lg"><span class="dot acid"></span>reuse point — the seam already generalizes</span></div>
+  </figure>
+
+  <div class="note warn">
+    <span class="tag">Pre-existing bug, folded into C1</span>
+    <p><code>function_changed</code> (<code>hotreload.rs:448–459</code>) does not compare the <code>env</code> map at
+    all — so <em>today</em>, editing <code>[function.X.env]</code> and saving does not trigger a hot-swap; the
+    change is silently ignored until a restart. C1 must extend this comparison, otherwise a global <code>[env]</code>
+    edit would have the same dead-on-reload behavior. Fixing it here is correct scope: C1 is the env tranche.</p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="c1">
+  <div class="sec-eyebrow">C1 · self-contained · no dependency</div>
+  <h2>Global environment variables</h2>
+  <p class="lead col">A top-level <code>[env]</code> table, folded into each function's environment in the config
+  layer, so the child-process env assembly in <code>pool.rs</code> is left untouched and hot-reload re-merges for free.
+  Precedence is decided entirely by <em>stacking order</em> — the layer applied last wins.</p>
+
+  <figure>
+    <figcaption><span>Child-env precedence — outer layers cannot be shadowed by inner</span><b>pool.rs:206–241</b></figcaption>
+    <div class="fig-body">
+      <div class="trust" style="max-width:560px;margin:0 auto">
+        <div class="box host">
+          <span class="blabel">1 · env_clear() — daemon env dropped</span>
+          <div class="box daemon">
+            <span class="blabel">2 · allowlist re-add · apply_base_env (pool.rs:179)</span>
+            <div class="assets"><span class="chip good">RIZ_TEST_BASE_URL</span><span class="chip">PATH</span><span class="chip">LANG…</span></div>
+            <div class="box child" style="border-color:var(--acid-dim)">
+              <span class="blabel" style="color:var(--acid-dim)">3 · broker control vars · RIZ_BROKER_* (pool.rs:212)</span>
+              <div class="box child">
+                <span class="blabel">4 · <b style="color:var(--acid)">NEW</b> global [env] — folded in at config layer</span>
+                <div class="assets"><span class="chip acid">AWS_REGION</span><span class="chip acid">LOG_LEVEL</span></div>
+                <div class="box child">
+                  <span class="blabel">5 · per-function [function.X.env] — overrides global</span>
+                  <div class="assets"><span class="chip">TABLE_NAME</span><span class="chip">AWS_REGION*</span></div>
+                  <div class="box wasi">
+                    <span class="blabel">6 · riz internals — AWS_LAMBDA_* · _HANDLER (pool.rs:225)</span>
+                    <div class="assets"><span class="chip good">unshadowable</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="legend"><span class="lg"><span class="dot acid"></span>new layer</span>
+      <span class="lg"><span class="dot ok"></span>protected by ordering</span>
+      <span class="lg">last writer wins → function beats global; broker &amp; riz internals bracket both</span></div>
+  </figure>
+
+  <p>Because <code>cmd.env(k,v)</code> overwrites, layering <em>global first, then per-function</em> yields
+  function-over-global precedence with no conditional logic. Broker vars (layer 3, set before) and riz internals
+  (layer 6, set after) both remain unshadowable — the exact invariant the existing comments at
+  <code>pool.rs:209–211</code> protect. <strong>The scrub allowlist does not gate <code>[env]</code></strong>: the
+  allowlist only decides which <em>daemon</em> vars survive <code>env_clear()</code> (<code>apply_base_env</code>,
+  layer 2). A global <code>[env]</code> is operator-declared literal values from <code>riz.toml</code> — the same
+  kind of thing as <code>[function.X.env]</code> — applied straight through, never filtered.</p>
+
+  <h3>Implementation — config-layer merge</h3>
+  <p>Mirror the existing <code>Config::effective_cors_for</code> (<code>config.rs:999–1006</code>), which already
+  layers per-function <code>[function.X.cors]</code> over global <code>[cors]</code> — the identical shape.</p>
+  <pre><code><span class="cmt">// config.rs — Config gains a sibling of `cors`</span>
+<span class="acc">#[serde(default)]</span>
+pub env: std::collections::HashMap&lt;String, String&gt;,   <span class="cmt">// top-level [env]</span>
+
+<span class="cmt">// new helper, modeled on effective_cors_for (config.rs:999)</span>
+pub fn effective_env_for(&amp;self, name: &amp;str) -&gt; HashMap&lt;String, String&gt; {
+    let mut merged = self.env.clone();                <span class="cmt">// global first</span>
+    if let Some(f) = self.functions.get(name) {
+        merged.extend(f.env.clone());                 <span class="cmt">// function overrides</span>
+    }
+    merged
+}</code></pre>
+  <p>The pool then reads the merged map where it reads <code>cfg.env</code> today (<code>pool.rs:218</code>) — one
+  call-site change threading the merged result through, no new <code>pool.rs</code> env loop. Hot-reload re-parses
+  and re-merges with zero extra work.</p>
+
+  <h3>The reload fix (folded in)</h3>
+  <p>Extend <code>function_changed</code> (<code>hotreload.rs:448</code>) to compare the <em>merged</em> env map, so a
+  change to either global <code>[env]</code> or <code>[function.X.env]</code> triggers a hot-swap. This also fixes the
+  standing bug where per-function env edits are ignored until restart.</p>
+
+  <div class="kv col">
+    <div class="row"><div class="k">Config example</div><div class="v"><pre style="margin:0"><code>[env]                 <span class="cmt"># applies to every function</span>
+AWS_REGION = <span class="str">"us-east-1"</span>
+LOG_LEVEL  = <span class="str">"info"</span>
+
+[function.search.env] <span class="cmt"># overrides just for `search`</span>
+LOG_LEVEL  = <span class="str">"debug"</span></code></pre></div></div>
+    <div class="row"><div class="k acid">Tests</div><div class="v">global-only reaches child; function overrides global; broker
+      var un-shadowable by a colliding global; riz internal un-shadowable by both; edit-to-<code>[env]</code>
+      triggers reload. <span class="rec">unit + one e2e reload assertion</span></div></div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="c2">
+  <div class="sec-eyebrow">C2 · keystone · precedes C3</div>
+  <h2>Templates ≠ starters ≠ examples</h2>
+  <p class="lead col">Today the tagline is right — <em>"templates are starting points; examples are proof"</em>
+  (<code>examples/README.md:3</code>) — but the code separates them by a single string check,
+  <code>is_template_row()</code> = <em>subdir starts with <code>templates/</code></em>
+  (<code>template_fetch.rs:74</code>). That collapses under its own edge case: two full-stack starters
+  (<code>typescript-todo</code>, <code>ai-chat</code>) live under <code>examples/</code> yet are registered as
+  <code>riz new</code> sources. They are <em>both</em> roles at once, and a directory-name guess cannot express that.</p>
+
+  <h3>The fix: an explicit kind, three distinct tiers</h3>
+  <p>Replace the prefix guess with a <code>kind</code> field on each <code>BUILTINS</code> row
+  (<code>template_fetch.rs:31–70</code>). Scaffoldability becomes a declared property, not an inference from path.</p>
+
+  <figure>
+    <figcaption><span>Three tiers by role, not by directory</span><b>kind: Template | Starter | Example</b></figcaption>
+    <div class="fig-body scroll">
+      <table class="matrix">
+        <thead><tr><th>Tier</th><th>What it is</th><th>Scaffoldable?</th><th>Proven by</th><th>Lives in</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="layer">Template <small>kind=Template</small></td>
+            <td>One minimal "hello" per runtime — fast start in a language.</td>
+            <td class="cell ok">yes · riz new &lt;lang&gt;<span class="sub">6, one per RuntimeKind</span></td>
+            <td class="cell">template_smoke_all</td>
+            <td class="cell">templates/*</td>
+          </tr>
+          <tr>
+            <td class="layer">Starter <small>kind=Starter</small></td>
+            <td>Full-stack app skeletons — API + client, real shape to build on.</td>
+            <td class="cell ok">yes · riz new ai-chat<span class="sub">typescript-todo · ai-chat</span></td>
+            <td class="cell">e2e fleet (boot)</td>
+            <td class="cell">examples/*</td>
+          </tr>
+          <tr>
+            <td class="layer">Example <small>kind=Example</small></td>
+            <td>Showcase handlers you read and steal — capability proofs.</td>
+            <td class="cell warn">no · read-only<span class="sub">7 under examples/lambdas</span></td>
+            <td class="cell">e2e_smoke_all</td>
+            <td class="cell">examples/lambdas/*</td>
+          </tr>
+          <tr>
+            <td class="layer" style="color:var(--acid)">Conformance <small>kind=Example (external)</small></td>
+            <td><b>C3</b> — AWS's own samples, pinned. Not copied into the tree; run from a manifest.</td>
+            <td class="cell warn">no · clone-and-test<span class="sub">not a riz new source</span></td>
+            <td class="cell" style="color:var(--acid)">aws_conformance</td>
+            <td class="cell">manifest + scratch</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="legend"><span class="lg"><span class="dot ok"></span>scaffoldable via riz new</span>
+      <span class="lg"><span class="dot warn"></span>read-only / run-only proof</span>
+      <span class="lg"><span class="dot acid"></span>added by C3</span></div>
+  </figure>
+
+  <ul class="facts col">
+    <li><b>No behavior lost.</b> <code>riz new ai-chat</code> and <code>riz new typescript-todo</code> keep working —
+      they're now <code>kind=Starter</code> instead of "an examples row that sneaks past the prefix check."</li>
+    <li><b>The prefix hack dies.</b> <code>is_template_row()</code> (<code>template_fetch.rs:74</code>) and its two
+      consumers — <code>print_template_list()</code> (<code>main.rs:218,226</code>) and the conformance test
+      (<code>lambda_shape_conformance.rs:180</code>) — switch to reading <code>kind</code>.
+      <code>print_template_list</code> renders three sections instead of two.</li>
+    <li><b>The one-to-one lock stays.</b> <code>template_set_maps_one_to_one_onto_runtime_kinds</code>
+      (<code>lambda_shape_conformance.rs:134</code>) still asserts exactly one <code>kind=Template</code> per
+      <code>RuntimeKind</code>. Starters and examples are exempt from the one-per-runtime rule by construction.</li>
+    <li><b>Authoring contract preserved.</b> The Lambda-shape walker (<code>lambda_shape_conformance.rs:52</code>)
+      keeps traversing <code>templates/*</code> and <code>examples/lambdas/*</code> — starters and the external
+      corpus are outside its authored-in-repo remit.</li>
+    <li><b>More e2e examples (the "more examples" ask).</b> Add at least one capability-exercising example that the
+      current set lacks — a <code>dynamo</code>-or-<code>s3</code>-backed WASM handler that drives the broker end to
+      end — so the showcase tier demonstrates the guest capability path, not just HTTP shape.</li>
+  </ul>
+
+  <div class="note">
+    <span class="tag">Brittle couplings a reshuffle must respect</span>
+    <p><code>full_stack_builtin_points_at_examples</code> (<code>template_fetch.rs:493</code>) asserts the starter
+    subdir is <code>examples/typescript-todo</code> — starters stay under <code>examples/</code>, so this holds.
+    <code>examples/riz.all.toml</code> and <code>smoke-all.sh</code> reference handlers by hardcoded relative path
+    (e.g. <code>examples/lambdas/chat/index.handler</code>); C2 does not move the <code>examples/lambdas/*</code>
+    handlers, so those paths are untouched. The only code change is <code>BUILTINS</code> gaining a field and three
+    call-sites reading it.</p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="c3">
+  <div class="sec-eyebrow">C3 · positioning centerpiece · depends on C2, benefits from C1</div>
+  <h2>AWS conformance corpus</h2>
+  <p class="lead col">The load-bearing claim riz can make: <em>it runs AWS's own reference Lambda code, unmodified.</em>
+  phynd-search proved it once for a real Rust lambda; C3 turns that into a pinned, repeatable, multi-runtime
+  conformance suite the site can cite because it's tied to a test.</p>
+
+  <h3>Delivery — pinned live clones (locked)</h3>
+  <p>A manifest of <code>(repo, commit, subdir, runtime, event_shape, assert)</code> rows. An isolated nextest binary
+  (<code>tests/aws_conformance.rs</code>, gated like <code>e2e_smoke_all</code>) walks the manifest, and for each row
+  runs the pipeline below in scratch. Nothing is copied into the tree; the corpus is <em>referenced</em>, so the
+  claim is "AWS's actual code at commit <code>abc123</code>," not "our copy of it."</p>
+
+  <figure>
+    <figcaption><span>Per-sample harness pipeline</span><b>tests/aws_conformance.rs → scratch</b></figcaption>
+    <div class="fig-body scroll">
+      <div class="steps">
+        <span class="step">manifest row<small>repo · commit · subdir</small></span>
+        <span class="sarrow">→</span>
+        <span class="step">clone --depth 1<small>pinned commit → scratch</small></span>
+        <span class="sarrow">→</span>
+        <span class="step">build<small>cargo · go · bun i · pip</small></span>
+        <span class="sarrow">→</span>
+        <span class="step new">gen riz.toml<small>runtime + route from manifest</small></span>
+        <span class="sarrow">→</span>
+        <span class="step">riz run<small>headless, free port</small></span>
+        <span class="sarrow">→</span>
+        <span class="step">GET · assert<small>status + body</small></span>
+        <span class="sarrow">→</span>
+        <span class="step">teardown<small>kill · rm scratch</small></span>
+      </div>
+    </div>
+    <div class="legend"><span class="lg"><span class="dot acid"></span>the riz-specific step — a generated <code>riz.toml</code> is the entire integration surface</span>
+      <span class="lg"><span class="dot warn"></span>skips cleanly: offline, or toolchain/target absent</span></div>
+  </figure>
+
+  <ul class="facts col">
+    <li><b>Hermetic-enough.</b> Pinned commits make runs reproducible; the binary <b>skips</b> (does not fail) when
+      the network is unreachable or a toolchain is missing — the same skip discipline
+      <code>template_smoke_all</code> uses per leg.</li>
+    <li><b>HTTP / API Gateway v2 subset only.</b> Each manifest row records <code>event_shape</code>
+      (<code>apigw-http-v2</code> · <code>apigw-rest-v1</code>). riz emits v2; v1-authored samples are flagged and
+      either excluded or noted as a known event-shape delta, not a silent pass.</li>
+    <li><b>Zero handler edits.</b> If a sample needs a source change to boot, that is a <em>finding</em>, recorded in
+      the manifest with the reason — not patched away. The proof is worthless if we edit the samples.</li>
+    <li><b>C1 makes the configs clean.</b> Samples that read <code>AWS_REGION</code> / table names get them from a
+      single generated global <code>[env]</code>, not per-row duplication.</li>
+  </ul>
+
+  <h3>Starter corpus — the most authoritative sources</h3>
+  <div class="kv col">
+    <div class="row"><div class="k">Rust</div><div class="v"><code>awslabs/aws-lambda-rust-runtime</code> →
+      <code>examples/http-*</code>. Same <code>lambda_http</code> crate phynd-search uses; runs on riz's Runtime-API
+      path unmodified. <span class="rec">highest signal — start here</span></div></div>
+    <div class="row"><div class="k">Go</div><div class="v"><code>aws/aws-lambda-go</code> → the APIGW-v2 proxy example.
+      Second compiled-binary Runtime-API path.</div></div>
+    <div class="row"><div class="k">Node</div><div class="v"><code>aws/aws-sam-cli-app-templates</code> Node HTTP-API
+      hello-world (or an <code>aws-samples</code> apigw-http-lambda pattern). stdio adapter path.</div></div>
+    <div class="row"><div class="k">Python</div><div class="v">The SAM Python HTTP-API hello-world. stdio adapter path.
+      Completes the four in-scope runtimes with an AWS-published sample.</div></div>
+  </div>
+  <p>Start with the two compiled-binary samples (Rust, Go — the cleanest signal), prove green, then extend to the
+  stdio-adapter runtimes. Java/.NET/Ruby samples exist but are outside riz's runtime set and are not pursued.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="c4">
+  <div class="sec-eyebrow">C4 · self-contained · no dependency</div>
+  <h2>The s3 broker verb</h2>
+  <p class="lead col">The broker already dispatches <code>pg</code>, <code>http</code>, and <code>dynamo</code> to the
+  sandboxed WASM guest with credentials that never cross the boundary. <code>s3</code> is the missing member. It
+  mirrors <code>dynamo</code> almost exactly — SigV4-signed host-side, WASM-only enforced for free — with one real
+  difference: S3 is a REST API, not a single POST with <code>X-Amz-Target</code>.</p>
+
+  <figure>
+    <figcaption><span>Dispatcher — one new backend arm, deny-by-default preserved</span><b>src/broker/mod.rs</b></figcaption>
+    <div class="fig-body scroll">
+      <div class="steps">
+        <span class="step">guest cap::s3.get_object<small>riz-wasm shim</small></span>
+        <span class="sarrow">→</span>
+        <span class="step">dispatch(verb, grant, body)<small>mod.rs:206</small></span>
+        <span class="sarrow">→</span>
+        <span class="step new">verb→type: "s3"<small>mod.rs:244 map</small></span>
+        <span class="sarrow">→</span>
+        <span class="step new">run_verb (v, S3(backend))<small>mod.rs:362 arm</small></span>
+        <span class="sarrow">→</span>
+        <span class="step new">S3Backend.call → SigV4 sign<small>service "s3", REST verb</small></span>
+        <span class="sarrow">→</span>
+        <span class="step">envelope { ok, rows }<small>shared PgRows wrap</small></span>
+      </div>
+    </div>
+    <div class="legend"><span class="lg"><span class="dot acid"></span>new code</span>
+      <span class="lg"><span class="dot warn"></span>deny-by-default: an unknown verb or a non-<code>s3</code> grant is rejected before signing</span></div>
+  </figure>
+
+  <h3>What differs from dynamo (the only real design work)</h3>
+  <ul class="facts col">
+    <li><b>REST verbs, not one POST.</b> <code>get_object</code>=GET, <code>put_object</code>=PUT,
+      <code>delete_object</code>=DELETE, <code>list_objects</code>=GET on the bucket with a query string. The bucket/key
+      live in the URL path, not a JSON <code>TableName</code> field.</li>
+    <li><b>Payload hash header.</b> S3 SigV4 signs <code>x-amz-content-sha256</code> over the body; add it to the
+      signed header set. Service name flips <code>"dynamodb"</code> → <code>"s3"</code> in
+      <code>v4::SigningParams</code> (template at <code>dynamo.rs:198–206</code>).</li>
+    <li><b>Endpoint shape.</b> <code>https://{bucket}.s3.{region}.amazonaws.com</code> vs dynamo's
+      <code>https://dynamodb.{region}.amazonaws.com</code> (<code>dynamo.rs:75</code>).</li>
+    <li><b>key_prefix maps directly.</b> The existing grant field (<code>config.rs:476–480</code>) scopes which S3
+      keys a grant may touch — reuse <code>enforce_key_prefix</code> (<code>dynamo.rs:235</code>) unchanged in intent.</li>
+    <li><b>Read-only guard.</b> <code>get_object</code>/<code>list_objects</code> read-only;
+      <code>put_object</code>/<code>delete_object</code> mutating — rejected before signing under a read-only grant.</li>
+  </ul>
+
+  <div class="note">
+    <span class="tag">Free wins recon confirmed</span>
+    <p>SigV4 deps are already in <code>Cargo.toml:137–139</code> — <b>no new crates</b> (and <em>not</em>
+    <code>aws-sdk-s3</code>, which exists at <code>Cargo.toml:86</code> for deploy-only artifact download; the broker
+    hand-signs). WASM-only enforcement is generic (<code>config.rs:1293–1301</code> checks <code>RuntimeKind::Wasm</code>
+    for <em>any</em> grant) — <b>s3 grants inherit it with zero new code</b>. The <code>key_prefix</code> grant field
+    already exists. Test model: <code>tests/broker_dynamo.rs</code> stands up a mock that <b>independently re-signs
+    each request and byte-compares the signature</b> — copy it to <code>broker_s3.rs</code>.</p>
+  </div>
+
+  <h3>Edit checklist — 13 points, all mirroring dynamo</h3>
+  <div class="fig-body scroll" style="padding:0">
+    <table class="matrix">
+      <thead><tr><th>#</th><th>Edit</th><th>Anchor</th></tr></thead>
+      <tbody>
+        <tr><td class="cell">1</td><td>New <code>src/broker/s3.rs</code> — copy dynamo.rs; service→"s3", table→bucket, REST verbs + payload hash</td><td class="cell">template dynamo.rs:1–339</td></tr>
+        <tr><td class="cell">2</td><td><code>pub mod s3;</code></td><td class="cell">broker/mod.rs:34</td></tr>
+        <tr><td class="cell">3</td><td><code>S3(Arc&lt;s3::S3Backend&gt;)</code> enum variant</td><td class="cell">broker/mod.rs:71</td></tr>
+        <tr><td class="cell">4</td><td>S3 verb→<code>"s3"</code> type arm + update unknown-verb message</td><td class="cell">broker/mod.rs:244</td></tr>
+        <tr><td class="cell">5</td><td><code>run_verb</code> S3 arm</td><td class="cell">broker/mod.rs:362</td></tr>
+        <tr><td class="cell">6</td><td><code>backends_for_function</code> "s3" arm</td><td class="cell">broker/mod.rs:408</td></tr>
+        <tr><td class="cell">7</td><td><code>cap::s3</code> guest module (get/put/list/delete)</td><td class="cell">riz-wasm/src/lib.rs:363</td></tr>
+        <tr><td class="cell">8</td><td><code>pub s3: IndexMap&lt;…&gt;</code> on ResourcesConfig</td><td class="cell">config.rs:339</td></tr>
+        <tr><td class="cell">9</td><td>New <code>S3ResourceConfig</code> (region, bucket, endpoint, cred envs)</td><td class="cell">config.rs:345</td></tr>
+        <tr><td class="cell">10</td><td>Add <code>"s3"</code> to <code>CAPABILITY_TYPES</code></td><td class="cell">config.rs:502</td></tr>
+        <tr><td class="cell">11</td><td>S3 resource-existence check in <code>validate_capability_grants</code></td><td class="cell">config.rs:1337</td></tr>
+        <tr><td class="cell">12</td><td>New <code>tests/broker_s3.rs</code> — re-signing mock</td><td class="cell">template broker_dynamo.rs</td></tr>
+        <tr><td class="cell">13</td><td>S3 host-side sign unit test</td><td class="cell">model dynamo.rs:292</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="c5">
+  <div class="sec-eyebrow">C5 · self-contained · no dependency</div>
+  <h2>OpenAPI, autogenerated, as a route</h2>
+  <p class="lead col">riz already walks its live function table three times — for the MCP tool list, <code>llms.txt</code>,
+  and the registry JSON — reading the same fields each pass. An OpenAPI 3.1 document is a <em>fourth pass of the same
+  shape</em>. And because OpenAPI 3.1 aligns with JSON Schema 2020-12, the hand-built schema fragments riz already
+  emits transfer with minimal massaging. No <code>utoipa</code>/<code>schemars</code> dependency is added.</p>
+
+  <figure>
+    <figcaption><span>One table, four consumers — OpenAPI is the fourth</span><b>riz_state.functions → generators</b></figcaption>
+    <div class="fig-body scroll">
+      <div class="steps">
+        <span class="step">riz_state.functions<small>FunctionKind::User</small></span>
+        <span class="sarrow">→</span>
+        <span class="step">per-fn: name · routes · mcp{query,body,desc}<small>the shared read</small></span>
+        <span class="sarrow">→</span>
+        <span class="step">tool_input_schema()<small>schema.rs:45 — path/query/body → JSON Schema</small></span>
+        <span class="sarrow">→</span>
+        <span class="step">MCP tools</span>
+        <span class="sarrow" style="flex-basis:14px">·</span>
+        <span class="step">llms.txt</span>
+        <span class="sarrow" style="flex-basis:14px">·</span>
+        <span class="step">registry</span>
+        <span class="sarrow">→</span>
+        <span class="step new">OpenAPI paths + operations<small>NEW · same inputs</small></span>
+      </div>
+    </div>
+    <div class="legend"><span class="lg"><span class="dot acid"></span>new generator — reuses the same param-typing core</span>
+      <span class="lg"><span class="dot ok"></span>path templates already use <code>{param}</code> — OpenAPI-native</span></div>
+  </figure>
+
+  <ul class="facts col">
+    <li><b>Mapping is mechanical.</b> Each route's <code>METHOD /path</code> becomes an OpenAPI operation; inferred
+      path params → <code>parameters</code> (path); typed <code>[function.X.mcp.query]</code> → <code>parameters</code>
+      (query); <code>[function.X.mcp].body</code> is <em>already</em> verbatim JSON Schema →
+      <code>requestBody.content.schema</code> as-is; <code>lambda_response_envelope_schema()</code>
+      (<code>encoding.rs:48</code>) → the default response.</li>
+    <li><b>Served public at <code>/openapi.json</code>.</b> One <code>.route("/openapi.json", get(handler))</code> line
+      in <code>build_app</code> (<code>server.rs:39–47</code>), mirroring <code>/health</code> and the existing A2A
+      agent-card route (<code>server.rs:248</code>) — a public, unauthenticated, generated-JSON precedent. It describes
+      the public HTTP surface, so public is correct; easy to move behind the shared bearer gate if ever wanted.</li>
+    <li><b>Positioning payoff.</b> Every function is now simultaneously an MCP tool <em>and</em> an OpenAPI operation,
+      both autogenerated from one route table, both served as routes — no annotations, no separate spec file to drift.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="delivery">
+  <div class="sec-eyebrow">Delivery</div>
+  <h2>Five tranches, sequenced by dependency</h2>
+  <p class="lead col">Each tranche is one PR (or a tight pair), independently green, merged the usual way. Only two
+  edges are real: C2 must precede C3 (the corpus lands in the tier C2 defines), and C1 should precede C3 (clean
+  sample configs). C4 and C5 float free.</p>
+
+  <figure>
+    <figcaption><span>Tranche order · what blocks what</span><b>T1 → T5</b></figcaption>
+    <div class="fig-body scroll">
+      <div class="seq">
+        <div class="node"><div class="n-k">T1</div><div class="n-t">Global env</div>
+          <div class="n-d">Top-level <code>[env]</code> + <code>effective_env_for</code> + reload fix.</div>
+          <div class="indep">independent · enables T3</div></div>
+        <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16M14 6l6 6-6 6"/></svg></div>
+        <div class="node"><div class="n-k">T2</div><div class="n-t">Taxonomy split</div>
+          <div class="n-d">Explicit <code>kind</code>; three tiers; kill the prefix hack; +1 broker example.</div>
+          <div class="dep">blocks T3</div></div>
+        <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16M14 6l6 6-6 6"/></svg></div>
+        <div class="node"><div class="n-k">T3</div><div class="n-t">AWS corpus</div>
+          <div class="n-d">Manifest + <code>aws_conformance</code> harness; Rust+Go first, then Node+Python.</div>
+          <div class="dep">needs T2 · uses T1</div></div>
+        <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16M14 6l6 6-6 6"/></svg></div>
+        <div class="node"><div class="n-k">T4</div><div class="n-t">s3 verb</div>
+          <div class="n-d">13-point dynamo mirror; SigV4 REST; re-signing mock test.</div>
+          <div class="indep">independent</div></div>
+        <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16M14 6l6 6-6 6"/></svg></div>
+        <div class="node"><div class="n-k">T5</div><div class="n-t">OpenAPI route</div>
+          <div class="n-d">Fourth generation pass; <code>/openapi.json</code> public route.</div>
+          <div class="indep">independent</div></div>
+      </div>
+    </div>
+    <div class="legend"><span class="lg"><span class="dot ok"></span>independent — could ship in any order</span>
+      <span class="lg"><span class="dot warn"></span>ordering edge — respect the arrow</span></div>
+  </figure>
+
+  <div class="note">
+    <span class="tag">Gates — every tranche, before push</span>
+    <p><code>cargo fmt --all -- --check</code> · <code>cargo clippy --workspace --all-targets -- -D warnings</code> ·
+    <code>./scripts/safety-check.sh --gate</code> · the fast nextest set · then the isolated binaries
+    (<code>e2e_smoke_all</code>, <code>template_smoke_all</code>, <code>perf_regression</code>, <code>chaos</code>,
+    and — new in T3 — <code>aws_conformance</code>). cargo-nextest only. T2 and T4/T5 touch the runtime-count
+    source-of-truth: any change to the six-runtime enumeration updates every prose site in lockstep
+    (<code>rg -n "runtimes"</code>).</p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="assurance">
+  <div class="sec-eyebrow">Assurance</div>
+  <h2>What proves it, what could sink it</h2>
+
+  <h3>Proof per tranche</h3>
+  <ul class="facts col">
+    <li><b>T1</b> — unit tests for the four precedence cases + one e2e that edits <code>[env]</code> and asserts the
+      running child sees the new value (closes the reload bug).</li>
+    <li><b>T2</b> — the existing one-to-one and Lambda-shape conformance tests stay green under the new <code>kind</code>;
+      a test asserts <code>riz new ai-chat</code> still resolves; <code>print_template_list</code> renders three tiers.</li>
+    <li><b>T3</b> — <code>aws_conformance</code> boots each pinned AWS sample and asserts a real response; runs green in
+      CI where toolchains exist, skips (not fails) offline. This is the citable "runs AWS's own code" evidence.</li>
+    <li><b>T4</b> — the re-signing mock proves byte-exact SigV4; read-only and key_prefix rejection tests prove the
+      guardrails fire before signing; a WASM example (from T2) drives it end to end.</li>
+    <li><b>T5</b> — a test fetches <code>/openapi.json</code> and validates it parses as OpenAPI 3.1 with one operation
+      per declared route.</li>
+  </ul>
+
+  <h3>Risks</h3>
+  <div class="kv col">
+    <div class="row"><div class="k">T3 network</div><div class="v">AWS repos move or a pinned commit disappears. Mitigation:
+      pin commits (not branches); skip-on-unreachable; a clear failure message naming the dead ref. Vendoring stays
+      the documented fallback if flakiness proves chronic.</div></div>
+    <div class="row"><div class="k">T3 v1 vs v2</div><div class="v">A sample authored for REST API (v1) hands the handler a
+      different event than riz's v2. Mitigation: <code>event_shape</code> in the manifest; v1 samples excluded or
+      logged as a known delta — never a silent pass.</div></div>
+    <div class="row"><div class="k">T4 S3 quirks</div><div class="v">S3's signing has more surface than dynamo
+      (payload hash, path-style vs virtual-host, query signing for list). Mitigation: the independent re-signing mock
+      is the oracle — if our sign and the mock's re-sign disagree byte-for-byte, the test fails.</div></div>
+    <div class="row"><div class="k">T2 drift</div><div class="v">Renaming/moving a starter breaks
+      <code>riz new</code> and a test asserting its subdir. Mitigation: C2 keeps starters under <code>examples/</code>
+      and only adds a field — no relocation.</div></div>
+  </div>
+
+  <h3>Scope guard restated</h3>
+  <p class="col">This program adds <b>runtime-compat proof</b> (C3), <b>one capability</b> (C4), and <b>three DX/surface
+  refinements</b> (C1, C2, C5). It does <em>not</em> expand riz beyond HTTP/WS Lambdas, does <em>not</em> route
+  non-WASM traffic through the broker, and does <em>not</em> ship a docs viewer. Everything here is verified against
+  <code>main @ 7f72bc3</code>; nothing is built until this spec is approved.</p>
+</section>
+
+<hr class="rule">
+<footer>
+  <span>riz — AWS conformance corpus &amp; capability completion · 2026-07-20</span>
+  <span>PROPOSED · verified @ 7f72bc3 · C1–C5 · 5 tranches</span>
+</footer>
+
+</div>
+</body>
+</html>
