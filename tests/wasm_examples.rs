@@ -210,6 +210,13 @@ async fn wasm_orders_prices_a_valid_order() {
         body["totalCents"], 1894,
         "total = subtotal+tax; body = {body}"
     );
+    // Capability flagship, no grant wired here → persistence degrades to
+    // false and the order still succeeds (200). The pg-through-UDS path is
+    // proven by wasm_broker_pg.
+    assert_eq!(
+        body["persisted"], false,
+        "no pg grant → persisted:false, order still priced; body = {body}"
+    );
 
     // Per-line extended amounts prove the WASM did the arithmetic, not echo.
     assert_eq!(

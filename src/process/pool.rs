@@ -114,6 +114,10 @@ pub(super) struct RoutePool {
     pub(super) log_tx: mpsc::Sender<LogEntry>,
     /// Shared RizState used to bump cold_starts on every successful spawn.
     pub(super) riz_state: Arc<RizState>,
+    /// Broker env (`RIZ_BROKER_SOCK`/`TOKEN`/`TIMEOUT_MS`) stamped onto every
+    /// worker this pool spawns. Empty for grantless functions — the worker
+    /// then has no broker client and answers capability calls `denied`.
+    pub(super) broker_env: Vec<(String, String)>,
 }
 
 /// Spawn a new process and immediately record a cold start against
@@ -129,23 +133,32 @@ pub(super) async fn spawn_with_cold_start_record(
         function_name,
         &pool.runtime_registry,
         &pool.log_tx,
+        &pool.broker_env,
     )
     .await?;
     pool.riz_state.note_cold_start(function_name).await;
     Ok(handle)
 }
 
-#[tracing::instrument(skip(cfg, registry, log_tx), fields(handler = ?cfg.handler, runtime = ?cfg.runtime))]
+#[tracing::instrument(skip(cfg, registry, log_tx, broker_env), fields(handler = ?cfg.handler, runtime = ?cfg.runtime))]
 pub(super) async fn spawn_process(
     cfg: &FunctionConfig,
     function_name: &str,
     registry: &RuntimeRegistry,
     log_tx: &mpsc::Sender<LogEntry>,
+    broker_env: &[(String, String)],
 ) -> anyhow::Result<ProcessHandle> {
     let runtime = registry.get(&cfg.runtime);
     let transport_kind = runtime.transport();
     tracing::debug!(runtime = runtime.name(), handler = ?cfg.handler, ?transport_kind, "spawning lambda process");
     let mut cmd = runtime.spawn_command(cfg);
+
+    // Broker env for a granted wasm worker: its per-function token + socket.
+    // Empty for grantless functions. Set before the per-function env below so
+    // a function's own `[env]` can never shadow the broker control vars.
+    for (key, value) in broker_env {
+        cmd.env(key, value);
+    }
 
     // Per-function `[function.X.env]` lands FIRST so riz's own variables
     // (AWS_LAMBDA_*, _HANDLER, runtime internals set below) win on conflict.

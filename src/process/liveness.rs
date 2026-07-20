@@ -198,6 +198,7 @@ mod tests {
             runtime_registry: registry,
             log_tx,
             riz_state,
+            broker_env: Vec::new(),
         })
     }
 

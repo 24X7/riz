@@ -70,15 +70,10 @@ impl LambdaRuntime for WasmRuntime {
         for (k, v) in &cfg.stage_variables {
             cmd.arg("--env").arg(format!("{k}={v}"));
         }
-        // Broker capability grants (resource broker v1). The grants are limit
-        // config only — resource definitions ride the RIZ_BROKER_RESOURCES
-        // env var (set at startup) and DSNs resolve from the child's own
-        // inherited environment. No credential ever appears in argv.
-        if !cfg.capabilities.is_empty() {
-            if let Ok(json) = serde_json::to_string(&cfg.capabilities) {
-                cmd.arg("--broker-grants").arg(json);
-            }
-        }
+        // Capability grants no longer ride argv. A granted worker reaches the
+        // daemon broker over a UDS; its RIZ_BROKER_SOCK/TOKEN/TIMEOUT env is
+        // minted per worker in the pool spawn path (src/process/pool.rs), so
+        // this adapter stays credential- and grant-free.
         cmd
     }
 
@@ -99,16 +94,15 @@ pub fn run_host(args: &[String]) -> anyhow::Result<()> {
     run_host_inner(args).map_err(|e| anyhow::anyhow!("{e:?}"))
 }
 
-/// Store data for the wasm host: the WASI context plus the broker seam.
+/// Store data for the wasm host: the WASI context plus the capability seam.
 struct HostCtx {
     wasi: wasmtime_wasi::p1::WasiP1Ctx,
-    /// Armed when the function has `[function.x.capabilities]` grants.
-    broker: Option<std::sync::Arc<crate::broker::Broker>>,
-    /// Current-thread tokio runtime driving the broker's async I/O. The
-    /// guest is blocked inside its own host call while this runs — no
-    /// reentrancy.
-    rt: Option<std::sync::Arc<tokio::runtime::Runtime>>,
-    /// Response bytes from the last broker call, awaiting `read_response`.
+    /// Sync UDS client to the daemon broker. `Some` only for a granted worker
+    /// (spawned with `RIZ_BROKER_SOCK`); `None` → capability calls answer
+    /// `denied` locally with zero IPC. The guest is blocked inside its own
+    /// host call while this runs — no reentrancy, no async runtime needed.
+    client: Option<crate::broker::client::CapabilityClient>,
+    /// Response bytes from the last capability call, awaiting `read_response`.
     stash: Vec<u8>,
 }
 
@@ -117,12 +111,12 @@ struct HostArgs {
     module_path: String,
     dirs: Vec<String>,
     envs: Vec<(String, String)>,
-    broker_grants_json: Option<String>,
 }
 
-/// Parse `<module.wasm> [--dir PATH] [--env K=V] [--broker-grants JSON]`.
-/// Iterator-driven — no index arithmetic to slip out of bounds (rule 9);
-/// every malformed shape is a startup error, never a panic.
+/// Parse `<module.wasm> [--dir PATH] [--env K=V]`. Iterator-driven — no index
+/// arithmetic to slip out of bounds (rule 9); every malformed shape is a
+/// startup error, never a panic. (Capability grants no longer ride argv: a
+/// granted worker reaches the daemon broker via `RIZ_BROKER_SOCK` env.)
 fn parse_host_args(args: &[String]) -> wasmtime::Result<HostArgs> {
     use wasmtime::bail;
 
@@ -132,7 +126,6 @@ fn parse_host_args(args: &[String]) -> wasmtime::Result<HostArgs> {
     };
     let mut dirs: Vec<String> = Vec::new();
     let mut envs: Vec<(String, String)> = Vec::new();
-    let mut broker_grants_json: Option<String> = None;
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--dir" => {
@@ -149,12 +142,6 @@ fn parse_host_args(args: &[String]) -> wasmtime::Result<HostArgs> {
                     envs.push((k.to_string(), v.to_string()));
                 }
             }
-            "--broker-grants" => {
-                let Some(json) = it.next() else {
-                    bail!("__wasm-host: --broker-grants requires a JSON argument");
-                };
-                broker_grants_json = Some(json.clone());
-            }
             other => bail!("__wasm-host: unexpected argument {other:?}"),
         }
     }
@@ -162,43 +149,7 @@ fn parse_host_args(args: &[String]) -> wasmtime::Result<HostArgs> {
         module_path: module_path.clone(),
         dirs,
         envs,
-        broker_grants_json,
     })
-}
-
-/// A broker armed with the current-thread runtime that drives its async I/O
-/// (both `None` when the function has no capability grants).
-type ArmedBroker = (
-    Option<std::sync::Arc<crate::broker::Broker>>,
-    Option<std::sync::Arc<tokio::runtime::Runtime>>,
-);
-
-/// Arm the resource broker from `--broker-grants` + `RIZ_BROKER_RESOURCES`.
-///
-/// Grants arrive in argv (limit config only); `[resources]` definitions ride
-/// RIZ_BROKER_RESOURCES in the inherited env; DSNs resolve from the env
-/// vars the resources name. Failures here are startup errors — a granted
-/// function that can't arm its broker must not come up half-armed.
-fn arm_broker(broker_grants_json: Option<String>) -> wasmtime::Result<ArmedBroker> {
-    use wasmtime::error::Context as _;
-
-    let Some(json) = broker_grants_json else {
-        return Ok((None, None));
-    };
-    let grants: indexmap::IndexMap<String, crate::config::CapabilityGrant> =
-        serde_json::from_str(&json).context("--broker-grants is not valid JSON")?;
-    let resources_json = std::env::var("RIZ_BROKER_RESOURCES")
-        .context("--broker-grants given but RIZ_BROKER_RESOURCES is not set")?;
-    let resources: crate::config::ResourcesConfig =
-        serde_json::from_str(&resources_json).context("RIZ_BROKER_RESOURCES is not valid JSON")?;
-    let backends = crate::broker::pg::backends_for_function(&grants, &resources)
-        .map_err(|e| wasmtime::format_err!("broker backend setup failed: {e}"))?;
-    let broker = std::sync::Arc::new(crate::broker::Broker::new(&grants, backends));
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .context("failed to build broker runtime")?;
-    Ok((Some(broker), Some(std::sync::Arc::new(rt))))
 }
 
 fn run_host_inner(args: &[String]) -> wasmtime::Result<()> {
@@ -211,10 +162,11 @@ fn run_host_inner(args: &[String]) -> wasmtime::Result<()> {
         module_path,
         dirs,
         envs,
-        broker_grants_json,
     } = parse_host_args(args)?;
 
-    let (broker, rt) = arm_broker(broker_grants_json)?;
+    // A granted worker was spawned with RIZ_BROKER_SOCK/TOKEN; a grantless one
+    // has no client and answers capability calls with `denied` locally.
+    let client = crate::broker::client::CapabilityClient::from_env();
 
     let engine = Engine::default();
     let module = Module::from_file(&engine, &module_path)
@@ -241,8 +193,7 @@ fn run_host_inner(args: &[String]) -> wasmtime::Result<()> {
         &engine,
         HostCtx {
             wasi,
-            broker,
-            rt,
+            client,
             stash: Vec::new(),
         },
     );
@@ -297,20 +248,6 @@ fn stale_abi_hint(e: wasmtime::Error) -> wasmtime::Error {
     } else {
         e
     }
-}
-
-/// The closed-set `bad_request` envelope for a verb no dispatcher arm knows.
-/// Pure so the dispatch contract is unit-testable without a wasm store.
-fn unknown_verb_envelope(verb: &str) -> Vec<u8> {
-    serde_json::json!({
-        "ok": false,
-        "error": {
-            "code": "bad_request",
-            "message": format!("unknown capability verb {verb:?} — this riz knows: pg.query"),
-        }
-    })
-    .to_string()
-    .into_bytes()
 }
 
 /// The guest-facing capability ABI (import module `riz_capability`), v2:
@@ -371,23 +308,19 @@ fn add_capability_imports(linker: &mut wasmtime::Linker<HostCtx>) -> wasmtime::R
             }
             let verb = String::from_utf8_lossy(&verb_buf).into_owned();
             let grant = String::from_utf8_lossy(&grant_buf).into_owned();
-            let (broker, rt) = {
-                let ctx = caller.data();
-                (ctx.broker.clone(), ctx.rt.clone())
-            };
-            let response = match verb.as_str() {
-                "pg.query" => match (broker, rt) {
-                    (Some(broker), Some(rt)) => rt.block_on(broker.pg_query(&grant, &req_buf)),
-                    // No grants armed: deny-by-default, as an envelope the
-                    // guest can parse — never a trap.
-                    _ => serde_json::json!({
-                        "ok": false,
-                        "error": {"code": "denied", "message": "function has no capability grants"}
-                    })
-                    .to_string()
-                    .into_bytes(),
-                },
-                other => unknown_verb_envelope(other),
+            // Forward EVERY verb to the daemon broker over the UDS; verb
+            // dispatch (and the unknown-verb `bad_request`) lives daemon-side
+            // now. A grantless worker has no client → `denied` locally, zero
+            // IPC. The call is blocking and bounded by the socket timeout, so
+            // a wedged daemon returns a `timeout` envelope, never a hung guest.
+            let response = match caller.data_mut().client.as_mut() {
+                Some(client) => client.call(&verb, &grant, &req_buf),
+                None => serde_json::json!({
+                    "ok": false,
+                    "error": {"code": "denied", "message": "function has no capability grants"}
+                })
+                .to_string()
+                .into_bytes(),
             };
             let len = response.len() as i32;
             caller.data_mut().stash = response;
@@ -425,16 +358,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unknown_verb_answers_the_closed_set_bad_request() {
-        let bytes = unknown_verb_envelope("s3.get");
-        let v: serde_json::Value = serde_json::from_slice(&bytes).expect("valid envelope json");
-        assert_eq!(v["ok"], false);
-        assert_eq!(v["error"]["code"], "bad_request");
-        let msg = v["error"]["message"].as_str().unwrap_or_default();
-        assert!(msg.contains("s3.get"), "message names the verb: {msg}");
-    }
-
-    #[test]
     fn stale_riz_broker_import_fails_with_rebuild_hint() {
         // A pre-0.2 guest importing the deleted v1 ABI must fail closed with
         // an actionable message, not a bare unknown-import linker error.
@@ -452,8 +375,7 @@ mod tests {
             &engine,
             HostCtx {
                 wasi,
-                broker: None,
-                rt: None,
+                client: None,
                 stash: Vec::new(),
             },
         );
@@ -482,20 +404,11 @@ mod tests {
 
     #[test]
     fn parse_host_args_full_shape() {
-        let args = s(&[
-            "mod.wasm",
-            "--dir",
-            "/data",
-            "--env",
-            "K=V",
-            "--broker-grants",
-            "{}",
-        ]);
+        let args = s(&["mod.wasm", "--dir", "/data", "--env", "K=V"]);
         let parsed = parse_host_args(&args).expect("valid argv parses");
         assert_eq!(parsed.module_path, "mod.wasm");
         assert_eq!(parsed.dirs, vec!["/data".to_string()]);
         assert_eq!(parsed.envs, vec![("K".to_string(), "V".to_string())]);
-        assert_eq!(parsed.broker_grants_json.as_deref(), Some("{}"));
     }
 
     #[test]
@@ -510,12 +423,12 @@ mod tests {
             "dangling --env"
         );
         assert!(
-            parse_host_args(&s(&["m.wasm", "--broker-grants"])).is_err(),
-            "dangling --broker-grants"
-        );
-        assert!(
             parse_host_args(&s(&["m.wasm", "--bogus"])).is_err(),
             "unknown flag"
+        );
+        assert!(
+            parse_host_args(&s(&["m.wasm", "--broker-grants", "{}"])).is_err(),
+            "--broker-grants is gone; grants no longer ride argv"
         );
     }
 

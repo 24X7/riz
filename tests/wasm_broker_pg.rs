@@ -3,7 +3,7 @@
 //! Spawns the REAL `riz run` binary with a `runtime = "wasm"` function that
 //! holds a `[function.x.capabilities.db]` grant, backed by the in-process
 //! Postgres wire mock. The guest (tests/fixtures/broker-wasm, built for
-//! wasm32-wasip1) calls the `riz_broker.pg_query` host import from inside
+//! wasm32-wasip1) calls the `riz_capability.call` host import from inside
 //! the WASI sandbox — it never opens a socket and never sees a DSN.
 //!
 //! Proves end-to-end, across the real process tree

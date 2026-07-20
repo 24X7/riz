@@ -136,6 +136,10 @@ pub struct ProcessManager {
     /// sites (initial fill, restart-after-crash, timeout-respawn, hot_swap)
     /// can bump per-function cold_starts counters.
     riz_state: Arc<RizState>,
+    /// Spawn-time source of a granted wasm worker's broker env
+    /// (`RIZ_BROKER_SOCK`/`TOKEN`/`TIMEOUT_MS`). `None` when no function
+    /// declares capabilities — the daemon runs no broker service.
+    broker: Option<crate::broker::server::BrokerHandle>,
 }
 
 #[derive(Clone, Debug)]
@@ -404,7 +408,25 @@ impl ProcessManager {
             pools: RwLock::new(HashMap::new()),
             sys: std::sync::Mutex::new(System::new()),
             riz_state,
+            broker: None,
         }
+    }
+
+    /// Attach the daemon broker handle so granted wasm workers are spawned
+    /// with their `RIZ_BROKER_*` env. Call before `spawn_all`.
+    #[must_use]
+    pub fn with_broker(mut self, broker: Option<crate::broker::server::BrokerHandle>) -> Self {
+        self.broker = broker;
+        self
+    }
+
+    /// The broker env a granted worker of `name` needs, or empty for a
+    /// grantless function (or when no broker service is running).
+    fn broker_env_for(&self, name: &str) -> Vec<(String, String)> {
+        self.broker
+            .as_ref()
+            .map(|h| h.env_for(name))
+            .unwrap_or_default()
     }
 
     /// Spawn one process pool per function. Each pool holds N processes
@@ -418,8 +440,16 @@ impl ProcessManager {
     ) -> anyhow::Result<()> {
         let mut pools = self.pools.write().await;
         for (name, cfg) in functions {
-            Self::build_pool_into(&mut pools, name, cfg, registry, &log_tx, &self.riz_state)
-                .await?;
+            Self::build_pool_into(
+                &mut pools,
+                name,
+                cfg,
+                registry,
+                &log_tx,
+                &self.riz_state,
+                self.broker_env_for(name),
+            )
+            .await?;
             // WASM guards ride the same pool machinery — spawned as sibling
             // pools so they get liveness, respawn, and kill_on_drop for free.
             // A guard that can't spawn is a STARTUP error: a configured
@@ -434,6 +464,7 @@ impl ProcessManager {
                     registry,
                     &log_tx,
                     &self.riz_state,
+                    Vec::new(),
                 )
                 .await
                 .with_context(|| format!("failed to spawn guard_in for {name}"))?;
@@ -448,6 +479,7 @@ impl ProcessManager {
                     registry,
                     &log_tx,
                     &self.riz_state,
+                    Vec::new(),
                 )
                 .await
                 .with_context(|| format!("failed to spawn guard_out for {name}"))?;
@@ -465,6 +497,7 @@ impl ProcessManager {
         registry: &Arc<RuntimeRegistry>,
         log_tx: &mpsc::Sender<LogEntry>,
         riz_state: &Arc<RizState>,
+        broker_env: Vec<(String, String)>,
     ) -> anyhow::Result<()> {
         let pool = Arc::new(RoutePool {
             name: name.to_string(),
@@ -478,6 +511,7 @@ impl ProcessManager {
             runtime_registry: registry.clone(),
             log_tx: log_tx.clone(),
             riz_state: riz_state.clone(),
+            broker_env,
         });
         let mut handle_vec = pool.handles.write().await;
         for _ in 0..cfg.concurrency {
@@ -744,6 +778,7 @@ impl ProcessManager {
             &pool.runtime_registry,
             &pool.log_tx,
             &pool.riz_state,
+            self.broker_env_for(function_name),
         )
         .await?;
 
@@ -802,6 +837,7 @@ impl ProcessManager {
             runtime_registry: registry.clone(),
             log_tx: log_tx.clone(),
             riz_state: self.riz_state.clone(),
+            broker_env: self.broker_env_for(name),
         });
         let mut handle_vec = pool.handles.write().await;
         for _ in 0..cfg.concurrency {

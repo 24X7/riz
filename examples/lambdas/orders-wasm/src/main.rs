@@ -30,10 +30,41 @@ fn handler(event: Event, _ctx: Context) -> Result<Response, Error> {
         Err(_) => return Ok(response(400, &error_body("request body is not valid json"))),
     };
 
-    Ok(match price_order(&body) {
-        Ok(result) => response(200, &result),
-        Err(msg) => response(422, &error_body(&msg)),
-    })
+    let mut result = match price_order(&body) {
+        Ok(result) => result,
+        Err(msg) => return Ok(response(422, &error_body(&msg))),
+    };
+
+    // Capability flagship: persist the priced order through the brokered `db`
+    // grant — the guest names a grant and gets rows, never a DSN. Persistence
+    // is best-effort: with no grant (or a broker error) the order still
+    // succeeds with `persisted: false`, so the demo runs with or without a
+    // Postgres resource wired in riz.toml.
+    result["persisted"] = serde_json::Value::Bool(persist_order(&result));
+    Ok(response(200, &result))
+}
+
+/// Insert the priced order through the `db` capability grant. Returns whether
+/// it was persisted; any denial or backend error degrades to `false` (the
+/// order is already priced — persistence is not on the request's critical
+/// path). The closed error set (`denied`/`throttled`/`timeout`/…) is never
+/// surfaced to the caller.
+fn persist_order(result: &serde_json::Value) -> bool {
+    let total = result.get("totalCents").and_then(|v| v.as_i64()).unwrap_or(0);
+    let currency = result
+        .get("currency")
+        .and_then(|v| v.as_str())
+        .unwrap_or("USD");
+    riz_wasm::cap::pg::query(
+        "db",
+        "insert into orders (currency, total_cents) values ($1::text, $2::bigint) returning id",
+        &[
+            serde_json::Value::String(currency.to_string()),
+            serde_json::Value::Number(total.into()),
+        ],
+    )
+    .map(|rows| !rows.is_empty())
+    .unwrap_or(false)
 }
 
 /// The core compute: validate + price an order.
