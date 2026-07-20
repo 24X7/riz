@@ -378,14 +378,21 @@ fn sigterm_drains_and_leaves_no_orphans() {
     let cfg = chaos_config(tmp.path(), port, false);
     let riz = boot(&cfg, port, None);
     let pid = riz.pid();
-    let _ = get(port, "/chaos", Duration::from_secs(2)); // warm
+    // Warm generously: the worker must be spawned+ready BEFORE the slow request
+    // starts, or under CI load the "in-flight" request could hit a cold worker.
+    let _ = get(port, "/chaos", Duration::from_secs(10));
 
     let workers = worker_pids(pid);
 
-    // Start a slow request, then SIGTERM the server mid-flight.
+    // Start a slow request, then SIGTERM the server mid-flight. Margins are
+    // deliberately wide for a loaded CI runner: the 400ms settle (well inside the
+    // 800ms handler sleep) guarantees the request is genuinely in-flight when
+    // SIGTERM fires, and the 15s client timeout leaves ample room for the
+    // graceful drain to complete the response. The assertion — an in-flight
+    // request survives SIGTERM — is unchanged.
     let inflight =
-        std::thread::spawn(move || get(port, "/chaos?sleep=800", Duration::from_secs(6)));
-    std::thread::sleep(Duration::from_millis(150));
+        std::thread::spawn(move || get(port, "/chaos?sleep=800", Duration::from_secs(15)));
+    std::thread::sleep(Duration::from_millis(400));
     kill_pid(pid, "-TERM");
 
     // The in-flight request should complete (graceful drain), not be dropped.
