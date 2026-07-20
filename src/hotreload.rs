@@ -450,6 +450,15 @@ fn function_changed(old: &FunctionConfig, new: &FunctionConfig) -> bool {
         || old.concurrency != new.concurrency
         || old.timeout_ms != new.timeout_ms
         || old.runtime != new.runtime
+        // Environment is injected at spawn, so a change only takes effect on a
+        // respawn — the old code never compared it, silently ignoring
+        // `[function.X.env]` / `[env]` edits until a restart. `env` here is the
+        // *effective* map (global `[env]` already folded in by
+        // `Config::apply_global_env`), so this one comparison covers both a
+        // per-function edit and a global one. `stage_variables` had the same
+        // latent gap (it feeds the WASM guest env + the event) — cover it too.
+        || old.env != new.env
+        || old.stage_variables != new.stage_variables
         || old.routes.len() != new.routes.len()
         || old
             .routes
@@ -574,6 +583,32 @@ mod tests {
             path: "/b".into(),
             method: "GET".into(),
         }];
+        assert!(function_changed(&r1, &r2));
+    }
+
+    #[test]
+    fn function_changed_detects_env_change() {
+        // Regression: env was never compared, so a `[function.X.env]` (or
+        // global `[env]`, which is folded into this same map) edit was silently
+        // ignored until a restart. It must now force a respawn.
+        let mut r1 = make_cfg("./same.ts", 1);
+        r1.env.insert("LOG_LEVEL".into(), "info".into());
+        let mut r2 = make_cfg("./same.ts", 1);
+        r2.env.insert("LOG_LEVEL".into(), "debug".into());
+        assert!(function_changed(&r1, &r2));
+
+        // Adding a brand-new var counts as a change too.
+        let r3 = make_cfg("./same.ts", 1);
+        let mut r4 = make_cfg("./same.ts", 1);
+        r4.env.insert("NEW".into(), "1".into());
+        assert!(function_changed(&r3, &r4));
+    }
+
+    #[test]
+    fn function_changed_detects_stage_variables_change() {
+        let r1 = make_cfg("./same.ts", 1);
+        let mut r2 = make_cfg("./same.ts", 1);
+        r2.stage_variables.insert("STAGE".into(), "prod".into());
         assert!(function_changed(&r1, &r2));
     }
 }
