@@ -164,8 +164,20 @@ cargo nextest run --test e2e_smoke_all
 # Its sibling: scaffold + boot all six `riz new` templates (also isolated):
 cargo nextest run --test template_smoke_all
 
+# Performance floor + trend, and deliberate fault injection (both isolated):
+cargo nextest run --test perf_regression --no-capture
+cargo nextest run --test chaos --test-threads 2
+
 # Or run the harness directly for the full ✓/✗ report on any port:
 PORT=3939 bash examples/smoke-all.sh
+```
+
+The whole end-to-end validation flow — fleet, scaffold journey, performance,
+and chaos — runs in one command before a release or a big change:
+
+```bash
+scripts/validate.sh                  # every stage; one clear verdict
+RIZ_PERF_GATE=1 scripts/validate.sh  # also hard-gate perf vs tests/perf_baseline.json
 ```
 
 The harness builds the example artifacts it needs (release `echo-rust` /
