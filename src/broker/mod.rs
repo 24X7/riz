@@ -31,6 +31,7 @@
 //! `throttled`, `timeout`, `too_large`, `bad_request`, `backend`.
 
 pub mod pg;
+pub mod wire;
 
 use crate::config::CapabilityGrant;
 use std::collections::HashMap;
