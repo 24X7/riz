@@ -407,6 +407,65 @@ pub mod cap {
             call("dynamo.delete_item", grant, request)
         }
     }
+
+    /// S3 through the host broker (`s3`-type grants). The guest names a grant
+    /// and an object key; it never holds an AWS key or a signature — the daemon
+    /// SigV4-signs host-side. Object bodies are UTF-8 strings in v1 (text/JSON/
+    /// XML round-trip exactly; base64 for binary objects is a follow-up).
+    pub mod s3 {
+        pub use super::CapError;
+
+        /// Send one brokered op and return the response body string.
+        fn call_body(
+            verb: &str,
+            grant: &str,
+            request: &serde_json::Value,
+        ) -> Result<String, CapError> {
+            let bytes = super::raw_call(verb, grant, request.to_string().as_bytes())?;
+            let rows = super::envelope_rows(&bytes)?;
+            let row = rows
+                .into_iter()
+                .next()
+                .ok_or_else(|| super::local_err("backend", "s3 response had no row"))?;
+            Ok(row
+                .get("body")
+                .and_then(|b| b.as_str())
+                .unwrap_or("")
+                .to_string())
+        }
+
+        /// `GetObject` — fetch the object at `key`. Returns its body.
+        pub fn get_object(grant: &str, key: &str) -> Result<String, CapError> {
+            call_body("s3.get_object", grant, &serde_json::json!({ "key": key }))
+        }
+        /// `PutObject` — write `body` to `key`. (Denied on a read-only grant.)
+        pub fn put_object(grant: &str, key: &str, body: &str) -> Result<(), CapError> {
+            call_body(
+                "s3.put_object",
+                grant,
+                &serde_json::json!({ "key": key, "body": body }),
+            )
+            .map(|_| ())
+        }
+        /// `ListObjectsV2` — list keys under `prefix` (within the grant's own
+        /// `key_prefix` scope). Returns the S3 XML listing.
+        pub fn list_objects(grant: &str, prefix: &str) -> Result<String, CapError> {
+            call_body(
+                "s3.list_objects",
+                grant,
+                &serde_json::json!({ "prefix": prefix }),
+            )
+        }
+        /// `DeleteObject` — remove the object at `key`. (Denied on read-only.)
+        pub fn delete_object(grant: &str, key: &str) -> Result<(), CapError> {
+            call_body(
+                "s3.delete_object",
+                grant,
+                &serde_json::json!({ "key": key }),
+            )
+            .map(|_| ())
+        }
+    }
 }
 
 #[cfg(test)]

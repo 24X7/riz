@@ -12,14 +12,40 @@ All notable changes to riz are documented here. The format follows
   `typescript-bun`, `typescript-node` (real TypeScript on Node's native type
   stripping, node >= 22.18), `python`, `rust`, `go`, `wasm-rust` (authored on
   the new `riz-wasm` shim: you write a Lambda handler, the shim owns the wire)
-  — plus the `typescript-todo` / `ai-chat` example starters. The three
+  — plus the `typescript-todo` / `ai-chat` full-stack starters. The three
   WebSocket templates are gone; `examples/chat` is the WS showcase.
+- Scaffolds now carry an explicit `BuiltinKind` (`Template` / `Starter`) instead
+  of a `starts_with("templates/")` guess, so `riz new --list` reads as three
+  distinct tiers: per-runtime **templates** (fast start), full-stack **starters**
+  (`riz new ai-chat` still works), and the read-only **examples** under
+  `examples/lambdas/` you boot and read but don't scaffold.
 - WASM guests are authored as pure Lambda handlers on the `riz-wasm` crate;
   hand-written stdin loops are banned from examples and templates by a
   conformance test, and `tests/template_smoke_all.rs` scaffolds, builds, and
   boots every template as an isolated smoke suite.
 
 ### Added
+
+- **`s3` brokered capability.** A WASM guest reads/writes S3 through the
+  broker: `s3.get_object | put_object | list_objects | delete_object`. The guest
+  names a grant and an object key; the daemon builds the object URL and
+  **SigV4-signs the request host-side** (via the maintained `aws-sigv4` crate,
+  `x-amz-content-sha256` payload hash included — never hand-rolled, never the
+  full AWS SDK), and never lets a key or a signature cross to the guest.
+  `mode = "read-only"` restricts the op set to reads; a grant `key_prefix`
+  confines the object key (and the list prefix), enforced before signing.
+  `[resources.s3.<name>]` (region/bucket/endpoint_url/credential envs);
+  virtual-host for real AWS, path-style when `endpoint_url` is set (MinIO /
+  mocks). Guest API: `riz_wasm::cap::s3`. Signing correctness is proven by a
+  mock that independently re-signs each request and byte-compares the signature.
+
+- **Global `[env]` table.** A top-level `[env]` map is folded into every
+  function's environment at load, with `[function.<name>.env]` overriding a
+  colliding key — declare `AWS_REGION` / `LOG_LEVEL` once instead of per
+  function. A global var follows the same per-runtime rules as a per-function
+  one (process runtimes receive it; WASM guests keep their deny-by-default WASI
+  environment). Also fixes a standing bug where `env` / `stage_variables` edits
+  were ignored by hot-reload until a restart.
 
 - **End-to-end validation flow.** `scripts/validate.sh` runs the whole
   proof-of-life in one command against the built binary: the example fleet
