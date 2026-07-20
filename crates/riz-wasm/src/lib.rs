@@ -177,124 +177,183 @@ fn error_line(status: i64, message: &str) -> String {
     .to_string()
 }
 
-/// Brokered host capabilities — typed wrappers over the `riz_capability` imports.
+/// Brokered host capabilities — typed wrappers over the `riz_capability`
+/// dispatcher import. Every capability is a verb; the raw ABI dance lives in
+/// [`raw_call`], and each submodule builds a typed request and decodes the
+/// response envelope.
 pub mod cap {
+    use std::fmt;
+
+    /// The broker's closed error set, surfaced verbatim: `denied`,
+    /// `throttled`, `timeout`, `too_large`, `bad_request`, `backend`.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct CapError {
+        pub code: String,
+        pub message: String,
+    }
+
+    impl fmt::Display for CapError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "{}: {}", self.code, self.message)
+        }
+    }
+
+    impl std::error::Error for CapError {}
+
+    pub(crate) fn local_err(code: &str, message: impl Into<String>) -> CapError {
+        CapError {
+            code: code.to_string(),
+            message: message.into(),
+        }
+    }
+
+    /// The one dispatcher call every verb goes through: send `(verb, grant,
+    /// body)` to the host and return the raw response envelope bytes.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn raw_call(verb: &str, grant: &str, body: &[u8]) -> Result<Vec<u8>, CapError> {
+        #[link(wasm_import_module = "riz_capability")]
+        extern "C" {
+            fn call(
+                verb_ptr: *const u8,
+                verb_len: usize,
+                grant_ptr: *const u8,
+                grant_len: usize,
+                req_ptr: *const u8,
+                req_len: usize,
+            ) -> i32;
+            fn read_response(dst_ptr: *mut u8, dst_cap: usize) -> i32;
+        }
+        // The host bounds-checks every (ptr,len) pair; -1 signals an ABI
+        // fault, any other value is the stashed response length.
+        let n = unsafe {
+            call(
+                verb.as_ptr(),
+                verb.len(),
+                grant.as_ptr(),
+                grant.len(),
+                body.as_ptr(),
+                body.len(),
+            )
+        };
+        if n < 0 {
+            return Err(local_err("bad_request", "broker ABI fault"));
+        }
+        let mut buf = vec![0u8; n as usize];
+        let got = unsafe { read_response(buf.as_mut_ptr(), buf.len()) };
+        if got < 0 || got as usize != buf.len() {
+            return Err(local_err(
+                "bad_request",
+                format!("broker stash read mismatch: expected {n}, got {got}"),
+            ));
+        }
+        Ok(buf)
+    }
+
+    /// Host builds (tests, clippy) have no broker: fail closed with the
+    /// broker's own vocabulary.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn raw_call(_verb: &str, _grant: &str, _body: &[u8]) -> Result<Vec<u8>, CapError> {
+        Err(local_err(
+            "denied",
+            "capabilities are only available inside the riz wasm host",
+        ))
+    }
+
+    /// Parse the success envelope's `rows` array, or the error envelope.
+    fn envelope_rows(bytes: &[u8]) -> Result<Vec<serde_json::Value>, CapError> {
+        let v: serde_json::Value = serde_json::from_slice(bytes)
+            .map_err(|e| local_err("bad_request", format!("malformed broker response: {e}")))?;
+        if v.get("ok").and_then(|b| b.as_bool()) == Some(true) {
+            return Ok(v
+                .get("rows")
+                .and_then(|r| r.as_array())
+                .cloned()
+                .unwrap_or_default());
+        }
+        let code = v
+            .pointer("/error/code")
+            .and_then(|c| c.as_str())
+            .unwrap_or("backend")
+            .to_string();
+        let message = v
+            .pointer("/error/message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("broker error")
+            .to_string();
+        Err(CapError { code, message })
+    }
+
     /// Postgres through the host broker (`pg`-type capability grants).
     pub mod pg {
-        use std::fmt;
-
-        /// The broker's closed error set, surfaced verbatim: `denied`,
-        /// `throttled`, `timeout`, `too_large`, `bad_request`, `backend`.
-        #[derive(Debug, Clone, PartialEq, Eq)]
-        pub struct CapError {
-            pub code: String,
-            pub message: String,
-        }
-
-        impl fmt::Display for CapError {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(f, "{}: {}", self.code, self.message)
-            }
-        }
-
-        impl std::error::Error for CapError {}
-
-        fn local_err(code: &str, message: impl Into<String>) -> CapError {
-            CapError {
-                code: code.to_string(),
-                message: message.into(),
-            }
-        }
+        pub use super::CapError;
 
         /// Decode a broker response envelope: `{"ok":true,"rows":[..]}` or
         /// `{"ok":false,"error":{"code":..,"message":..}}`.
         pub fn decode_response(bytes: &[u8]) -> Result<Vec<serde_json::Value>, CapError> {
-            let v: serde_json::Value = serde_json::from_slice(bytes)
-                .map_err(|e| local_err("bad_request", format!("malformed broker response: {e}")))?;
-            if v.get("ok").and_then(|b| b.as_bool()) == Some(true) {
-                let rows = v
-                    .get("rows")
-                    .and_then(|r| r.as_array())
-                    .cloned()
-                    .unwrap_or_default();
-                return Ok(rows);
-            }
-            let code = v
-                .pointer("/error/code")
-                .and_then(|c| c.as_str())
-                .unwrap_or("backend")
-                .to_string();
-            let message = v
-                .pointer("/error/message")
-                .and_then(|m| m.as_str())
-                .unwrap_or("broker error")
-                .to_string();
-            Err(CapError { code, message })
+            super::envelope_rows(bytes)
         }
 
-        /// Run one parameterized query against a named capability grant.
-        ///
-        /// Speaks capability ABI v2: ONE dispatcher import
-        /// (`riz_capability.call`) carrying the verb string — new
-        /// capabilities are new verbs, never new imports.
-        #[cfg(target_arch = "wasm32")]
+        /// Run one parameterized query against a named `pg` grant. The host
+        /// bounds the call and enforces the grant's limits; you get rows or the
+        /// closed error set.
         pub fn query(
             grant: &str,
             sql: &str,
             params: &[serde_json::Value],
         ) -> Result<Vec<serde_json::Value>, CapError> {
-            #[link(wasm_import_module = "riz_capability")]
-            extern "C" {
-                fn call(
-                    verb_ptr: *const u8,
-                    verb_len: usize,
-                    grant_ptr: *const u8,
-                    grant_len: usize,
-                    req_ptr: *const u8,
-                    req_len: usize,
-                ) -> i32;
-                fn read_response(dst_ptr: *mut u8, dst_cap: usize) -> i32;
-            }
-            const VERB: &str = "pg.query";
             let req = serde_json::json!({ "sql": sql, "params": params }).to_string();
-            // The host bounds-checks every (ptr,len) pair; -1 signals an ABI
-            // fault, any other value is the stashed response length.
-            let n = unsafe {
-                call(
-                    VERB.as_ptr(),
-                    VERB.len(),
-                    grant.as_ptr(),
-                    grant.len(),
-                    req.as_ptr(),
-                    req.len(),
-                )
-            };
-            if n < 0 {
-                return Err(local_err("bad_request", "broker ABI fault"));
-            }
-            let mut buf = vec![0u8; n as usize];
-            let got = unsafe { read_response(buf.as_mut_ptr(), buf.len()) };
-            if got < 0 || got as usize != buf.len() {
-                return Err(local_err(
-                    "bad_request",
-                    format!("broker stash read mismatch: expected {n}, got {got}"),
-                ));
-            }
-            decode_response(&buf)
+            let bytes = super::raw_call("pg.query", grant, req.as_bytes())?;
+            super::envelope_rows(&bytes)
+        }
+    }
+
+    /// Outbound HTTP through the host broker (`http`-type grants). The guest
+    /// supplies a method + a path RELATIVE to the resource's `base_url`; the
+    /// daemon pins the origin, injects auth, and blocks SSRF.
+    pub mod http {
+        pub use super::CapError;
+
+        /// A brokered HTTP response.
+        #[derive(Debug, Clone)]
+        pub struct HttpResponse {
+            pub status: u16,
+            pub body: String,
+            pub headers: serde_json::Value,
         }
 
-        /// Host builds (tests, clippy) have no broker: fail closed with the
-        /// broker's own vocabulary.
-        #[cfg(not(target_arch = "wasm32"))]
-        pub fn query(
-            _grant: &str,
-            _sql: &str,
-            _params: &[serde_json::Value],
-        ) -> Result<Vec<serde_json::Value>, CapError> {
-            Err(local_err(
-                "denied",
-                "capabilities are only available inside the riz wasm host",
-            ))
+        /// Perform one brokered request. `path` is relative to the grant's
+        /// `base_url`; `method` must be allowed by the grant.
+        pub fn fetch(
+            grant: &str,
+            method: &str,
+            path: &str,
+            body: Option<&str>,
+        ) -> Result<HttpResponse, CapError> {
+            let mut req = serde_json::json!({ "method": method, "path": path });
+            if let Some(b) = body {
+                req["body"] = serde_json::Value::from(b);
+            }
+            let bytes = super::raw_call("http.fetch", grant, req.to_string().as_bytes())?;
+            let rows = super::envelope_rows(&bytes)?;
+            let row = rows
+                .into_iter()
+                .next()
+                .ok_or_else(|| super::local_err("backend", "http response envelope had no row"))?;
+            let status = row.get("status").and_then(|s| s.as_u64()).unwrap_or(0) as u16;
+            let body = row
+                .get("body")
+                .and_then(|b| b.as_str())
+                .unwrap_or("")
+                .to_string();
+            let headers = row
+                .get("headers")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            Ok(HttpResponse {
+                status,
+                body,
+                headers,
+            })
         }
     }
 }

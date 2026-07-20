@@ -25,7 +25,6 @@
 
 use super::{PgBackend, PgRows};
 use crate::config::PgResourceConfig;
-use std::sync::Arc;
 use std::time::Duration;
 use tokio_postgres::types::Type;
 
@@ -256,29 +255,4 @@ fn column_to_json(
     };
     v.map(|opt| opt.unwrap_or(Value::Null))
         .map_err(|e| format!("decode column '{col_name}': {e}"))
-}
-
-/// Build the grant-name → backend map for one function from validated
-/// config. Resolves every `[resources.pg.*]` referenced by a grant;
-/// credentials (DSNs) are read host-side here and never serialized onward.
-pub fn backends_for_function(
-    grants: &indexmap::IndexMap<String, crate::config::CapabilityGrant>,
-    resources: &crate::config::ResourcesConfig,
-) -> Result<std::collections::HashMap<String, Arc<dyn PgBackend>>, String> {
-    let mut map: std::collections::HashMap<String, Arc<dyn PgBackend>> =
-        std::collections::HashMap::new();
-    for (gname, grant) in grants {
-        let Some((_, rname)) = grant.resource.split_once('.') else {
-            return Err(format!("grant '{gname}': malformed resource"));
-        };
-        let res = resources
-            .pg
-            .get(rname)
-            .ok_or_else(|| format!("grant '{gname}': unknown resource '{}'", grant.resource))?;
-        map.insert(
-            gname.clone(),
-            Arc::new(TokioPgBackend::from_resource(res)?) as Arc<dyn PgBackend>,
-        );
-    }
-    Ok(map)
 }

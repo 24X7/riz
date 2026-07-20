@@ -31,6 +31,7 @@
 //! `throttled`, `timeout`, `too_large`, `bad_request`, `backend`.
 
 pub mod client;
+pub mod http;
 pub mod pg;
 pub mod server;
 pub mod wire;
@@ -60,10 +61,18 @@ pub struct PgRows {
     pub rows: Vec<serde_json::Value>,
 }
 
+/// The backend behind a grant, one variant per capability class. The limit
+/// envelope (deny/caps/rate/inflight/deadline/response-cap/audit) is shared;
+/// only this inner call differs by verb.
+pub enum GrantBackend {
+    Pg(Arc<dyn PgBackend>),
+    Http(Arc<http::HttpBackend>),
+}
+
 /// A grant armed with its runtime limit state.
 struct GrantRuntime {
     cfg: CapabilityGrant,
-    backend: Arc<dyn PgBackend>,
+    backend: GrantBackend,
     /// Concurrency cap. try_acquire only — never queue.
     inflight: Arc<tokio::sync::Semaphore>,
     /// Token bucket for rate_per_sec (None → unlimited).
@@ -145,14 +154,27 @@ struct PgQueryRequest {
     params: Vec<serde_json::Value>,
 }
 
+#[derive(serde::Deserialize)]
+struct HttpFetchRequest {
+    #[serde(default = "default_http_method")]
+    method: String,
+    path: String,
+    #[serde(default)]
+    body: Option<String>,
+}
+
+fn default_http_method() -> String {
+    "GET".to_string()
+}
+
 impl Broker {
     /// Build a broker for one function: each grant is armed with its backend
     /// and fresh limit state. `backends` maps grant name → backend (the
     /// caller resolves `[resources.*]` and owns credentials — they never
     /// enter this module's data model).
-    pub fn new(
+    pub fn from_backends(
         grants: &indexmap::IndexMap<String, CapabilityGrant>,
-        mut backends: HashMap<String, Arc<dyn PgBackend>>,
+        mut backends: HashMap<String, GrantBackend>,
     ) -> Self {
         let grants = grants
             .iter()
@@ -174,26 +196,14 @@ impl Broker {
         Self { grants }
     }
 
-    /// Dispatch one capability verb against a named grant. This is the daemon-
-    /// side seam every brokered call funnels through: it maps the verb string
-    /// to its handler (`"pg.query"` today) and answers the closed-set
-    /// `bad_request` envelope for anything else. Always returns response bytes.
+    /// The single dispatcher every brokered verb funnels through. Runs the
+    /// shared limit envelope (deny / request cap / rate / inflight / deadline
+    /// / response cap / audit) around the verb-specific backend call, and
+    /// ALWAYS returns response bytes — the guest never sees a transport-level
+    /// failure. Unknown verbs answer the closed-set `bad_request` envelope.
     pub async fn dispatch(&self, verb: &str, grant_name: &str, request: &[u8]) -> Vec<u8> {
-        match verb {
-            "pg.query" => self.pg_query(grant_name, request).await,
-            other => error_bytes(
-                ErrorCode::BadRequest,
-                &format!("unknown capability verb {other:?} — this riz knows: pg.query"),
-            ),
-        }
-    }
-
-    /// The single dispatcher: `pg_query` against a named grant. Always
-    /// returns response bytes (success or error envelope) — the guest never
-    /// sees a transport-level failure, and every control lives here.
-    pub async fn pg_query(&self, grant_name: &str, request: &[u8]) -> Vec<u8> {
         let started = std::time::Instant::now();
-        let outcome = self.pg_query_inner(grant_name, request).await;
+        let outcome = self.dispatch_inner(verb, grant_name, request).await;
         let (bytes, code) = match outcome {
             Ok(bytes) => (bytes, "ok"),
             Err((code, msg)) => (error_bytes(code, &msg), code.as_str()),
@@ -202,7 +212,7 @@ impl Broker {
         tracing::info!(
             target: "riz::broker",
             grant = grant_name,
-            verb = "pg_query",
+            verb = verb,
             outcome = code,
             request_bytes = request.len(),
             response_bytes = bytes.len(),
@@ -212,23 +222,37 @@ impl Broker {
         bytes
     }
 
-    async fn pg_query_inner(
+    async fn dispatch_inner(
         &self,
+        verb: &str,
         grant_name: &str,
         request: &[u8],
     ) -> Result<Vec<u8>, (ErrorCode, String)> {
-        // 1. Deny-by-default.
+        // 1. Deny-by-default: the grant must exist and its type must match the
+        //    verb's capability class.
         let grant = self.grants.get(grant_name).ok_or_else(|| {
             (
                 ErrorCode::Denied,
                 format!("no capability grant named '{grant_name}'"),
             )
         })?;
-        if grant.cfg.r#type != "pg" {
+        let expected_type = match verb {
+            "pg.query" => "pg",
+            "http.fetch" => "http",
+            other => {
+                return Err((
+                    ErrorCode::BadRequest,
+                    format!(
+                        "unknown capability verb {other:?} — this riz knows: pg.query, http.fetch"
+                    ),
+                ))
+            }
+        };
+        if grant.cfg.r#type != expected_type {
             return Err((
                 ErrorCode::Denied,
                 format!(
-                    "grant '{grant_name}' is type '{}', not 'pg'",
+                    "grant '{grant_name}' is type '{}', not '{expected_type}' (verb '{verb}')",
                     grant.cfg.r#type
                 ),
             ));
@@ -244,8 +268,6 @@ impl Broker {
                 ),
             ));
         }
-        let req: PgQueryRequest = serde_json::from_slice(request)
-            .map_err(|e| (ErrorCode::BadRequest, format!("malformed request: {e}")))?;
         // 3. Rate limit.
         if let Some(bucket) = &grant.bucket {
             if !bucket.lock().await.try_take() {
@@ -268,29 +290,24 @@ impl Broker {
                 ),
             )
         })?;
-        // 5. Per-call deadline around the backend I/O.
-        let read_only = grant.cfg.mode == "read-only";
+        // 5. Per-call deadline around the verb-specific backend I/O.
         let deadline = Duration::from_millis(grant.cfg.call_timeout_ms);
-        let result = tokio::time::timeout(
-            deadline,
-            grant.backend.query(&req.sql, &req.params, read_only),
-        )
-        .await
-        .map_err(|_| {
-            (
-                ErrorCode::Timeout,
-                format!(
-                    "backend did not answer within {}ms (grant '{grant_name}')",
-                    grant.cfg.call_timeout_ms
-                ),
-            )
-        })?
-        .map_err(|e| (ErrorCode::Backend, e))?;
+        let rows = tokio::time::timeout(deadline, self.run_verb(verb, grant, request))
+            .await
+            .map_err(|_| {
+                (
+                    ErrorCode::Timeout,
+                    format!(
+                        "backend did not answer within {}ms (grant '{grant_name}')",
+                        grant.cfg.call_timeout_ms
+                    ),
+                )
+            })??;
         // 6. Response cap — before bytes reach the guest.
         let body = serde_json::json!({
             "ok": true,
-            "rows": result.rows,
-            "row_count": result.rows.len(),
+            "rows": rows.rows,
+            "row_count": rows.rows.len(),
         })
         .to_string()
         .into_bytes();
@@ -306,4 +323,94 @@ impl Broker {
         }
         Ok(body)
     }
+
+    /// The verb-specific backend call, run under the shared deadline. Parses
+    /// the type's request shape and returns rows (pg) or a single
+    /// `{status,headers,body}` row (http) — both flow through the same
+    /// response envelope above.
+    async fn run_verb(
+        &self,
+        verb: &str,
+        grant: &GrantRuntime,
+        request: &[u8],
+    ) -> Result<PgRows, (ErrorCode, String)> {
+        match (verb, &grant.backend) {
+            ("pg.query", GrantBackend::Pg(backend)) => {
+                let req: PgQueryRequest = serde_json::from_slice(request)
+                    .map_err(|e| (ErrorCode::BadRequest, format!("malformed request: {e}")))?;
+                let read_only = grant.cfg.mode == "read-only";
+                backend
+                    .query(&req.sql, &req.params, read_only)
+                    .await
+                    .map_err(|e| (ErrorCode::Backend, e))
+            }
+            ("http.fetch", GrantBackend::Http(backend)) => {
+                let req: HttpFetchRequest = serde_json::from_slice(request)
+                    .map_err(|e| (ErrorCode::BadRequest, format!("malformed request: {e}")))?;
+                let allowed = allowed_methods(&grant.cfg);
+                backend
+                    .fetch(&req.method, &req.path, &allowed, req.body.as_deref())
+                    .await
+                    .map_err(|e| (ErrorCode::Backend, e))
+            }
+            // A grant/verb-class mismatch was already rejected in
+            // dispatch_inner; this arm keeps the match total and fails closed.
+            _ => Err((
+                ErrorCode::BadRequest,
+                format!("grant backend does not serve verb '{verb}'"),
+            )),
+        }
+    }
+}
+
+/// Build the grant-name → backend map for one function from validated config,
+/// one backend per grant routed by its capability type. Resolves every
+/// referenced resource's credentials host-side (fail-fast); credentials never
+/// enter this module's data model or cross to a guest.
+pub fn backends_for_function(
+    grants: &indexmap::IndexMap<String, CapabilityGrant>,
+    resources: &crate::config::ResourcesConfig,
+) -> Result<HashMap<String, GrantBackend>, String> {
+    let mut map: HashMap<String, GrantBackend> = HashMap::new();
+    for (gname, grant) in grants {
+        let Some((_, rname)) = grant.resource.split_once('.') else {
+            return Err(format!(
+                "grant '{gname}': malformed resource '{}'",
+                grant.resource
+            ));
+        };
+        let backend = match grant.r#type.as_str() {
+            "pg" => {
+                let res = resources.pg.get(rname).ok_or_else(|| {
+                    format!("grant '{gname}': unknown resource '{}'", grant.resource)
+                })?;
+                GrantBackend::Pg(Arc::new(pg::TokioPgBackend::from_resource(res)?))
+            }
+            "http" => {
+                let res = resources.http.get(rname).ok_or_else(|| {
+                    format!("grant '{gname}': unknown resource '{}'", grant.resource)
+                })?;
+                GrantBackend::Http(Arc::new(http::HttpBackend::from_resource(res)?))
+            }
+            other => {
+                return Err(format!(
+                    "grant '{gname}': unknown capability type '{other}'"
+                ))
+            }
+        };
+        map.insert(gname.clone(), backend);
+    }
+    Ok(map)
+}
+
+/// The HTTP methods an `http` grant may use: its `methods` list, or `GET` when
+/// empty; `read-only` mode forces `GET` regardless.
+fn allowed_methods(cfg: &CapabilityGrant) -> Vec<String> {
+    if cfg.mode == "read-only" {
+        return vec!["GET".to_string()];
+    }
+    if cfg.methods.is_empty() {
+        return vec!["GET".to_string()];
+    }
+    cfg.methods.clone()
 }

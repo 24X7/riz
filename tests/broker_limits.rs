@@ -8,7 +8,7 @@
 //! concurrency is deterministic without a real database.
 
 use async_trait::async_trait;
-use riz::broker::{Broker, PgBackend, PgRows};
+use riz::broker::{Broker, GrantBackend, PgBackend, PgRows};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -70,10 +70,10 @@ async fn max_inflight_admits_one_and_throttles_the_rest() {
 
     let mut grants = indexmap::IndexMap::new();
     grants.insert("db".to_string(), grant(ADMITTED as u32));
-    let mut backends: std::collections::HashMap<String, Arc<dyn PgBackend>> =
+    let mut backends: std::collections::HashMap<String, GrantBackend> =
         std::collections::HashMap::new();
-    backends.insert("db".to_string(), backend);
-    let broker = Arc::new(Broker::new(&grants, backends));
+    backends.insert("db".to_string(), GrantBackend::Pg(backend));
+    let broker = Arc::new(Broker::from_backends(&grants, backends));
 
     let req = serde_json::json!({"sql": "select 1", "params": []})
         .to_string()
