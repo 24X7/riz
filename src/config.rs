@@ -220,6 +220,18 @@ pub struct Config {
     /// declares its own `[function.<name>.cors]` override.
     #[serde(default)]
     pub cors: CorsConfig,
+    /// Global environment variables (`[env]`) — folded into every function's
+    /// environment at load, with `[function.<name>.env]` overriding a colliding
+    /// key. The shared-config escape hatch: put `AWS_REGION`, `LOG_LEVEL`, and
+    /// other cross-function vars here once instead of repeating them per
+    /// function. Because the fold happens in `from_file` (see
+    /// `apply_global_env`), a global var follows the *exact same* per-runtime
+    /// rules as a per-function one — process runtimes (bun/node/python/rust/go)
+    /// receive it; WASM guests keep their deny-by-default WASI environment
+    /// (reach one only via `stage_variables` or capability grants). riz's own
+    /// variables (`AWS_LAMBDA_*`, `_HANDLER`) still win on conflict.
+    #[serde(default)]
+    pub env: std::collections::HashMap<String, String>,
     /// Prometheus metrics endpoint (`[metrics]`). Enabled by default; set
     /// `enabled = false` to remove `/_riz/metrics`.
     #[serde(default)]
@@ -962,7 +974,7 @@ impl Config {
                 anyhow::anyhow!("cannot read {}: {e}", path.display())
             }
         })?;
-        let config: Config = toml::from_str(&text).map_err(|e| {
+        let mut config: Config = toml::from_str(&text).map_err(|e| {
             // The toml error already carries the line/column + a caret span at
             // the offending token; lead with the file and follow with a pointer
             // to a known-good reference so the user can diff their way out.
@@ -973,7 +985,32 @@ impl Config {
                 path.display()
             )
         })?;
+        config.apply_global_env();
         Ok(config)
+    }
+
+    /// Fold the top-level `[env]` table into each function's `env` map so that
+    /// every reader of `FunctionConfig::env` — the process spawn path, the
+    /// hot-reload change-detector, everything — sees the *effective*
+    /// environment with no threading of the global map. A per-function key
+    /// overrides the global of the same name (function wins). Applied at load
+    /// and re-applied on hot-reload (which re-parses through `from_file`), so a
+    /// change to `[env]` propagates to every affected function on save.
+    ///
+    /// Idempotent: re-running merges the (already-merged) function map over a
+    /// fresh copy of the global, yielding the same result. A global var reaches
+    /// exactly the runtimes a per-function var would — this method never widens
+    /// the WASM environment, which is populated separately from
+    /// `stage_variables`.
+    fn apply_global_env(&mut self) {
+        if self.env.is_empty() {
+            return;
+        }
+        for func in self.functions.values_mut() {
+            let mut merged = self.env.clone();
+            merged.extend(std::mem::take(&mut func.env));
+            func.env = merged;
+        }
     }
 
     pub fn effective_deploy_key(&self) -> Option<String> {
@@ -2086,5 +2123,111 @@ handler = "./users.ts"
     fn validate_accepts_normal_routes() {
         let c: Config = toml::from_str(SAMPLE).unwrap();
         assert!(c.validate().is_ok());
+    }
+
+    #[test]
+    fn global_env_folds_into_functions_with_override() {
+        let mut c: Config = toml::from_str(
+            r#"
+[env]
+AWS_REGION = "us-east-1"
+LOG_LEVEL = "info"
+
+[function.api]
+runtime = "node"
+handler = "api.handler"
+
+[function.worker]
+runtime = "bun"
+handler = "worker.handler"
+[function.worker.env]
+LOG_LEVEL = "debug"
+"#,
+        )
+        .unwrap();
+        c.apply_global_env();
+
+        // A function with no [env] of its own inherits every global.
+        let api = &c.functions["api"].env;
+        assert_eq!(api.get("AWS_REGION").map(String::as_str), Some("us-east-1"));
+        assert_eq!(api.get("LOG_LEVEL").map(String::as_str), Some("info"));
+
+        // A function that declares its own [env] still receives the globals it
+        // does not override, and its own value wins where they collide.
+        let worker = &c.functions["worker"].env;
+        assert_eq!(
+            worker.get("AWS_REGION").map(String::as_str),
+            Some("us-east-1")
+        );
+        assert_eq!(worker.get("LOG_LEVEL").map(String::as_str), Some("debug"));
+    }
+
+    #[test]
+    fn empty_global_env_leaves_functions_untouched() {
+        let mut c: Config = toml::from_str(
+            r#"
+[function.api]
+runtime = "node"
+handler = "api.handler"
+[function.api.env]
+FOO = "bar"
+"#,
+        )
+        .unwrap();
+        c.apply_global_env();
+        assert_eq!(
+            c.functions["api"].env.get("FOO").map(String::as_str),
+            Some("bar")
+        );
+        assert_eq!(c.functions["api"].env.len(), 1, "no phantom globals added");
+    }
+
+    #[test]
+    fn apply_global_env_is_idempotent() {
+        let mut c: Config = toml::from_str(
+            r#"
+[env]
+A = "1"
+[function.api]
+runtime = "node"
+handler = "api.handler"
+[function.api.env]
+A = "override"
+B = "2"
+"#,
+        )
+        .unwrap();
+        c.apply_global_env();
+        let once = c.functions["api"].env.clone();
+        c.apply_global_env();
+        assert_eq!(
+            c.functions["api"].env, once,
+            "a second fold must not change the merged result"
+        );
+        assert_eq!(once.get("A").map(String::as_str), Some("override"));
+        assert_eq!(once.get("B").map(String::as_str), Some("2"));
+    }
+
+    #[test]
+    fn from_file_applies_global_env() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("riz.toml");
+        std::fs::write(
+            &path,
+            r#"
+[env]
+SHARED = "yes"
+[function.api]
+runtime = "node"
+handler = "api.handler"
+"#,
+        )
+        .unwrap();
+        let c = Config::from_file(&path).unwrap();
+        assert_eq!(
+            c.functions["api"].env.get("SHARED").map(String::as_str),
+            Some("yes"),
+            "from_file must fold [env] into each function so reload gets it too"
+        );
     }
 }
