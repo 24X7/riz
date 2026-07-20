@@ -37,11 +37,12 @@ Run before every push (CI enforces all of them):
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 ./scripts/safety-check.sh --gate
-cargo nextest run --workspace -E 'not binary(e2e_smoke_all) and not binary(template_smoke_all) and not binary(perf_regression) and not binary(chaos)'
+cargo nextest run --workspace -E 'not binary(e2e_smoke_all) and not binary(template_smoke_all) and not binary(perf_regression) and not binary(chaos) and not binary(aws_conformance)'
 cargo nextest run --test e2e_smoke_all   # isolated: boots the example fleet
 cargo nextest run --test template_smoke_all  # isolated: scaffolds + boots all six templates
 cargo nextest run --test perf_regression --no-capture  # isolated: throughput/latency floor + trend
 cargo nextest run --test chaos               # isolated: deliberate fault injection
+cargo nextest run --test aws_conformance     # isolated: clones + boots AWS's own Lambda samples (skips offline)
 # or the whole flow in one command: scripts/validate.sh
 ```
 
