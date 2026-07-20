@@ -156,13 +156,30 @@ async fn exercise_binary_body(addr: SocketAddr, function_name: &str) {
     let url = format!("http://{addr}/echo");
     wait_for_ready(&client, &url).await;
 
-    let resp = client
-        .post(&url)
-        .header("content-type", "application/octet-stream")
-        .body(PNG_HEADER.to_vec())
-        .send()
-        .await
-        .expect("send");
+    // `/ready` means the server is up, NOT that the function's worker pool is
+    // warm — the pool spawns lazily, and the first request can hit a cold worker
+    // and get a 502/503 while it boots. A slow-to-spawn runtime (python) flakes
+    // on that race under CI load. Retry past the cold-start window so we assert
+    // on the warm handler's real response, not the spawn latency.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    let resp = loop {
+        let resp = client
+            .post(&url)
+            .header("content-type", "application/octet-stream")
+            .body(PNG_HEADER.to_vec())
+            .send()
+            .await
+            .expect("send");
+        if resp.status() != 502 && resp.status() != 503 {
+            break resp;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "{function_name}: worker never warmed (still {} after 20s)",
+            resp.status()
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    };
     assert_eq!(
         resp.status(),
         200,
