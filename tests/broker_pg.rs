@@ -9,7 +9,7 @@ mod pg_wire_mock;
 
 use pg_wire_mock::MockPgServer;
 use riz::broker::pg::TokioPgBackend;
-use riz::broker::{Broker, PgBackend};
+use riz::broker::{Broker, GrantBackend};
 use riz::config::{CapabilityGrant, PgResourceConfig};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -40,9 +40,9 @@ dsn_env = "{env_key}"
     let backend = TokioPgBackend::from_resource(&res).expect("dsn env is set");
     let mut grants = indexmap::IndexMap::new();
     grants.insert("db".to_string(), g);
-    let mut backends: HashMap<String, Arc<dyn PgBackend>> = HashMap::new();
-    backends.insert("db".to_string(), Arc::new(backend));
-    Broker::new(&grants, backends)
+    let mut backends: HashMap<String, GrantBackend> = HashMap::new();
+    backends.insert("db".to_string(), GrantBackend::Pg(Arc::new(backend)));
+    Broker::from_backends(&grants, backends)
 }
 
 fn req(sql: &str, params: serde_json::Value) -> Vec<u8> {
@@ -60,7 +60,8 @@ async fn pg_query_round_trips_typed_rows_through_the_wire() {
     let mock = MockPgServer::start().await;
     let b = broker_for(&mock, "RIZ_TEST_PG_DSN_ROUNDTRIP", grant(|_| {}));
     let out = parse(
-        &b.pg_query(
+        &b.dispatch(
+            "pg.query",
             "db",
             &req("select id, status from orders", serde_json::json!([])),
         )
@@ -78,7 +79,8 @@ async fn statement_timeout_is_applied_on_connect() {
     let mock = MockPgServer::start().await;
     let b = broker_for(&mock, "RIZ_TEST_PG_DSN_STMT_TO", grant(|_| {}));
     parse(
-        &b.pg_query(
+        &b.dispatch(
+            "pg.query",
             "db",
             &req("select id, status from orders", serde_json::json!([])),
         )
@@ -96,7 +98,8 @@ async fn params_bind_as_text() {
     let mock = MockPgServer::start().await;
     let b = broker_for(&mock, "RIZ_TEST_PG_DSN_PARAMS", grant(|_| {}));
     let out = parse(
-        &b.pg_query(
+        &b.dispatch(
+            "pg.query",
             "db",
             &req("select $1::text as echo", serde_json::json!(["hello-1042"])),
         )
@@ -116,7 +119,8 @@ async fn numbers_and_nulls_bind_as_text_and_sql_null() {
     let mock = MockPgServer::start().await;
     let b = broker_for(&mock, "RIZ_TEST_PG_DSN_NULLS", grant(|_| {}));
     let out = parse(
-        &b.pg_query(
+        &b.dispatch(
+            "pg.query",
             "db",
             &req("select $1::text as echo", serde_json::json!([42])),
         )
@@ -124,7 +128,8 @@ async fn numbers_and_nulls_bind_as_text_and_sql_null() {
     );
     assert_eq!(out["rows"][0]["echo"], "42", "{out}");
     parse(
-        &b.pg_query(
+        &b.dispatch(
+            "pg.query",
             "db",
             &req("select $1::text as echo", serde_json::json!([null])),
         )
@@ -146,7 +151,8 @@ async fn read_only_grant_wraps_queries_in_a_read_only_transaction() {
         grant(|g| g.mode = "read-only".into()),
     );
     let out = parse(
-        &b.pg_query(
+        &b.dispatch(
+            "pg.query",
             "db",
             &req("select id, status from orders", serde_json::json!([])),
         )
@@ -173,8 +179,12 @@ async fn stalled_backend_query_is_bounded_by_the_broker_deadline() {
     );
     let started = std::time::Instant::now();
     let out = parse(
-        &b.pg_query("db", &req("select pg_sleep(600)", serde_json::json!([])))
-            .await,
+        &b.dispatch(
+            "pg.query",
+            "db",
+            &req("select pg_sleep(600)", serde_json::json!([])),
+        )
+        .await,
     );
     assert_eq!(out["error"]["code"], "timeout", "{out}");
     assert!(

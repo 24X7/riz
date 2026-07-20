@@ -117,11 +117,11 @@ impl BrokerService {
         let mut function_token: HashMap<String, TokenHex> = HashMap::new();
         let mut max_call_timeout_ms = 0u64;
         for (name, func) in &granted {
-            let backends = super::pg::backends_for_function(&func.capabilities, &config.resources)
+            let backends = super::backends_for_function(&func.capabilities, &config.resources)
                 .map_err(|e| anyhow::anyhow!("broker setup for function '{name}': {e}"))?;
             brokers.insert(
                 (*name).clone(),
-                Arc::new(Broker::new(&func.capabilities, backends)),
+                Arc::new(Broker::from_backends(&func.capabilities, backends)),
             );
             let token = mint_token_hex()?;
             tokens.insert(token.clone(), (*name).clone());

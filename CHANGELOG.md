@@ -19,6 +19,18 @@ All notable changes to riz are documented here. The format follows
   conformance test, and `tests/template_smoke_all.rs` scaffolds, builds, and
   boots every template as an isolated smoke suite.
 
+### Added
+
+- **`http` brokered capability.** A WASM guest can now reach an outbound HTTP
+  origin through the broker: `[resources.http.<name>]` pins the origin
+  (`base_url`) and the daemon injects auth host-side, so the guest names a
+  grant and supplies a relative path — never a credential or an absolute URL.
+  SSRF-hardened by default: redirects are not followed, and a host that
+  resolves into loopback/private/link-local space is refused (opt out per
+  origin with `allow_private_ips` for an operator-declared internal service).
+  Per-grant `methods` allow-list; `mode = "read-only"` forces `GET`. The guest
+  API is `riz_wasm::cap::http::fetch`.
+
 ### Security
 
 - Workers no longer inherit the daemon's full environment. Every worker is

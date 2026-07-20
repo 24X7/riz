@@ -329,6 +329,47 @@ pub struct ResourcesConfig {
     /// differs.
     #[serde(default)]
     pub pg: IndexMap<String, PgResourceConfig>,
+    /// `[resources.http.<name>]` — outbound HTTP origins. The daemon pins the
+    /// origin and injects auth host-side; the guest supplies a relative path.
+    #[serde(default)]
+    pub http: IndexMap<String, HttpResourceConfig>,
+}
+
+/// One named outbound-HTTP origin. The guest names the grant and supplies a
+/// path RELATIVE to `base_url`; it never holds the credential or an absolute
+/// URL. The daemon confines every request to paths under `base_url` and
+/// injects the auth header from `auth.token_env` (resolved host-side).
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HttpResourceConfig {
+    /// Origin + optional path prefix (e.g. `https://api.stripe.com`). Every
+    /// brokered request targets `base_url` joined with the guest's path.
+    pub base_url: String,
+    /// Optional auth header the daemon injects on every request.
+    #[serde(default)]
+    pub auth: Option<HttpAuth>,
+    /// Opt OUT of SSRF private-IP refusal for THIS origin. Default `false`:
+    /// the daemon refuses to dial a host that resolves into loopback/private/
+    /// link-local space (blocks DNS-rebinding of a public `base_url` into the
+    /// cloud metadata endpoint). Set `true` only for an operator-declared
+    /// internal service the operator intends to reach.
+    #[serde(default)]
+    pub allow_private_ips: bool,
+}
+
+/// Host-injected auth for an HTTP resource. The token lives in the daemon's
+/// env (`token_env`); it never crosses to the guest.
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HttpAuth {
+    /// `"bearer"` → `Authorization: Bearer <token>`; `"header"` → the named
+    /// `header` set to `<token>`.
+    pub kind: String,
+    /// Env var holding the secret (read host-side; never in config or guest).
+    pub token_env: String,
+    /// Header name for `kind = "header"`. Ignored for `"bearer"`.
+    #[serde(default)]
+    pub header: Option<String>,
 }
 
 /// One named Postgres backend.
@@ -396,6 +437,11 @@ pub struct CapabilityGrant {
     /// Response payload cap, enforced before bytes are handed to the guest.
     #[serde(default = "default_grant_max_response_bytes")]
     pub max_response_bytes: usize,
+    /// `http`-grant scoping: the HTTP methods this grant may use. Empty →
+    /// `GET` only. `mode = "read-only"` forces `GET` regardless. Ignored by
+    /// non-http grant types.
+    #[serde(default)]
+    pub methods: Vec<String>,
 }
 
 fn default_grant_mode() -> String {
@@ -414,9 +460,10 @@ fn default_grant_max_response_bytes() -> usize {
     1024 * 1024
 }
 
-/// Capability classes the broker understands. v1 is Postgres-wire only —
-/// the keystone that covers Neon, Supabase, and any PG with zero new code.
-pub const CAPABILITY_TYPES: &[&str] = &["pg"];
+/// Capability classes the broker understands. `pg` covers Neon, Supabase, and
+/// any Postgres wire; `http` brokers outbound HTTP to an operator-pinned
+/// origin with host-injected auth and SSRF hardening.
+pub const CAPABILITY_TYPES: &[&str] = &["pg", "http"];
 
 /// Telemetry / observability config (`[telemetry]`).
 ///
@@ -1241,6 +1288,13 @@ impl Config {
                 return Err(format!(
                     "function '{name}' capability '{gname}' references resource \
                      \"{}\" but no [resources.pg.{rname}] block is declared",
+                    grant.resource
+                ));
+            }
+            if rtype == "http" && !self.resources.http.contains_key(rname) {
+                return Err(format!(
+                    "function '{name}' capability '{gname}' references resource \
+                     \"{}\" but no [resources.http.{rname}] block is declared",
                     grant.resource
                 ));
             }

@@ -49,3 +49,27 @@ method = "GET"
 [[function.accounts.routes]]
 path = "/accounts/{proxy+}"           # AWS-style greedy proxy
 method = "ANY"
+
+# ── Brokered capabilities (WASM functions) ──────────────────────────────────
+# A wasm guest reaches external resources only through the host broker: it
+# names a grant, the daemon does the I/O under the grant's limits, and no
+# credential ever crosses the sandbox. Resources are declared once; grants
+# reference them per function.
+#
+# [resources.pg.main]
+# dsn_env = "RIZ_PG_MAIN_DSN"          # credential lives in the HOST env only
+# max_connections = 5
+#
+# [resources.http.stripe]
+# base_url = "https://api.stripe.com"  # origin is pinned; guest supplies a path
+# auth = { kind = "bearer", token_env = "STRIPE_SECRET_KEY" }
+#
+# [function.orders]
+# runtime = "wasm"
+# handler = "./orders/target/wasm32-wasip1/release/orders.wasm"
+#
+# [function.orders.capabilities.db]
+# type = "pg"; resource = "pg.main"; mode = "read-write"; max_inflight = 4
+#
+# [function.orders.capabilities.payments]
+# type = "http"; resource = "http.stripe"; methods = ["POST"]; rate_per_sec = 20

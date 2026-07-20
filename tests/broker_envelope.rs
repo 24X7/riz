@@ -5,7 +5,7 @@
 //! bounded, not host-affecting), read-only mode propagation, and the closed
 //! error-code set on the wire.
 
-use riz::broker::{Broker, PgBackend, PgRows};
+use riz::broker::{Broker, GrantBackend, PgBackend, PgRows};
 use riz::config::CapabilityGrant;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -64,9 +64,9 @@ resource = "pg.main"
 fn broker_with(name: &str, g: CapabilityGrant, backend: Arc<dyn PgBackend>) -> Broker {
     let mut grants = indexmap::IndexMap::new();
     grants.insert(name.to_string(), g);
-    let mut backends: HashMap<String, Arc<dyn PgBackend>> = HashMap::new();
-    backends.insert(name.to_string(), backend);
-    Broker::new(&grants, backends)
+    let mut backends: HashMap<String, GrantBackend> = HashMap::new();
+    backends.insert(name.to_string(), GrantBackend::Pg(backend));
+    Broker::from_backends(&grants, backends)
 }
 
 fn req(sql: &str) -> Vec<u8> {
@@ -85,7 +85,7 @@ fn parse(bytes: &[u8]) -> serde_json::Value {
 async fn granted_query_round_trips_rows() {
     let rows = vec![serde_json::json!({"id": 1042, "status": "delayed"})];
     let b = broker_with("db", grant(|_| {}), MockPg::new(0, rows));
-    let out = parse(&b.pg_query("db", &req("select 1")).await);
+    let out = parse(&b.dispatch("pg.query", "db", &req("select 1")).await);
     assert_eq!(out["ok"], true, "{out}");
     assert_eq!(out["row_count"], 1);
     assert_eq!(out["rows"][0]["status"], "delayed");
@@ -96,15 +96,18 @@ async fn granted_query_round_trips_rows() {
 #[tokio::test]
 async fn unknown_grant_is_denied() {
     let b = broker_with("db", grant(|_| {}), MockPg::new(0, vec![]));
-    let out = parse(&b.pg_query("not-granted", &req("select 1")).await);
+    let out = parse(
+        &b.dispatch("pg.query", "not-granted", &req("select 1"))
+            .await,
+    );
     assert_eq!(out["ok"], false);
     assert_eq!(out["error"]["code"], "denied", "{out}");
 }
 
 #[tokio::test]
 async fn empty_broker_denies_everything() {
-    let b = Broker::new(&indexmap::IndexMap::new(), HashMap::new());
-    let out = parse(&b.pg_query("db", &req("select 1")).await);
+    let b = Broker::from_backends(&indexmap::IndexMap::new(), HashMap::new());
+    let out = parse(&b.dispatch("pg.query", "db", &req("select 1")).await);
     assert_eq!(out["error"]["code"], "denied", "{out}");
 }
 
@@ -115,7 +118,7 @@ async fn oversized_request_is_rejected_before_backend() {
     let backend = MockPg::new(0, vec![]);
     let b = broker_with("db", grant(|g| g.max_request_bytes = 64), backend.clone());
     let big_sql = "select ".to_string() + &"x".repeat(200);
-    let out = parse(&b.pg_query("db", &req(&big_sql)).await);
+    let out = parse(&b.dispatch("pg.query", "db", &req(&big_sql)).await);
     assert_eq!(out["error"]["code"], "too_large", "{out}");
     assert_eq!(
         backend.calls.load(Ordering::SeqCst),
@@ -132,7 +135,7 @@ async fn oversized_response_is_capped_before_the_guest() {
         grant(|g| g.max_response_bytes = 1024),
         MockPg::new(0, huge),
     );
-    let out = parse(&b.pg_query("db", &req("select blob")).await);
+    let out = parse(&b.dispatch("pg.query", "db", &req("select blob")).await);
     assert_eq!(out["error"]["code"], "too_large", "{out}");
 }
 
@@ -146,7 +149,10 @@ async fn stalled_backend_is_bounded_by_the_call_timeout() {
         MockPg::new(5_000, vec![]),
     );
     let started = std::time::Instant::now();
-    let out = parse(&b.pg_query("db", &req("select pg_sleep(5)")).await);
+    let out = parse(
+        &b.dispatch("pg.query", "db", &req("select pg_sleep(5)"))
+            .await,
+    );
     let elapsed = started.elapsed();
     assert_eq!(out["error"]["code"], "timeout", "{out}");
     assert!(
@@ -168,10 +174,11 @@ async fn second_inflight_call_is_throttled_not_queued() {
         MockPg::new(300, vec![]),
     ));
     let b2 = b.clone();
-    let slow = tokio::spawn(async move { parse(&b2.pg_query("db", &req("select 1")).await) });
+    let slow =
+        tokio::spawn(async move { parse(&b2.dispatch("pg.query", "db", &req("select 1")).await) });
     tokio::time::sleep(std::time::Duration::from_millis(50)).await; // let it occupy the permit
     let started = std::time::Instant::now();
-    let out = parse(&b.pg_query("db", &req("select 2")).await);
+    let out = parse(&b.dispatch("pg.query", "db", &req("select 2")).await);
     assert_eq!(out["error"]["code"], "throttled", "{out}");
     assert!(
         started.elapsed() < std::time::Duration::from_millis(100),
@@ -189,9 +196,15 @@ async fn rate_limit_throttles_burst_beyond_bucket() {
         grant(|g| g.rate_per_sec = Some(2)),
         MockPg::new(0, vec![]),
     );
-    assert_eq!(parse(&b.pg_query("db", &req("a")).await)["ok"], true);
-    assert_eq!(parse(&b.pg_query("db", &req("b")).await)["ok"], true);
-    let third = parse(&b.pg_query("db", &req("c")).await);
+    assert_eq!(
+        parse(&b.dispatch("pg.query", "db", &req("a")).await)["ok"],
+        true
+    );
+    assert_eq!(
+        parse(&b.dispatch("pg.query", "db", &req("b")).await)["ok"],
+        true
+    );
+    let third = parse(&b.dispatch("pg.query", "db", &req("c")).await);
     assert_eq!(third["error"]["code"], "throttled", "{third}");
 }
 
@@ -205,14 +218,14 @@ async fn read_only_mode_reaches_the_backend() {
         grant(|g| g.mode = "read-only".into()),
         backend.clone(),
     );
-    parse(&b.pg_query("db", &req("select 1")).await);
+    parse(&b.dispatch("pg.query", "db", &req("select 1")).await);
     assert!(backend.saw_read_only.load(Ordering::SeqCst));
 }
 
 #[tokio::test]
 async fn malformed_request_is_bad_request() {
     let b = broker_with("db", grant(|_| {}), MockPg::new(0, vec![]));
-    let out = parse(&b.pg_query("db", b"not json").await);
+    let out = parse(&b.dispatch("pg.query", "db", b"not json").await);
     assert_eq!(out["error"]["code"], "bad_request", "{out}");
 }
 
