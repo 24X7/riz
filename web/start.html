@@ -67,11 +67,11 @@
     <!-- copy-all quickstart: the promised 3 lines, plus the agent hookup, in one block -->
     <div class="well" style="margin-bottom:3rem">
       <div class="well-hd"><b>adopt in 3 lines · agent hookup included</b>
-        <button onclick="navigator.clipboard.writeText('curl -fsSL https://riz.dev/install | sh\nriz new typescript-bun my-app &amp;&amp; cd my-app\nriz --dev\n# second shell:\ncurl localhost:3000/hello\nclaude mcp add riz --transport http http://localhost:3000/_riz/mcp');this.textContent='copied';if(window.va)window.va('event',{name:'copy-quickstart'})">copy all</button>
+        <button onclick="navigator.clipboard.writeText('curl -fsSL https://riz.dev/install | sh\nriz new typescript-bun my-app &amp;&amp; cd my-app\nriz run   # headless; add --dev for the live TUI\n# second shell:\ncurl localhost:3000/hello\nclaude mcp add riz --transport http http://localhost:3000/_riz/mcp');this.textContent='copied';if(window.va)window.va('event',{name:'copy-quickstart'})">copy all</button>
       </div>
       <pre>curl -fsSL https://riz.dev/install | sh
 riz new typescript-bun my-app &amp;&amp; cd my-app
-riz --dev
+riz run                      <span class="c"># headless; use `riz --dev` for the live TUI dashboard</span>
 <span class="c"># second shell:</span>
 curl localhost:3000/hello
 claude mcp add riz --transport http http://localhost:3000/_riz/mcp</pre>
@@ -107,7 +107,7 @@ $ riz new --list</pre>
         </div>
         <div class="well scrolly-panel" data-panel="2">
           <div class="well-hd"><b><span class="step-tag">03</span> · shell</b></div>
-          <pre>$ riz --dev
+          <pre>$ riz run          <span class="c"># headless (JSON logs). live TUI dashboard: riz --dev</span>
 
 <span class="c"># http API + MCP server are both live:</span>
 <span class="c">#   http://localhost:3000/hello</span>

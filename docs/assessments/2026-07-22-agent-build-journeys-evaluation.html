@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>riz — Agent build-journey evaluation</title>
+<style>
+  :root{
+    --bg:#0A0A0B; --bg1:#111114; --bg2:#17171C; --bg3:#1d1d23;
+    --line:#2A2A31; --line2:#3A3A44;
+    --hi:#F3F3EE; --tx:#B7B7B2; --dim:#807F7C;
+    --acid:#CFFF04; --acid-dim:#A9CE12;
+    --ok:#7CE38B; --okbg:rgba(124,227,139,.12); --okln:rgba(124,227,139,.32);
+    --warn:#F5C451; --warnbg:rgba(245,196,81,.12); --warnln:rgba(245,196,81,.34);
+    --gap:#F07167; --gapbg:rgba(240,113,103,.12); --gapln:rgba(240,113,103,.34);
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --wrap:74ch;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);font-family:var(--sans);
+    font-size:16px;line-height:1.62;-webkit-font-smoothing:antialiased;
+    background-image:
+      radial-gradient(1100px 600px at 78% -12%, rgba(207,255,4,.05), transparent 60%),
+      linear-gradient(180deg,#0c0c0e,var(--bg) 320px);}
+  .page{max-width:980px;margin:0 auto;padding:0 24px 120px}
+  .col{max-width:var(--wrap)}
+  a{color:var(--hi);text-decoration:none;border-bottom:1px solid var(--line2)}
+  a:hover{border-color:var(--acid);color:#fff}
+  code{font-family:var(--mono);font-size:.86em;color:#e7e7e2;
+    background:var(--bg2);border:1px solid var(--line);border-radius:5px;padding:.08em .38em}
+  pre{background:var(--bg1);border:1px solid var(--line);border-radius:12px;
+    padding:18px 20px;overflow-x:auto;font-size:.84rem;line-height:1.6}
+  pre code{background:transparent;border:none;padding:0;font-size:1em;color:#DADAD4}
+  pre .cmt{color:var(--dim)} pre .acc{color:var(--acid)} pre .str{color:var(--ok)}
+  em{color:var(--acid);font-style:normal}
+  strong{color:var(--hi);font-weight:600}
+  p{margin:.85rem 0}
+
+  header.mast{padding:64px 0 30px;border-bottom:1px solid var(--line)}
+  .mark{font-family:var(--mono);font-weight:700;font-size:.94rem;color:var(--hi);letter-spacing:.02em}
+  .mark .cur{color:var(--acid)}
+  .eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--acid-dim);margin:26px 0 14px;font-weight:600}
+  h1{font-size:clamp(2rem,5.2vw,3rem);line-height:1.06;letter-spacing:-.02em;
+    color:var(--hi);margin:0;text-wrap:balance;font-weight:650}
+  .dek{font-size:1.16rem;line-height:1.5;color:var(--tx);max-width:64ch;margin:20px 0 0}
+  .dek b{color:var(--hi)}
+  .meta{display:flex;flex-wrap:wrap;gap:10px 12px;margin-top:30px;font-family:var(--mono);font-size:.74rem}
+  .meta .m{border:1px solid var(--line);background:var(--bg1);border-radius:999px;
+    padding:6px 13px;color:var(--tx)}
+  .meta .m b{color:var(--hi);font-weight:600}
+  .meta .m.live b{color:var(--acid)}
+
+  .note{border:1px solid var(--line2);background:linear-gradient(180deg,var(--bg2),var(--bg1));
+    border-radius:12px;padding:18px 20px;margin:34px 0;position:relative}
+  .note .tag{font-family:var(--mono);font-size:.68rem;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--acid);display:block;margin-bottom:7px}
+  .note p{margin:0;color:var(--tx)}
+  .note.ok{border-color:var(--okln)} .note.ok .tag{color:var(--ok)}
+  .note.warn{border-color:var(--warnln)} .note.warn .tag{color:var(--warn)}
+
+  section{padding-top:56px}
+  .sec-eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.15em;text-transform:uppercase;
+    color:var(--dim);margin-bottom:12px}
+  h2{font-size:1.72rem;line-height:1.12;letter-spacing:-.015em;color:var(--hi);margin:0 0 6px;
+    text-wrap:balance;font-weight:640}
+  h3{font-size:1.12rem;color:var(--hi);margin:34px 0 4px;font-weight:620;letter-spacing:-.01em}
+  .lead{font-size:1.04rem;color:var(--tx);max-width:66ch}
+
+  .toc{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-top:26px}
+  .toc a{border:1px solid var(--line);background:var(--bg1);border-radius:11px;padding:15px 16px;
+    display:block;color:var(--tx)}
+  .toc a:hover{border-color:var(--line2);background:var(--bg2)}
+  .toc .k{font-family:var(--mono);font-size:.7rem;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--acid-dim);display:block;margin-bottom:5px}
+  .toc .t{color:var(--hi);font-weight:600;font-size:.98rem}
+  .toc .d{font-size:.82rem;color:var(--dim);margin-top:3px}
+
+  figure{margin:30px 0 12px;border:1px solid var(--line);border-radius:14px;background:var(--bg1);overflow:hidden}
+  figcaption{font-family:var(--mono);font-size:.72rem;letter-spacing:.06em;color:var(--dim);
+    padding:12px 18px;border-bottom:1px solid var(--line);background:var(--bg2);
+    display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  figcaption b{color:var(--hi);letter-spacing:.02em;text-transform:none}
+  .fig-body{padding:6px 0}
+  .scroll{overflow-x:auto}
+  .legend{display:flex;flex-wrap:wrap;gap:16px;padding:14px 18px;border-top:1px solid var(--line);
+    background:var(--bg2);font-family:var(--mono);font-size:.74rem;color:var(--tx)}
+  .legend .lg{display:inline-flex;align-items:center;gap:7px}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+  .dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.gap{background:var(--gap)}
+
+  table{border-collapse:collapse;width:100%;font-size:.9rem}
+  .matrix{min-width:720px}
+  th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+  thead th{font-family:var(--mono);font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--dim);font-weight:600;background:var(--bg2);border-bottom:1px solid var(--line2)}
+  tbody tr:last-child td{border-bottom:none}
+  .layer{color:var(--hi);font-weight:600}
+  .layer small{display:block;color:var(--dim);font-weight:400;font-family:var(--mono);font-size:.72rem;
+    margin-top:2px;letter-spacing:.02em}
+  .cell{font-family:var(--mono);font-size:.8rem;font-weight:600}
+  .cell.ok{color:var(--ok)} .cell.warn{color:var(--warn)} .cell.gap{color:var(--gap)}
+  .cell .sub{display:block;font-weight:400;color:var(--dim);font-size:.72rem;white-space:normal;margin-top:3px}
+  td.ok-bg{background:var(--okbg)} td.warn-bg{background:var(--warnbg)} td.gap-bg{background:var(--gapbg)}
+
+  ul.facts{list-style:none;padding:0;margin:14px 0;max-width:70ch}
+  ul.facts li{position:relative;padding-left:22px;margin:11px 0;color:var(--tx)}
+  ul.facts li::before{content:"→";position:absolute;left:0;color:var(--acid-dim);font-family:var(--mono)}
+  ul.facts li b{color:var(--hi)}
+  ul.facts.down li::before{content:"↓";color:var(--gap)}
+  .ev{display:block;font-family:var(--mono);font-size:.74rem;color:var(--dim);margin-top:4px;overflow-wrap:anywhere}
+
+  .pill{font-family:var(--mono);font-size:.66rem;font-weight:700;letter-spacing:.04em;
+    border-radius:6px;padding:2px 7px;white-space:nowrap;border:1px solid}
+  .pill.p0{color:#fff;background:var(--gap);border-color:var(--gap)}
+  .pill.p1{color:var(--warn);background:var(--warnbg);border-color:var(--warnln)}
+  .pill.p2{color:var(--dim);background:var(--bg2);border-color:var(--line2)}
+  .kind{font-family:var(--mono);font-size:.7rem;color:var(--dim)}
+
+  hr.rule{border:none;border-top:1px solid var(--line);margin:56px 0 0}
+  footer{margin-top:60px;padding-top:26px;border-top:1px solid var(--line);
+    font-family:var(--mono);font-size:.76rem;color:var(--dim);display:flex;justify-content:space-between;
+    flex-wrap:wrap;gap:10px}
+  @media (max-width:640px){ header.mast{padding-top:44px} }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="mast">
+  <span class="mark">riz<span class="cur">▮</span></span>
+  <div class="eyebrow">Evaluation · 2026-07-22 · dogfood · a doc to goal off of</div>
+  <h1>Agent build-journey evaluation</h1>
+  <p class="dek">Nine agents landed on riz.dev cold and <b>actually built</b> — following the site's
+    own instructions, on the real <code>riz 0.3.0</code> binary. Four language tracks
+    (TypeScript · Python · Go · WebAssembly-Rust), each in two scenarios: <b>adapt an existing AWS
+    Lambda</b> unchanged, and <b>build brand-new from scratch</b>. Every scaffold, build, boot, and
+    call was executed and its output recorded. This is the tailwinds, the headwinds, the must-do
+    fixes, and the roadmap that came back.</p>
+  <div class="meta">
+    <span class="m live">Verdict: <b>foundation solid, DX friction</b></span>
+    <span class="m">Method: <b>9 agents · real builds</b></span>
+    <span class="m">Binary: <b>riz 0.3.0 (main @ 64c2dbc)</b></span>
+    <span class="m">Coverage: <b>4 tracks × 2 scenarios</b></span>
+    <span class="m">Outcome: <b>7 worked · 1 partial · 0 blocked</b></span>
+  </div>
+
+  <div class="toc">
+    <a href="#verdict"><span class="k">Verdict</span><span class="t">Does it hold?</span>
+      <span class="d">the one-paragraph answer + the headline promise</span></a>
+    <a href="#matrix"><span class="k">Matrix</span><span class="t">8 journeys</span>
+      <span class="d">every track × scenario, executed, with outcomes</span></a>
+    <a href="#tailwinds"><span class="k">Tailwinds</span><span class="t">What's working</span>
+      <span class="d">lean into these — verified live</span></a>
+    <a href="#headwinds"><span class="k">Headwinds</span><span class="t">Where it fought us</span>
+      <span class="d">the recurring, cross-track friction</span></a>
+    <a href="#fixes"><span class="k">Must-fix</span><span class="t">Prioritized fixes</span>
+      <span class="d">P0–P2, with file:line anchors</span></a>
+    <a href="#roadmap"><span class="k">Roadmap</span><span class="t">Bigger bets</span>
+      <span class="d">where the DX should go next</span></a>
+    <a href="#method"><span class="k">Method</span><span class="t">How this was run</span>
+      <span class="d">provenance, so we can re-run and measure</span></a>
+  </div>
+</header>
+
+<div class="note ok">
+  <span class="tag">Headline</span>
+  <p><strong>The core promise held on every track.</strong> An <em>unmodified</em> AWS-Lambda-shaped
+  handler — TypeScript, Python, Go, and Rust — ran on riz with only a <code>riz.toml</code> and no
+  code change, and an agent landing cold on just <code>llms.txt</code> + <code>/.well-known/riz.json</code>
+  could install, create, run, and call a function end-to-end. The wedge works. What's rough is the
+  <b>getting-started surface for humans</b>, a real <b>Python bare-handler crash</b>, and a cluster of
+  <b>CLI ergonomics</b> — none of which touch the runtime contract.</p>
+</div>
+
+<!-- ============================================================ -->
+<section id="verdict">
+  <div class="sec-eyebrow">Verdict</div>
+  <h2>The foundation is solid; the on-ramp is where we lose people</h2>
+  <p class="lead col">Read the two columns of the matrix below as the product's two wedges. The
+  <b>adapt-an-existing-AWS-Lambda</b> column is riz's sharpest claim — "your handler runs unmodified" —
+  and it is <em>literally true</em> in TS, Python, Go, and Rust (a byte-for-byte official AWS Rust
+  sample returned the exact expected body). The <b>brand-new</b> column is a one-command scaffold that
+  works first try for every runtime. The friction is almost entirely in the <b>words around the
+  commands</b>: the human quickstart leads with a TUI a headless caller can't run, two documented
+  handler forms don't match what ships, and the flagship "unmodified AWS binary" path — the strongest
+  claim — is the <em>only</em> one with no walkthrough.</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="matrix">
+  <div class="sec-eyebrow">The journeys</div>
+  <h2>Eight builds, all executed for real</h2>
+  <p class="lead col">Each cell was run on the 0.3.0 binary: scaffold or adapt → build → boot headless
+  → curl → confirm the response. "Adapt existing" wrote a canonical, unmodified AWS handler and wired
+  it in with only a <code>riz.toml</code>.</p>
+
+  <figure>
+    <figcaption><b>Build-journey matrix</b><span>track × scenario · executed 2026-07-22</span></figcaption>
+    <div class="fig-body scroll">
+      <table class="matrix">
+        <thead>
+          <tr><th>Track</th><th>Adapt an existing AWS Lambda</th><th>Build brand-new</th><th>What it proves</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="layer">TypeScript<small>bun · node (type-strip)</small></td>
+            <td class="ok-bg"><span class="cell ok">✓ worked</span><span class="sub">unmodified APIGW-v2 proxy handler ran via riz.toml only; statusCode/headers/body unwrapped, rawPath correct</span></td>
+            <td class="ok-bg"><span class="cell ok">✓ worked</span><span class="sub">both templates scaffold &lt;1s, exit 0; boot + curl returned the documented JSON</span></td>
+            <td>Handler contract + scaffold loop both hold</td>
+          </tr>
+          <tr>
+            <td class="layer">Python<small>python3</small></td>
+            <td class="warn-bg"><span class="cell warn">◐ partial</span><span class="sub">handler code needed zero changes, but the <b>documented</b> <code>app.lambda_handler</code> form 502s; only <code>./app.lambda_handler</code> works</span></td>
+            <td class="ok-bg"><span class="cell ok">✓ worked</span><span class="sub">template boots + curls clean (it ships the <code>./</code> form)</span></td>
+            <td>Contract holds — the <em>documented</em> spelling doesn't</td>
+          </tr>
+          <tr>
+            <td class="layer">Go<small>aws-lambda-go</small></td>
+            <td class="ok-bg"><span class="cell ok">✓ worked</span><span class="sub">unmodified <code>lambda.Start</code> binary ran via the real Runtime API, first try</span></td>
+            <td class="warn-bg"><span class="cell ok">✓ worked</span><span class="sub">builds + boots, but <code>riz new</code> next-steps omit the mandatory <code>go build</code></span></td>
+            <td>Runtime-API path holds; scaffold guidance incomplete</td>
+          </tr>
+          <tr>
+            <td class="layer">WASM (Rust)<small>+ existing-AWS Rust counterpart</small></td>
+            <td class="ok-bg"><span class="cell ok">✓ worked</span><span class="sub">AWS's <em>own</em> official Rust sample (awslabs http-basic, pinned) ran unmodified — headline conformance claim verified</span></td>
+            <td class="ok-bg"><span class="cell ok">✓ worked</span><span class="sub">riz-wasm handler-only model exactly as advertised; scaffold self-consistent, boots</span></td>
+            <td>Both the novel WASM path and the AWS-binary path work</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="legend">
+      <span class="lg"><span class="dot ok"></span> worked end-to-end</span>
+      <span class="lg"><span class="dot warn"></span> worked but with a real snag</span>
+      <span class="lg"><span class="dot gap"></span> blocked</span>
+    </div>
+  </figure>
+</section>
+
+<!-- ============================================================ -->
+<section id="tailwinds">
+  <div class="sec-eyebrow">Tailwinds</div>
+  <h2>What's working — lean into these</h2>
+  <p class="lead col">Verified live, not asserted. These are the parts of the experience that already
+  convert a skeptic.</p>
+  <ul class="facts">
+    <li><b>The unmodified-AWS-handler promise is literally true — all four tracks.</b> A canonical
+      TS/Python/Go handler and a byte-for-byte official AWS Rust binary each ran with only a
+      <code>riz.toml</code>; the AWS Rust sample returned the exact expected body, status, and
+      content-type — no riz import, no shim.
+      <span class="ev">rust-existing: awslabs/aws-lambda-rust-runtime http-basic (pinned) → lambda_http 1.3.0 → ran on riz</span></li>
+    <li><b>The machine surface is genuinely self-serve for an agent.</b> <code>llms.txt</code> and
+      <code>riz.json</code> both lead their 3-line adopt block with headless <code>riz run</code>;
+      MCP <code>tools/list</code> returns typed input/output schemas and self-corrects with
+      <code>-32602</code>. An agent can install → create → run → call cold, no HTML parsing.
+      <span class="ev">discovery: initialize (2025-11-25) → tools/list → tools/call {name} → "hello, mcp-agent" from the real handler</span></li>
+    <li><b><code>riz doctor</code> is a standout confidence-builder.</b> Validates the toml, confirms
+      the runtime binary on PATH (abs path), resolves the exact handler file, and probes the port —
+      green before boot, every track.</li>
+    <li><b>Scaffolds are fast and self-consistent.</b> <code>riz new &lt;t&gt;</code> fetches from git
+      in &lt;1s, exit 0, and README + riz.toml + Cargo.toml + src all agree; the riz-wasm authoring
+      model is exactly as advertised — <code>fn handler(event, ctx)</code> + <code>riz_wasm::run</code>,
+      no stdin plumbing, no unsafe.</li>
+    <li><b>No false advertising.</b> <code>/openapi.json</code> serves OpenAPI 3.1 with the live route;
+      opt-in surfaces (<code>/.well-known/agent-card.json</code>, <code>/llms.txt</code>) correctly 404
+      until their <code>[agent]</code>/<code>[static]</code> blocks are configured — capabilities appear
+      only when enabled.</li>
+    <li><b>Pre-flight + probes are clean.</b> <code>riz routes</code> and <code>riz validate</code>
+      reinforce doctor; <code>/health</code> and <code>/ready</code> are open and instant — a clean
+      liveness signal for an orchestrator.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="headwinds">
+  <div class="sec-eyebrow">Headwinds</div>
+  <h2>Where it fought us — the recurring friction</h2>
+  <p class="lead col">Ranked by how many independent journeys hit it. The first one is systemic: it
+  showed up in <b>every single journey</b>.</p>
+  <ul class="facts down">
+    <li><b>The human quickstart boots with a TUI a headless caller can't run. (8/8 journeys)</b>
+      <code>start.html</code>'s "copy all" block and step&nbsp;3 both make <code>riz --dev</code> THE
+      run command. A headless agent / CI / no-TTY shell copying it launches a Ratatui TUI that fails;
+      the working <code>riz run</code> lives only in prose further down. The machine surface gets this
+      right — the primary human page does not.
+      <span class="ev">start.html:70 (copy-all) + start.html:74 use riz --dev; riz run only at start.html:165</span></li>
+    <li><b>Python's documented handler form crashes with an opaque 502.</b> <code>llms.txt</code> and
+      the docs field-table say <code>handler = "app.lambda_handler"</code> (the AWS-canonical bare
+      form). Booting that returns <code>502 "process error: Broken pipe"</code>; the child's real
+      stderr (<code>No module named app</code>) is swallowed. Only <code>./app.lambda_handler</code>
+      works — a form that appears nowhere on the site.
+      <span class="ev">py-existing: root cause src/process/python.rs:63-68 (.with_extension("").canonicalize() on a path that can't exist)</span></li>
+    <li><b>Compiled-runtime scaffolds tell you to boot before you build.</b> <code>riz new go</code>'s
+      printed "Next steps" is <code>cd … / riz run</code> — no <code>go build</code>. Booting hits a
+      <code>./hello</code> binary that doesn't exist yet. The template README has it right; the CLI's
+      own output contradicts it.
+      <span class="ev">go-new: src/main.rs:415-434 prints a build line only when Cargo.toml is present — Go (go.mod) gets none</span></li>
+    <li><b>Doc ↔ reality mismatches on handler shape.</b> Node's <code>index.handler</code> → file
+      <code>index.mjs</code> (not <code>.js</code>) is stated only in <code>llms.txt</code>; the Python
+      template ships <code>main.py</code> while <code>llms.txt</code> says <code>app.py</code>. A
+      newcomer bringing their own file name gets a file-not-found until doctor/boot tells them.</li>
+    <li><b>CLI port ergonomics fight muscle memory.</b> <code>riz run -p 3987</code> is rejected —
+      the port is a top-level flag (<code>riz -p 3987 run</code>), documented for <code>--dev</code>
+      but never for <code>-p</code>. And <code>riz mcp inspect</code> hardcodes <code>:3000</code>,
+      ignoring the project's <code>[server] port</code>, so the documented verify step fails on any
+      other port.
+      <span class="ev">discovery + wasm-new: `riz run -p` → "unexpected argument -p"; src/main.rs:56 port is a Cli field, not a run arg</span></li>
+    <li><b>The flagship claim has no walkthrough.</b> "Run an unmodified official AWS Rust/Go binary" —
+      riz's strongest differentiator — is only asserted (a ledger sentence + a CI test name + an
+      llms bullet). The <em>novel</em> WASM path is a one-command scaffold, so paradoxically the
+      headline compatibility story is the least documented, task-wise.</li>
+    <li><b>First boot looks broken to a log-tailer.</b> Every fresh scaffold logs a top-line
+      <code>ERROR: SECURITY: /deploy has no auth configured</code> — the safe default for an endpoint
+      the template never uses, at the wrong severity.
+      <span class="ev">src/main.rs:1343 — tracing::error! on a benign unconfigured-deploy default</span></li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="fixes">
+  <div class="sec-eyebrow">Must-do fixes</div>
+  <h2>Prioritized, with anchors</h2>
+  <p class="lead col">Every row was reproduced on 0.3.0 and traced to source where it's a tool bug.
+  <span class="pill p0">P0</span> breaks a documented promise · <span class="pill p1">P1</span> real
+  friction on the golden path · <span class="pill p2">P2</span> polish.</p>
+
+  <figure>
+    <figcaption><b>Fix backlog</b><span>check off as they land</span></figcaption>
+    <div class="fig-body scroll">
+      <table class="matrix">
+        <thead><tr><th>Pri</th><th>Fix</th><th>Kind</th><th>Anchor / evidence</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><span class="pill p0">P0</span></td>
+            <td class="layer">Make Python accept the AWS-canonical bare handler, and stop swallowing the crash
+              <small>accept <code>app.lambda_handler</code> (resolve the file before stripping/canonicalizing); surface the child's stderr instead of "Broken pipe"; have <code>doctor</code> fail a handler that won't spawn</small></td>
+            <td class="kind">tool</td>
+            <td><span class="ev">src/process/python.rs:63-68 · child stderr swallowed · doctor green on a config that 502s</span></td>
+          </tr>
+          <tr>
+            <td><span class="pill p1">P1</span></td>
+            <td class="layer">Lead the getting-started quickstart with headless <code>riz run</code>
+              <small>make <code>riz run</code> the copy-paste boot step; present <code>riz --dev</code> as the optional local dashboard — mirror what llms.txt / riz.json already do</small></td>
+            <td class="kind">site-copy</td>
+            <td><span class="ev">web/start.html:70,74 (copy-all + step 3) → riz --dev</span></td>
+          </tr>
+          <tr>
+            <td><span class="pill p1">P1</span></td>
+            <td class="layer">Add the build step to <code>riz new</code> next-steps for compiled runtimes
+              <small>Go scaffolds print no <code>go build</code>; detect go.mod and emit <code>go build -o &lt;handler&gt; .</code> (rust/wasm already covered)</small></td>
+            <td class="kind">tool</td>
+            <td><span class="ev">src/main.rs:415-434 — build line gated on Cargo.toml only</span></td>
+          </tr>
+          <tr>
+            <td><span class="pill p1">P1</span></td>
+            <td class="layer">Accept <code>-p/--port</code> after the subcommand + document a non-default-port example
+              <small>make port a clap global (or add <code>--port</code> to <code>run</code>) so <code>riz run -p 3987</code> just works</small></td>
+            <td class="kind">tool</td>
+            <td><span class="ev">src/main.rs:49-56 — port is a top-level Cli field; zero -p examples in web/</span></td>
+          </tr>
+          <tr>
+            <td><span class="pill p1">P1</span></td>
+            <td class="layer"><code>riz mcp inspect</code> should read <code>[server] port</code> from the cwd riz.toml
+              <small>and accept a positional URL (mirrors the adjacent <code>claude mcp add &lt;url&gt;</code>); today it hardcodes :3000 and the documented bare verify step fails off-default</small></td>
+            <td class="kind">tool</td>
+            <td><span class="ev">wasm-new + ts-new: bare `riz mcp inspect` → POST localhost:3000 fails on a 3987 project</span></td>
+          </tr>
+          <tr>
+            <td><span class="pill p1">P1</span></td>
+            <td class="layer">Document the handler → file mapping where newcomers look
+              <small>node <code>index.handler</code>→<code>index.mjs</code> and the Python form belong in docs.html + start.html, not only llms.txt; reconcile the python template (<code>main.py</code>) with the docs (<code>app.py</code>)</small></td>
+            <td class="kind">docs</td>
+            <td><span class="ev">ts-existing: mapping only at llms.txt:58 · py-new: template main.py vs llms.txt app.py</span></td>
+          </tr>
+          <tr>
+            <td><span class="pill p1">P1</span></td>
+            <td class="layer">Downgrade the <code>/deploy</code> no-auth log off ERROR
+              <small>WARN, or suppress when no deploy/S3 is configured, so a hello-world boots clean at INFO</small></td>
+            <td class="kind">tool</td>
+            <td><span class="ev">src/main.rs:1343</span></td>
+          </tr>
+          <tr>
+            <td><span class="pill p2">P2</span></td>
+            <td class="layer">Write the "run an unmodified AWS Rust/Go binary" walkthrough
+              <small>a task-level recipe (clone/adapt → build → riz.toml → run) for the headline conformance path, so the strongest claim isn't the least documented</small></td>
+            <td class="kind">site-copy</td>
+            <td><span class="ev">rust-existing + go-existing: claim asserted only in ledgers/llms/CI test names</span></td>
+          </tr>
+          <tr>
+            <td><span class="pill p2">P2</span></td>
+            <td class="layer">Pin the <code>wasm-rust</code> template's <code>riz-wasm</code> dependency to a rev/tag
+              <small>a floating git dep undermines the "boots first try" guarantee over time</small></td>
+            <td class="kind">template</td>
+            <td><span class="ev">wasm-new: Cargo.toml git dep with no rev</span></td>
+          </tr>
+          <tr>
+            <td><span class="pill p2">P2</span></td>
+            <td class="layer">Add <code>--json</code> to <code>riz new --list</code> (and a template index)
+              <small>agents currently scrape an aligned-column table to enumerate templates</small></td>
+            <td class="kind">tool</td>
+            <td><span class="ev">discovery: no machine-readable template list</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </figure>
+</section>
+
+<!-- ============================================================ -->
+<section id="roadmap">
+  <div class="sec-eyebrow">Roadmap</div>
+  <h2>Bigger bets, once the fixes land</h2>
+  <p class="lead col">The fixes above make the current on-ramp correct. These make it <em>excellent</em>,
+  especially for the two audiences riz is actually chasing: agents and Lambda refugees.</p>
+  <ul class="facts">
+    <li><b>Machine-readable everything.</b> <code>--json</code> on <code>new --list</code>,
+      <code>routes</code>, <code>doctor</code>, <code>validate</code> so an autonomous agent never has
+      to scrape a human-formatted table. The MCP surface already sets this bar; the CLI should match.</li>
+    <li><b>A first-class "bring your own AWS Lambda" adopt path.</b> Getting-started is scaffold-first,
+      yet the sharpest wedge is "your existing handler runs unmodified." A guided
+      <code>riz adopt ./my-handler</code> (or a docs track) that generates the <code>riz.toml</code>
+      for an existing handler would sell the wedge directly.</li>
+    <li><b>Handler-resolution parity with AWS.</b> Accept bare module names (<code>app.lambda_handler</code>),
+      put the project root on the module path — so a Lambda dev's muscle memory transfers and the
+      <code>./</code> vs bare distinction disappears.</li>
+    <li><b>First-boot cleanliness as a guarantee.</b> A fresh scaffold should boot with zero ERROR/WARN
+      noise at INFO. Treat "hello-world boots clean" as a tested invariant.</li>
+    <li><b>Surface child crashes.</b> Pipe the handler process's stderr into the server log and the
+      <code>--dev</code> inspector, so a crash reads as "<code>No module named app</code>", never
+      "Broken pipe".</li>
+    <li><b>Consider <code>riz build</code> / build-aware <code>riz new</code>.</b> For compiled runtimes,
+      run (or offer to run) the build as part of scaffolding, so "scaffold → run" is true for every
+      runtime, not just the scripted ones.</li>
+    <li><b>Port ergonomics that match every other CLI.</b> <code>riz run -p 3000</code> should be the
+      obvious, working form; arg-order rigidity is a papercut an agent hits on its very first
+      collision-avoidance move.</li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="method">
+  <div class="sec-eyebrow">Method</div>
+  <h2>How this was run — so we can re-run it</h2>
+  <p class="lead col">A deterministic multi-agent workflow. One discovery agent (agent's-eye view of the
+  machine surface) plus eight build-journey agents (four tracks × two scenarios), each in an isolated
+  scratch dir on the real <code>riz 0.3.0</code> binary, following the local site copy
+  (<code>web/*.html</code>, <code>llms.txt</code>, <code>riz.json</code>) as "riz.dev." Every command
+  was executed and its output recorded; each agent cleaned up its build artifacts. Findings were
+  returned as structured JSON, and every load-bearing bug claim in the <a href="#fixes">fix backlog</a>
+  was re-verified against source before landing here.</p>
+  <ul class="facts">
+    <li><b>Scope:</b> HTTP / API Gateway v2 handlers, all six runtimes' concerns via the four language
+      tracks. WebSocket, the LLM gateway, A2A, and guards were exercised by the discovery pass but are
+      not the subject of these journeys.</li>
+    <li><b>What "adapt existing" meant:</b> a canonical, unmodified handler of the kind a team already
+      runs on AWS (Node <code>exports.handler</code>, Python <code>lambda_handler</code>, Go
+      <code>lambda.Start</code>, Rust <code>lambda_http</code>), wired in with only a
+      <code>riz.toml</code>. For Rust, AWS's <em>own</em> pinned sample.</li>
+    <li><b>Re-run target:</b> when the P0–P1 fixes land, re-run the same nine journeys and expect the
+      Python cell to go green, the ERROR log to vanish, and the <code>-p</code> / next-steps snags to
+      clear — a measurable before/after on this exact matrix.</li>
+  </ul>
+</section>
+
+<hr class="rule">
+<footer>
+  <span>riz▮ · agent build-journey evaluation · 2026-07-22</span>
+  <span>9 agents · 4 tracks × 2 scenarios · riz 0.3.0 @ 64c2dbc</span>
+</footer>
+
+</div>
+</body>
+</html>
