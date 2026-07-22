@@ -4,13 +4,13 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>riz — Sandbox, capability broker, and WASM guards</title>
-  <meta name="description" content="Run untrusted and LLM-generated code under a WASI sandbox with deny-by-default filesystem and network — and still reach Postgres through host-enforced capability grants. WASM guards screen every request and response, fail-closed."/>
+  <meta name="description" content="Run untrusted and LLM-generated code under a WASI sandbox with deny-by-default filesystem and network — and still reach Postgres, DynamoDB, S3, and pinned HTTP origins through host-enforced capability grants. WASM guards screen every request and response, fail-closed."/>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%230A0A0B'/><rect x='28' y='20' width='44' height='60' fill='%23CFFF04'/></svg>"/>
   <link rel="apple-touch-icon" href="apple-touch-icon.png"/>
   <meta property="og:type" content="website"/>
   <meta property="og:site_name" content="riz"/>
   <meta property="og:title" content="riz — Sandbox, capability broker, and WASM guards"/>
-  <meta property="og:description" content="Run untrusted and LLM-generated code under a WASI sandbox with deny-by-default filesystem and network — and still reach Postgres through host-enforced capability grants. WASM guards screen every request and response, fail-closed."/>
+  <meta property="og:description" content="Run untrusted and LLM-generated code under a WASI sandbox with deny-by-default filesystem and network — and still reach Postgres, DynamoDB, S3, and pinned HTTP origins through host-enforced capability grants. WASM guards screen every request and response, fail-closed."/>
   <meta name="twitter:card" content="summary_large_image"/>
   <meta property="og:image" content="https://riz.dev/og.png"/>
   <meta property="og:image:width" content="1200"/>
@@ -122,20 +122,21 @@
 <section style="padding-top:1.5rem">
   <div class="wrap">
     <div class="sec-kicker">wall two · the broker</div>
-    <h2 class="sec">Sandboxed code that still<br/><em>reaches your database.</em></h2>
+    <h2 class="sec">Sandboxed code that still<br/><em>reaches your data.</em></h2>
     <div class="duo">
       <div>
         <p class="lead" style="margin-top:1rem">
           The classic sandbox trade-off is "safe but useless." The riz broker deletes it:
-          a <code style="font-size:.82em;color:var(--t-hi)">[function.x.capabilities]</code> grant lets the guest run
-          <b>parameterized Postgres queries through the host</b> — Neon, Supabase, RDS,
-          or any PG is one config row.
+          a <code style="font-size:.82em;color:var(--t-hi)">[function.x.capabilities]</code> grant lets the guest reach
+          <b>Postgres, DynamoDB, S3, and origin-pinned HTTP through the host</b> — the
+          daemon holds the credentials and <b>SigV4-signs every AWS request host-side</b>;
+          the guest names a grant and gets a result.
         </p>
         <ul class="facts" style="margin-top:1rem">
-          <li>The guest never opens a socket; <b>credentials never cross the WASI boundary</b> — it names a grant, it gets rows</li>
+          <li>The guest never opens a socket; <b>credentials and signatures never cross the WASI boundary</b> — it names a grant, it gets a result</li>
           <li>The host owns the blast radius: deny-by-default, per-call deadlines, concurrency caps, rate limits, payload caps, audit</li>
           <li>A stalled or hostile query is cut at the grant's deadline — the host is structurally unaffected</li>
-          <li>Read-only grants run inside genuine <code>READ ONLY</code> transactions — Postgres refuses writes, not string inspection</li>
+          <li>Read-only grants narrow the verb set at the source — a genuine Postgres <code>READ ONLY</code> transaction, <code>GET</code>-only HTTP, <code>GetItem</code>/<code>Query</code> on Dynamo, reads on S3 — and a <code>key_prefix</code> confines the key</li>
         </ul>
         <div class="ledger" style="margin-top:1.4rem">
           <span class="tag">proof</span>
@@ -161,7 +162,9 @@ type = <span class="s">"pg"</span>
 resource = <span class="s">"pg.main"</span>
 mode = <span class="s">"read-only"</span>
 call_timeout_ms = <span class="n">1500</span>
-rate_per_sec = <span class="n">50</span></pre>
+rate_per_sec = <span class="n">50</span>
+
+<span class="c"># same grant shape for type = "http" | "dynamo" | "s3"</span></pre>
         </div>
       </div>
     </div>

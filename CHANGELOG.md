@@ -6,6 +6,13 @@ All notable changes to riz are documented here. The format follows
 
 ## Unreleased
 
+## 0.3.0 - 2026-07-22
+
+The capability release: the WASM broker moves into the daemon and grows from
+Postgres-only to four host-signed verb families (pg, http, dynamo, s3), workers
+lose their inherited environment, every function also becomes an OpenAPI 3.1
+operation, and riz now boots AWS's own official Lambda samples unmodified.
+
 ### Changed
 
 - `riz init` is now `riz new`. The scaffold set is six per-runtime templates —
