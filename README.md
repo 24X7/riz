@@ -10,7 +10,7 @@ graceful drain with a Kubernetes-style readiness probe, hot-reload, and
 P50–P99 + Prometheus observability. Every function auto-becomes a typed **MCP
 tool** an agent can call the moment riz boots, and a built-in
 **OpenAI-compatible LLM gateway** routes, governs, and costs the model calls
-your handlers make. One ~35 MB Rust binary. Apache-2.0.
+your handlers make. One self-contained Rust binary, ~11 MB download. Apache-2.0.
 
 **📖 Full docs, comparisons, and the agent layer live at [riz.dev](https://riz.dev).**
 This README is the short version.

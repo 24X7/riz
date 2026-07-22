@@ -82,6 +82,20 @@
         </div>
       </a>
 
+      <a class="cap" href="https://github.com/24X7/riz/tree/main/examples/typescript-todo" target="_blank">
+        <div class="cap-glyph">[app]</div>
+        <h3>Full-stack todo starter</h3>
+        <p class="claim">The other scaffoldable <b>starter</b> beside ai-chat: a Bun API and a React/Vite client colocated on <b>one binary, one origin</b> — no second host, no CORS. <code style="font-family:var(--mono);font-size:.85em">riz new typescript-todo</code>.</p>
+        <ul class="facts">
+          <li>Static client + API served by the same process</li>
+          <li>Scaffolds, builds, and boots in CI</li>
+        </ul>
+        <div class="cap-foot">
+          <div class="proof"><b>✓</b> CI: api_and_client_are_served_on_one_origin</div>
+          <span class="cap-go">examples/typescript-todo →</span>
+        </div>
+      </a>
+
       <a class="cap" href="https://github.com/24X7/riz/tree/main/examples/lambdas/agent-tools" target="_blank">
         <div class="cap-glyph">[mcp]</div>
         <h3>Agent tools, zero glue</h3>
@@ -130,11 +144,54 @@
         <p class="claim">A <code style="font-family:var(--mono);font-size:.85em">wasm32-wasip1</code> handler that validates and prices an order entirely under WASI — deny-by-default, sub-ms cold start, not an echo toy.</p>
         <ul class="facts">
           <li>Integer-cents pricing, deterministic across hosts</li>
+          <li>Persists the priced order through a host-brokered <code style="font-family:var(--mono);font-size:.85em">db</code> (Postgres) grant — best-effort, no DSN in guest memory</li>
           <li>422 with a structured error on invalid orders</li>
         </ul>
         <div class="cap-foot">
           <div class="proof"><b>✓</b> CI: wasm_orders_prices_a_valid_order</div>
           <span class="cap-go">examples/lambdas/orders-wasm →</span>
+        </div>
+      </a>
+
+      <a class="cap" href="https://github.com/24X7/riz/tree/main/examples/lambdas/chat" target="_blank">
+        <div class="cap-glyph">[ws]</div>
+        <h3>WebSocket, the AWS way</h3>
+        <p class="claim">A Bun chat handler on the API Gateway v2 <b>WebSocket</b> contract — <code style="font-family:var(--mono);font-size:.85em">$connect</code>, <code style="font-family:var(--mono);font-size:.85em">$default</code>, <code style="font-family:var(--mono);font-size:.85em">$disconnect</code> — with server→client push over <code style="font-family:var(--mono);font-size:.85em">@connections</code>. Also callable as an MCP session tool.</p>
+        <ul class="facts">
+          <li>Real per-connection lifecycle, not long-polling</li>
+          <li>Python + Rust WS mirrors live in the parity suite</li>
+        </ul>
+        <div class="cap-foot">
+          <div class="proof"><b>✓</b> CI: ws_functions_are_tools_with_session_semantics</div>
+          <span class="cap-go">examples/lambdas/chat →</span>
+        </div>
+      </a>
+
+      <a class="cap" href="https://github.com/24X7/riz/tree/main/examples/lambdas/crud-accounts" target="_blank">
+        <div class="cap-glyph">[rest]</div>
+        <h3>Plain REST, all five verbs</h3>
+        <p class="claim">The canonical "how do I build an HTTP API" example — GET/POST/PUT/PATCH/DELETE over <code style="font-family:var(--mono);font-size:.85em">/accounts/{id}</code> with method dispatch, an in-memory store, and response-cache read receipts. No framework, just the AWS handler shape.</p>
+        <ul class="facts">
+          <li>Path params typed from the route template</li>
+          <li>Cache TTL + <code style="font-family:var(--mono);font-size:.85em">servedAt</code> receipt shows cached vs fresh</li>
+        </ul>
+        <div class="cap-foot">
+          <div class="proof"><b>✓</b> boots via examples/smoke-all.sh</div>
+          <span class="cap-go">examples/lambdas/crud-accounts →</span>
+        </div>
+      </a>
+
+      <a class="cap" href="https://github.com/24X7/riz/tree/main/examples/lambdas/auth-allow-bun" target="_blank">
+        <div class="cap-glyph">[authz]</div>
+        <h3>REQUEST authorizer, allow + deny</h3>
+        <p class="claim">The API Gateway simple-response authorizer contract as two tiny handlers: <code style="font-family:var(--mono);font-size:.85em">auth-allow-bun</code> authorizes and hands context to the handler; <code style="font-family:var(--mono);font-size:.85em">auth-deny-bun</code> is the 401 path — distinct from the JWT/JWKS config recipes below.</p>
+        <ul class="facts">
+          <li>Authorizer context reaches the handler on allow</li>
+          <li>Deny short-circuits before the handler runs</li>
+        </ul>
+        <div class="cap-foot">
+          <div class="proof"><b>✓</b> CI: request_authorizer_allows_valid_token</div>
+          <span class="cap-go">examples/lambdas/auth-* →</span>
         </div>
       </a>
 
@@ -172,7 +229,10 @@
     <div class="ledger">
       <span class="tag">the rule</span>
       <span>If an example stops working, CI fails — the cookbook is part of the suite,
-      not documentation that rots. <a href="https://github.com/24X7/riz/tree/main/examples" target="_blank">Browse all examples ↗</a></span>
+      not documentation that rots. And because these handlers are AWS-Lambda-shaped, CI also boots
+      AWS's own official Lambda sample (awslabs' <code>http-basic</code>) on riz <b>unmodified</b>
+      (CI: <code>aws_official_samples_run_on_riz_unmodified</code>).
+      <a href="https://github.com/24X7/riz/tree/main/examples" target="_blank">Browse all examples ↗</a></span>
     </div>
 
     <div class="cta-row" style="margin-top:2.6rem">

@@ -75,7 +75,7 @@
     <p class="lede">
       The curated reference — enough to configure and operate riz without reading source.
       For exhaustive depth, the <a href="https://github.com/24X7/riz" target="_blank" style="color:var(--acid);text-decoration:underline dotted">repository docs</a>
-      and the 900+ tests are the ground truth this page is pinned to.
+      and the 1,300+ tests are the ground truth this page is pinned to.
     </p>
 
     <h2 id="install">Install</h2>
@@ -101,7 +101,7 @@ $ riz new https://host/o/r.git my-app          <span class="c"># any git URL (in
 $ riz new ./local/template my-app              <span class="c"># a local path (offline)</span></pre>
     </div>
     <p>Official templates, one per runtime: <code>typescript-bun</code> · <code>typescript-node</code> · <code>python</code> · <code>rust</code> · <code>go</code> · <code>wasm-rust</code> (a wasm32-wasip1 handler on the riz-wasm shim) —
-    plus full-stack <b>starters</b> <code>typescript-todo</code> (Bun API + React/Vite client on one binary) and <code>ai-chat</code>. Read-only <b>examples</b> live under <code>examples/lambdas/</code> — you boot and read them, they aren't scaffolded; the WebSocket showcase is <code>examples/chat</code>.
+    plus full-stack <b>starters</b> <code>typescript-todo</code> (Bun API + React/Vite client on one binary) and <code>ai-chat</code>. Read-only <b>examples</b> live under <code>examples/lambdas/</code> — you boot and read them, they aren't scaffolded; the WebSocket showcase is <code>examples/lambdas/chat</code>.
     Flags: <code>--ref &lt;branch|tag&gt;</code>, <code>--force</code> (write into a non-empty dir), <code>--git</code> (init a repo + first commit).</p>
 
     <h2 id="config">riz.toml</h2>
@@ -237,6 +237,7 @@ required = <span class="n">true</span></pre>
       <tr><td><code>POST /cache/invalidate</code></td><td>bearer</td><td>evict cached responses by key or prefix</td></tr>
     </table>
     <p>"bearer" = gated when <code>RIZ_AUTH_BEARER_TOKEN</code> / <code>[auth] bearer_token</code> is set (constant-time compare); open for local dev when unset.</p>
+    <p><b>Per-caller API keys.</b> <code>[api_keys.&lt;name&gt;]</code> maps a caller to a secret + <code>rate_per_sec</code>. With any key configured, non-<code>/_riz/*</code> requests (function invocations, WebSocket handshakes, colocated static) must present a matching <code>X-Api-Key</code> — unknown or absent keys fail closed (<code>401</code>), and each caller gets its own token bucket (<code>429</code> + <code>Retry-After</code>). No keys configured → open, unchanged.</p>
     <p><b>Scaling note (WebSockets):</b> the connection registry behind <code>@connections</code> is
     per-instance (in-memory). Running multiple replicas behind a load balancer <b>requires sticky
     sessions</b> (session affinity — Cloud Run <code>--session-affinity</code>, ALB target-group
@@ -261,6 +262,7 @@ endpoint = "http://localhost:4318"   <span class="c"># any OTLP/HTTP collector o
       <tr><td>AWS X-Ray — via ADOT / OTel Collector</td><td><code>http://localhost:4318</code></td><td>—</td></tr>
     </table>
     <p>The GA route to any vendor is an OTLP collector/agent — riz never speaks a vendor wire protocol (no StatsD, no X-Ray UDP). Datadog's <b>agentless</b> OTLP trace intake (a <code>dd-api-key</code> header straight to Datadog) is GA for metrics/logs but <b>Preview for traces</b>; use the Agent/Collector path until you have access. LLM-gateway spans carry OpenTelemetry <b>GenAI</b> attributes (<code>gen_ai.usage.input_tokens</code> / <code>output_tokens</code>, <code>gen_ai.request.model</code>, <code>gen_ai.provider.name</code>), so Datadog LLM Observability and similar classify them automatically. Copy-paste blocks for every backend: <code>docs/integrations/observability.md</code>.</p>
+    <p><b>Audit log:</b> deploy, config-reload, and auth-denial events emit on the <code>riz.audit</code> tracing target, scrubbed of secret material — route them with <code>RUST_LOG=riz.audit=info</code>.</p>
 
     <h2 id="cli">CLI</h2>
     <table>

@@ -1,7 +1,7 @@
 # riz · Capability Card
 
 > **Lambda for the agent era. Your APIs become MCP tools.**
-> Self-hosted AWS Lambda runtime in one ~35 MB Rust binary.
+> Self-hosted AWS Lambda runtime in one self-contained Rust binary (~11 MB download).
 
 ---
 
@@ -11,7 +11,7 @@
 |---|---|
 | **What it is** | Self-hosted AWS HTTP API v2 + WebSocket Lambda runtime |
 | **The hook** | The moment `riz run` boots, every function is a typed MCP tool an agent can call |
-| **Binary size** | ~35 MB · single static Rust binary (wasmtime embedded) · no Docker · no GC pauses |
+| **Binary size** | ~11 MB compressed download · single static Rust binary (wasmtime embedded) · no Docker · no GC pauses |
 | **License** | Apache-2.0 |
 | **Links** | [github.com/24X7/riz](https://github.com/24X7/riz) · [riz.dev](https://riz.dev) |
 

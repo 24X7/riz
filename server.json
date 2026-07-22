@@ -24,13 +24,15 @@
   "_meta": {
     "io.modelcontextprotocol.registry/publisher-provided": {
       "kind": "self-hosted-runtime",
-      "summary": "riz is not a fixed-tool MCP server. It is a ~35 MB Rust binary you run on your own machine (Linux/macOS, x86_64 + aarch64). Each function declared in the user's riz.toml is auto-exposed as one MCP tool at /_riz/mcp the moment riz boots. The available tool set is therefore dynamic and user-defined, not a fixed list shipped by this package.",
+      "summary": "riz is not a fixed-tool MCP server. It is a single static Rust binary (~11 MB compressed download) you run on your own machine (Linux/macOS, x86_64 + aarch64). Each function declared in the user's riz.toml is auto-exposed as one MCP tool at /_riz/mcp the moment riz boots. The available tool set is therefore dynamic and user-defined, not a fixed list shipped by this package.",
       "transport": "Streamable HTTP (MCP spec 2025-11-25; negotiates 2024-11-05, 2025-03-26, 2025-06-18).",
       "install": "curl -fsSL https://riz.dev/install | sh",
       "connect": "claude mcp add riz-local --transport http http://localhost:3000/_riz/mcp",
       "capabilities": [
         "Six runtimes in one binary: Bun, Node.js, Python, Rust, Go, capability-sandboxed WASM (WASI deny-by-default).",
         "Every riz.toml function auto-registers as a typed MCP tool at /_riz/mcp (zero SDK glue).",
+        "The same route-table walk also serves a public OpenAPI 3.1 document at GET /openapi.json — every function is at once an MCP tool and an OpenAPI operation.",
+        "Host-enforced resource broker: sandboxed WASM reaches Postgres, DynamoDB, S3, and origin-pinned HTTP via capability grants — credentials and SigV4 signing stay host-side, no sockets/DSNs/keys in guest memory.",
         "Built-in OpenAI-compatible LLM gateway on the same binary.",
         "JWT / JWKS authentication.",
         "No per-request cold start (warm pre-spawned pool per function)."
