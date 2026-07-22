@@ -73,9 +73,10 @@
     <div class="sec-kicker">what runs where</div>
     <h2 class="sec">Strong isolation is a <em>WASM</em> property —<br/>not a whole-runtime one.</h2>
     <p class="sec-sub">
-      Native runtimes (Bun, Node.js, Python, Rust, Go) get resource ceilings and, on Linux, a
-      filesystem allowlist. They do <b style="color:var(--t-hi)">not</b> get a syscall or network
-      jail. Deny-by-default confinement is the <code>runtime = "wasm"</code> path. Read each row as
+      Native runtimes (Bun, Node.js, Python, Rust, Go) get resource ceilings, a filesystem allowlist,
+      and a 22-syscall seccomp-BPF escape/tamper blocklist — all on Linux. What they do
+      <b style="color:var(--t-hi)">not</b> get is deny-by-default confinement: a full syscall allowlist
+      or a network jail. That is the <code>runtime = "wasm"</code> path. Read each row as
       "what holds, and where it doesn't."
     </p>
 
@@ -127,10 +128,10 @@
             <td class="dim">No fs, no sockets unless granted. Native code is <b style="color:var(--t-hi)">not</b> WASI-confined.</td>
           </tr>
           <tr>
-            <th>Capability broker<br/><span style="font-family:var(--mono);font-size:.82em;color:var(--t-low)">host-held credentials</span></th>
+            <th>Capability broker<br/><span style="font-family:var(--mono);font-size:.82em;color:var(--t-low)">host-held creds + signing</span></th>
             <td><span class="n">✗ no</span></td>
             <td><span class="y">✓ yes</span></td>
-            <td class="dim">Guest never opens a socket; the DSN never crosses the WASI boundary.</td>
+            <td class="dim">Guest never opens a socket; no DSN, key, or SigV4 signature crosses the WASI boundary. Postgres, DynamoDB, S3, and origin-pinned HTTP all run host-side.</td>
           </tr>
           <tr>
             <th>Guards in / out<br/><span style="font-family:var(--mono);font-size:.82em;color:var(--t-low)">fail-closed policy .wasm</span></th>
@@ -140,9 +141,9 @@
           </tr>
           <tr>
             <th>Syscall filter<br/><span style="font-family:var(--mono);font-size:.82em;color:var(--t-low)">seccomp-bpf</span></th>
-            <td><span class="n">✗ no</span></td>
-            <td><span class="y">✓ via WASI</span></td>
-            <td class="dim">Native code runs at the OS user's full syscall surface. riz ships no seccomp filter.</td>
+            <td>Linux</td>
+            <td>Linux + WASI</td>
+            <td class="dim">On Linux <b style="color:var(--t-hi)">every</b> worker gets a deny-EPERM blocklist of 22 escape/tamper syscalls (ptrace, mount, bpf, kexec, module load, setns, keyctl, clock/host mutation) applied in <code>pre_exec</code> — a blocklist over the escape surface, not a full allowlist jail. No-op on macOS/BSD.</td>
           </tr>
           <tr>
             <th>Network egress</th>
@@ -200,7 +201,7 @@
 <span class="k">your .wasm runs</span>       <span class="c">sub-ms spawn</span>
   ↓
 <span class="k">host safety profile</span>   <span class="c">always-on</span>
-  rlimits · PDEATHSIG · no-new-privs
+  rlimits · PDEATHSIG · no-new-privs · seccomp (Linux)
   ↓
 <span class="k">guard_out</span>           <span class="c">redact / block</span>
   ↓
@@ -226,11 +227,12 @@
         <p class="sec-sub">
           <code>/deploy</code> <b style="color:var(--t-hi)">fails closed</b>: with neither a deploy
           key nor a CIDR allowlist configured, it refuses every request (503) rather than exposing a
-          hot-swap RCE. Credentials for a broker resource live host-side and never enter guest memory.
+          hot-swap RCE. Credentials for a broker resource — a Postgres DSN or AWS keys — live host-side and never enter guest memory; for DynamoDB and S3 the SigV4 signature is computed host-side too.
         </p>
         <p class="sec-sub">
           <b style="color:var(--t-hi)">In scope</b> for reports: sandbox / capability escapes, auth
-          bypass (JWT/JWKS authorizers, bearer-gated <code>/_riz/*</code>), static-serving path
+          bypass (JWT/JWKS authorizers, the per-caller <code>X-Api-Key</code> gate + token-bucket
+          rate limiting, bearer-gated <code>/_riz/*</code>), static-serving path
           traversal, the process safety profile, and <code>POST /deploy</code>.
           <b style="color:var(--t-hi)">Out of scope</b>: misconfigurations riz already rejects at
           startup, and non-HTTP/WS AWS event sources (out of project scope by design).
@@ -248,7 +250,7 @@
               <div class="row"><span class="path">/_riz/*</span> → bearer-gated</div>
               <div class="layer">
                 <div class="lname">handler process</div>
-                <div class="row">rlimits · prctl · Landlock</div>
+                <div class="row">rlimits · prctl · Landlock · seccomp</div>
                 <div class="layer wasi">
                   <div class="lname">WASI sandbox <span class="dim">no fs · no net</span></div>
                   <div class="row">guest <span class="path">.wasm</span></div>
@@ -256,7 +258,7 @@
                 </div>
               </div>
             </div>
-            <div class="t-foot">the DSN never crosses the WASI line</div>
+            <div class="t-foot">no DSN, key, or signature crosses the WASI line</div>
           </div>
         </div>
       </div>
@@ -264,8 +266,10 @@
     <div class="ledger">
       <span class="tag">proof</span>
       <span><code>deploy_refuses_when_no_auth_configured</code> ·
-      <code>wasm_guest_brokers_pg_through_capability_grants</code> — the fail-closed deploy gate and
-      the full broker chain (guest → host → Postgres, creds host-side), in CI.</span>
+      <code>wasm_guest_brokers_pg_through_capability_grants</code> ·
+      <code>worker_env_is_scrubbed_of_daemon_secrets</code> — the fail-closed deploy gate, the
+      full broker chain (guest → host → Postgres, creds host-side), and worker env scrubbed to an
+      allowlist so a resource secret lives only in the daemon, in CI.</span>
     </div>
   </div>
 </section>
@@ -335,7 +339,9 @@
         <p><b>Supervision &amp; ops.</b> A config hot-swap rebuilds the pool so a concurrency change
         actually resizes admission; a readiness probe sheds traffic the instant a drain starts; and
         the metrics endpoint exposes saturation — utilization and load-shed counts, so overload
-        shows up before requests start dropping. Off Linux, an unenforceable filesystem sandbox
+        shows up before requests start dropping. Deploy, config-reload, and auth-denial events emit on a
+        dedicated <code>riz.audit</code> tracing target, scrubbed of secret material
+        (<code>RUST_LOG=riz.audit=info</code>). Off Linux, an unenforceable filesystem sandbox
         warns loudly instead of running silently unconfined.</p>
       </div>
     </div>

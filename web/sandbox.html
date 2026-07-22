@@ -87,7 +87,7 @@
         <p class="lead" style="margin-top:1rem">
           Beneath the WASI wall, every handler process — every runtime, not just WASM —
           gets the always-on safety profile: <code style="font-size:.82em;color:var(--t-hi)">RLIMIT_CORE=0</code>,
-          file-descriptor and process caps, dies-with-host, no privilege escalation.
+          file-descriptor and process caps, dies-with-host, no privilege escalation, and — on Linux — a 22-syscall seccomp-BPF escape/tamper blocklist.
           Two walls before your code even matters.
         </p>
         <div class="ledger" style="margin-top:1.4rem">
@@ -109,7 +109,7 @@
 <span class="k">your .wasm runs</span>           <span class="c">sub-ms spawn</span>
   ↓
 <span class="k">host safety profile</span>       <span class="c">always-on</span>
-  rlimits · PDEATHSIG · no-new-privs
+  rlimits · PDEATHSIG · no-new-privs · seccomp (Linux)
   ↓
 <span class="c">response</span></pre>
         </div>
@@ -140,8 +140,13 @@
         </ul>
         <div class="ledger" style="margin-top:1.4rem">
           <span class="tag">proof</span>
-          <span><code>wasm_guest_brokers_pg_through_capability_grants</code> — the full chain,
-          riz → wasm child → guest → broker → PG wire, in CI</span>
+          <span><code>wasm_guest_brokers_pg_through_capability_grants</code> ·
+          <code>read_only_grant_rejects_a_mutation_before_signing</code> ·
+          <code>read_only_grant_rejects_a_put_before_signing</code> ·
+          <code>key_prefix_grant_rejects_an_off_prefix_key</code> ·
+          <code>read_only_http_grant_forces_get</code> — the full pg chain
+          (riz → wasm child → guest → broker → PG wire) plus the Dynamo/S3/HTTP grant guards
+          (read-only and key_prefix enforced host-side before signing), in CI</span>
         </div>
       </div>
       <div>

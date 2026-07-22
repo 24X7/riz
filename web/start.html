@@ -151,7 +151,7 @@ $ riz mcp inspect
             <h3>Scaffold a working project</h3>
             <p>Official templates, one per runtime — <code>typescript-bun</code>, <code>typescript-node</code>, <code>python</code>,
             <code>rust</code>, <code>go</code>, <code>wasm-rust</code> (a wasm32-wasip1 handler on the riz-wasm shim;
-            the WebSocket showcase lives in <code>examples/chat</code>), plus a full-stack
+            the WebSocket showcase lives in <code>examples/lambdas/chat</code>), plus a full-stack
             <code>typescript-todo</code> (API + React/Vite client), and <code>ai-chat</code>
             (React chat UI + a server-side agent loop through the LLM gateway — boots offline).
             Each boots first try. Templates always load from a git location, never embedded — so
@@ -221,7 +221,7 @@ $ riz mcp inspect
       <a class="cap" href="sandbox.html" style="min-height:230px">
         <div class="cap-glyph">[wasi]</div>
         <h3>Running generated code?</h3>
-        <p class="claim">The sandbox, the capability broker that reaches Postgres, and fail-closed guards.</p>
+        <p class="claim">The sandbox, the capability broker that reaches Postgres, DynamoDB, S3, and pinned HTTP origins, and fail-closed guards.</p>
         <div class="cap-foot"><span class="cap-go">sandbox &amp; broker →</span></div>
       </a>
       <a class="cap" href="gateway.html" style="min-height:230px">
