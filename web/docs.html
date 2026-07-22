@@ -101,7 +101,7 @@ $ riz new https://host/o/r.git my-app          <span class="c"># any git URL (in
 $ riz new ./local/template my-app              <span class="c"># a local path (offline)</span></pre>
     </div>
     <p>Official templates, one per runtime: <code>typescript-bun</code> · <code>typescript-node</code> · <code>python</code> · <code>rust</code> · <code>go</code> · <code>wasm-rust</code> (a wasm32-wasip1 handler on the riz-wasm shim) —
-    plus example starters <code>typescript-todo</code> (full-stack: Bun API + React/Vite client on one binary) and <code>ai-chat</code>. The WebSocket showcase lives in <code>examples/chat</code>.
+    plus full-stack <b>starters</b> <code>typescript-todo</code> (Bun API + React/Vite client on one binary) and <code>ai-chat</code>. Read-only <b>examples</b> live under <code>examples/lambdas/</code> — you boot and read them, they aren't scaffolded; the WebSocket showcase is <code>examples/chat</code>.
     Flags: <code>--ref &lt;branch|tag&gt;</code>, <code>--force</code> (write into a non-empty dir), <code>--git</code> (init a repo + first commit).</p>
 
     <h2 id="config">riz.toml</h2>
@@ -139,6 +139,7 @@ method = <span class="s">"GET"</span></pre>
       <tr><td><code>capabilities</code></td><td>off</td><td>broker grants (wasm only) — see <a href="#broker">Broker</a></td></tr>
       <tr><td><code>mcp</code></td><td>off</td><td>tool description / typed query params / body schema — see <a href="#mcp">MCP</a></td></tr>
     </table>
+    <p><b>Global <code>[env]</code>:</b> a top-level <code>[env]</code> table is folded into every function's environment at load; a colliding <code>[function.X.env]</code> key wins. Declare shared vars like <code>AWS_REGION</code> / <code>LOG_LEVEL</code> once instead of per function. Same per-runtime rules as per-function env (process runtimes receive it; WASM keeps its deny-by-default WASI env).</p>
 
     <h2 id="mcp">MCP tools</h2>
     <p>Every function is a tool at <code>/_riz/mcp</code> (JSON-RPC 2.0 over Streamable HTTP, spec <b>2025-11-25</b>,
@@ -185,12 +186,22 @@ required = <span class="n">true</span></pre>
     </ul>
 
     <h2 id="broker">Capability broker</h2>
-    <p>WASM-only in v1. Resources are declared once (credentials host-side via env names); grants reference them per function.
-    The guest calls <code>pg_query(grant, request)</code> via host imports — no sockets, no DSNs in guest memory.</p>
+    <p>WASM-only. Resources are declared once (credentials host-side via env names); grants reference them per function.
+    The guest calls a single <code>riz_capability.call</code> dispatcher (guest ABI v2) — no sockets, no DSNs or keys in guest memory.
+    Four verb families ship, each backend authed/signed <b>host-side</b>:</p>
+    <table>
+      <tr><th>type</th><th>resource block</th><th>verbs</th><th>host-side enforcement</th></tr>
+      <tr><td><code>pg</code></td><td><code>[resources.pg.&lt;name&gt;]</code></td><td><code>pg.query</code></td><td>pooled Postgres (<code>max_connections</code> / <code>acquire_timeout_ms</code>); <code>read-only</code> runs a genuine <code>READ ONLY</code> transaction</td></tr>
+      <tr><td><code>http</code></td><td><code>[resources.http.&lt;name&gt;]</code></td><td><code>http.fetch</code></td><td>origin-pinned <code>base_url</code>, auth injected host-side; SSRF-hardened (no redirects; loopback/private IPs refused unless <code>allow_private_ips</code>); per-grant <code>methods</code></td></tr>
+      <tr><td><code>dynamo</code></td><td><code>[resources.dynamo.&lt;name&gt;]</code></td><td><code>dynamo.get_item</code> · <code>put_item</code> · <code>query</code> · <code>delete_item</code></td><td><b>SigV4-signed host-side</b> (<code>aws-sigv4</code>, never the full SDK); <code>TableName</code> injected</td></tr>
+      <tr><td><code>s3</code></td><td><code>[resources.s3.&lt;name&gt;]</code></td><td><code>s3.get_object</code> · <code>put_object</code> · <code>list_objects</code> · <code>delete_object</code></td><td><b>SigV4-signed host-side</b> (<code>x-amz-content-sha256</code> payload hash); virtual-host for AWS, path-style when <code>endpoint_url</code> is set (MinIO/mocks)</td></tr>
+    </table>
+    <p>Every grant also takes the guardrails below. The key/signature never crosses to the guest; <code>mode = "read-only"</code> narrows the verb set, and <code>key_prefix</code> confines keys — all enforced <b>before</b> signing.</p>
     <table>
       <tr><th>grant key</th><th>default</th><th>enforces</th></tr>
-      <tr><td><code>type</code> / <code>resource</code></td><td>—</td><td>v1: <code>"pg"</code> → a declared <code>[resources.pg.&lt;name&gt;]</code></td></tr>
-      <tr><td><code>mode</code></td><td>read-write</td><td><code>read-only</code> runs inside a genuine <code>READ ONLY</code> transaction</td></tr>
+      <tr><td><code>type</code> / <code>resource</code></td><td>—</td><td>one of <code>pg</code> · <code>http</code> · <code>dynamo</code> · <code>s3</code> → a declared <code>[resources.&lt;type&gt;.&lt;name&gt;]</code></td></tr>
+      <tr><td><code>mode</code></td><td>read-write</td><td><code>read-only</code> restricts the op set (pg: a genuine <code>READ ONLY</code> txn; http: <code>GET</code>; dynamo: <code>GetItem</code>/<code>Query</code>; s3: reads)</td></tr>
+      <tr><td><code>key_prefix</code></td><td>off</td><td>confines the S3 object key / list prefix and Dynamo partition-key value — enforced before signing</td></tr>
       <tr><td><code>max_inflight</code></td><td>4</td><td>concurrency cap — excess rejected (<code>throttled</code>), never queued</td></tr>
       <tr><td><code>rate_per_sec</code></td><td>∞</td><td>token-bucket rate limit</td></tr>
       <tr><td><code>call_timeout_ms</code></td><td>1500</td><td>per-call deadline — a stalled backend is cut, host unaffected</td></tr>
@@ -215,6 +226,7 @@ required = <span class="n">true</span></pre>
     <table>
       <tr><th>endpoint</th><th>auth</th><th>does</th></tr>
       <tr><td><code>GET /health</code> · <code>GET /ready</code></td><td>open</td><td>liveness / readiness probes</td></tr>
+      <tr><td><code>GET /openapi.json</code></td><td>open</td><td>autogenerated OpenAPI 3.1 — one operation per declared route, from the same route-table walk as the MCP tool list</td></tr>
       <tr><td><code>GET /_riz/health</code></td><td>open</td><td>per-function health, percentiles, guard timing</td></tr>
       <tr><td><code>GET /_riz/metrics</code></td><td>bearer</td><td>Prometheus text format</td></tr>
       <tr><td><code>GET /_riz/registry</code></td><td>bearer</td><td>function + route inventory</td></tr>

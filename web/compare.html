@@ -251,6 +251,11 @@
             <td class="dim">Adapters/rewrites to leave the server model</td>
           </tr>
           <tr>
+            <th>Proven compatibility</th>
+            <td><span class="y">CI boots AWS's own official Lambda samples on riz, unmodified</span> — cloned at pinned commits, the reference code itself</td>
+            <td class="dim">Native — AWS authored those samples for its own runtime</td>
+          </tr>
+          <tr>
             <th>The verdict</th>
             <td><span class="y">For what teams ship now — an API, a SPA on the same origin, AI in the loop, agents on the surface — riz is the substrate</span>: typed agent tools, fail-closed policy guards, A2A delegation, and every scale vector the cloud offers (warm-floor replicas, per-instance concurrency, independently scaling peers, Lambda unchanged for burst). A framework is the HTTP layer of that product; the other 90% is yours to build and secure.</td>
             <td class="dim">Decades of middleware, templating, and ORMs — home turf for server-rendered monoliths. A different product, not this race.</td>

@@ -39,7 +39,7 @@
     "applicationCategory": "DeveloperApplication",
     "applicationSubCategory": "Serverless Runtime",
     "operatingSystem": "Linux, macOS",
-    "softwareVersion": "0.1",
+    "softwareVersion": "0.3",
     "license": "https://www.apache.org/licenses/LICENSE-2.0",
     "codeRepository": "https://github.com/24X7/riz",
     "programmingLanguage": ["TypeScript","JavaScript","Python","Rust","Go","WebAssembly"],
@@ -52,7 +52,7 @@
       "Exact AWS API Gateway v2 HTTP + WebSocket payloads — handlers move between AWS and riz unchanged",
       "Warm pre-spawned process pool per function — no per-request cold start",
       "Six runtimes: Bun, Node.js, Python, Rust, Go, and capability-sandboxed WASI/WASM — cross-runtime parity tested",
-      "Resource broker: sandboxed WASM queries Postgres (Neon/Supabase/any PG) via capability grants — no sockets, no DSNs in guest memory",
+      "Resource broker: sandboxed WASM reaches Postgres, DynamoDB, S3, and origin-pinned HTTP via capability grants — credentials and SigV4 signing stay host-side, no sockets or DSNs in guest memory",
       "WASM guards (guard_in/guard_out): one .wasm policy validates, scrubs, or redacts across all six runtimes, fail-closed",
       "OpenAI-compatible LLM gateway with provider routing, OpenAI function-calling (tools → tool_calls on every provider), SSE streaming, embeddings, and bearer-gated budget caps that fail closed",
       "Always-on per-child safety profile: RLIMIT_CORE=0, NOFILE=4096, FSIZE=100MiB, NPROC=4096, PR_SET_PDEATHSIG=SIGKILL, NO_NEW_PRIVS",
@@ -184,7 +184,7 @@
       <a class="cap" href="sandbox.html">
         <div class="cap-glyph">[wasi]</div>
         <h3>Run code you didn't write</h3>
-        <p class="claim">WASM handlers run deny-by-default under wasmtime — and still reach Postgres through capability grants the host enforces.</p>
+        <p class="claim">WASM handlers run deny-by-default under wasmtime — and still reach Postgres, DynamoDB, S3, and pinned HTTP origins through capability grants the host enforces.</p>
         <ul class="facts">
           <li>No sockets, no DSNs in guest memory — ever</li>
           <li>Deadlines, rate limits, payload caps, audit — host-side</li>
@@ -289,7 +289,7 @@ agent ▸ get_order {"id":"1042"}
     </div>
     <div class="usecases">
       <div class="uc"><b>Give agents safe, typed access to real APIs.</b> Declare a function — that <em>is</em> the integration. Claude, Cursor, or your own agents call it as a typed MCP tool: no wrapper service, no SDK glue.</div>
-      <div class="uc"><b>Run code an LLM wrote.</b> <code style="font-family:var(--mono);font-size:.85em">runtime = "wasm"</code> executes untrusted code deny-by-default under wasmtime, reaching Postgres only through host-enforced capability grants.</div>
+      <div class="uc"><b>Run code an LLM wrote.</b> <code style="font-family:var(--mono);font-size:.85em">runtime = "wasm"</code> executes untrusted code deny-by-default under wasmtime, reaching Postgres, DynamoDB, S3, and pinned HTTP origins only through host-enforced capability grants.</div>
       <div class="uc"><b>Run Lambda-shaped functions without AWS.</b> Locally, in CI, or self-hosted — the same handler moves to real Lambda unchanged, and back.</div>
       <div class="uc"><b>Self-host steady-traffic APIs.</b> No per-request cold start, no per-invocation bill — and you run it always-on as a container (Cloud Run / ECS Express / Azure).</div>
     </div>
