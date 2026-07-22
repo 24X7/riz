@@ -127,7 +127,7 @@ method = <span class="s">"GET"</span></pre>
     <table>
       <tr><th>key</th><th>default</th><th>what it does</th></tr>
       <tr><td><code>runtime</code></td><td>—</td><td><code>bun</code> · <code>node</code> · <code>python</code> · <code>rust</code> · <code>go</code> · <code>wasm</code> (rust/go = unmodified official AWS Lambda binaries via the Runtime API)</td></tr>
-      <tr><td><code>handler</code></td><td>—</td><td>AWS-style <code>file.export</code>; for rust/go/wasm, a path to the artifact</td></tr>
+      <tr><td><code>handler</code></td><td>—</td><td>AWS-style <code>file.export</code>, resolved to a file per runtime: node <code>index.handler</code>→<code>index.mjs</code>, python <code>main.lambda_handler</code>→<code>main.py</code>, bun <code>index.handler</code>→<code>index.ts</code> (the bare AWS form works — <code>./</code> optional); for rust/go/wasm it's a path to the artifact</td></tr>
       <tr><td><code>timeout_ms</code></td><td>30000</td><td>handler deadline — exceeded = child killed + respawned</td></tr>
       <tr><td><code>integration_timeout_ms</code></td><td>30000</td><td>gateway wait — exceeded = 504 to the client</td></tr>
       <tr><td><code>concurrency</code></td><td>1</td><td>worker processes in the pool (≥ 1 enforced)</td></tr>

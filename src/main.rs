@@ -49,14 +49,18 @@ Every function is also an MCP tool at /_riz/mcp.  Docs: https://riz.dev"
 struct Cli {
     /// Config file. Defaults to ./riz.toml in the current directory.
     /// No implicit fallback — if you want a different file, pass it.
-    #[arg(short, long)]
+    /// `global` so it works in either position (`riz -c f run` / `riz run -c f`).
+    #[arg(short, long, global = true)]
     config: Option<String>,
 
-    #[arg(short, long)]
+    /// Listen port override. `global` so `riz run -p 8080` and `riz -p 8080 run`
+    /// both work — an agent's first collision-avoidance move shouldn't hit an
+    /// arg-order wall.
+    #[arg(short, long, global = true)]
     port: Option<u16>,
 
     /// Log level. Defaults to debug in --dev mode, info otherwise.
-    #[arg(long)]
+    #[arg(long, global = true)]
     log_level: Option<String>,
 
     /// Developer mode: TUI on, debug log level. Has no effect on which
@@ -201,9 +205,13 @@ enum McpCmd {
     /// Defaults to `http://localhost:3000/_riz/mcp`. Pass --url to point
     /// at a remote instance; pass --bearer when the endpoint is auth-gated.
     Inspect {
-        /// MCP endpoint URL.
-        #[arg(long, default_value = "http://localhost:3000/_riz/mcp")]
-        url: String,
+        /// MCP endpoint URL (positional). When omitted, defaults to this
+        /// project's configured port — `-p`, then riz.toml `[server].port`,
+        /// then `:3000` — so the bare verify step works on a non-default port.
+        url: Option<String>,
+        /// Same endpoint URL, flag form (back-compat with the documented `--url`).
+        #[arg(long = "url", value_name = "URL")]
+        url_flag: Option<String>,
         /// Bearer token for auth-gated endpoints. Reads $RIZ_AUTH_BEARER_TOKEN
         /// when omitted.
         #[arg(long)]
@@ -413,6 +421,7 @@ fn print_next_steps(spec: &str, target: &std::path::Path) {
     let dir = target.display();
     let has = |rel: &str| target.join(rel).exists();
     let rust = has("Cargo.toml");
+    let go = has("go.mod");
     let client = has("client/package.json"); // full-stack (Vite) layout
                                              // A wasm scaffold builds for the wasm32-wasip1 target, not the host.
     let wasm = std::fs::read_to_string(target.join("riz.toml"))
@@ -427,6 +436,11 @@ fn print_next_steps(spec: &str, target: &std::path::Path) {
         println!("    cargo build --release --target wasm32-wasip1");
     } else if rust {
         println!("    cargo build --release");
+    } else if go {
+        // Compiled runtime: the artifact must exist before `riz run`, or the
+        // handler path in riz.toml points at nothing. Match the template's
+        // documented output name.
+        println!("    go build -o hello .   # compile the binary riz.toml's handler points at");
     }
     if client {
         println!("    (cd client && bun install && bun run build)   # build the web client");
@@ -513,6 +527,25 @@ async fn run_a2a_send(base: &str, message: &str, bearer: Option<&str>) -> anyhow
         anyhow::bail!("task did not complete (state: {state})");
     }
     Ok(())
+}
+
+/// Resolve the MCP endpoint to inspect. An explicit URL (positional or `--url`)
+/// wins; otherwise point at THIS project's port — `-p`, then riz.toml
+/// `[server].port`, then `:3000` — so the documented bare `riz mcp inspect`
+/// verify step hits the running instance instead of silently probing `:3000`.
+fn resolve_mcp_url(explicit: Option<&str>, cli_port: Option<u16>, config_path: &str) -> String {
+    if let Some(u) = explicit {
+        return u.to_owned();
+    }
+    let port = cli_port
+        .or_else(|| {
+            config::Config::from_file(config_path)
+                .ok()
+                .map(|c| c.server.port)
+        })
+        .filter(|p| *p != 0)
+        .unwrap_or(3000);
+    format!("http://127.0.0.1:{port}/_riz/mcp")
 }
 
 async fn run_mcp_inspect(url: &str, bearer: Option<&str>) -> anyhow::Result<()> {
@@ -1235,10 +1268,18 @@ fn run_new_command(
 async fn dispatch_client_command(cli: &Cli) -> Option<anyhow::Result<()>> {
     match &cli.command {
         Some(Commands::Mcp {
-            cmd: McpCmd::Inspect { url, bearer },
+            cmd:
+                McpCmd::Inspect {
+                    url,
+                    url_flag,
+                    bearer,
+                },
         }) => {
             let token = resolve_bearer(bearer.as_ref());
-            Some(run_mcp_inspect(url, token.as_deref()).await)
+            let config_path = effective_config_path(cli.dev, cli.config.as_deref());
+            let explicit = url.as_deref().or(url_flag.as_deref());
+            let target = resolve_mcp_url(explicit, cli.port, &config_path);
+            Some(run_mcp_inspect(&target, token.as_deref()).await)
         }
         Some(Commands::A2a {
             cmd:
@@ -1340,7 +1381,7 @@ async fn async_main() -> anyhow::Result<()> {
 
     let deploy_cfg = &config.deploy;
     if config.effective_deploy_key().is_none() && deploy_cfg.allowed_cidrs.is_empty() {
-        tracing::error!("SECURITY: /deploy has no auth configured — endpoint will refuse all requests. Set RIZ_DEPLOY_KEY or deploy_key/allowed_cidrs in config.");
+        tracing::warn!("SECURITY: /deploy has no auth configured — the endpoint fails closed and refuses all requests until you set RIZ_DEPLOY_KEY or deploy_key/allowed_cidrs. Safe to ignore if you never deploy over HTTP.");
     }
 
     let riz_state = Arc::new(state::RizState::new());
@@ -1688,7 +1729,11 @@ fn spawn_tui_or_log_drain(app_state: &Arc<state::AppState>, tui_enabled: bool) {
         tokio::spawn(async move {
             let mut rx = state_for_drain.log_rx.lock().await;
             while let Some(entry) = rx.recv().await {
-                tracing::debug!(
+                // INFO, not DEBUG: headless defaults to INFO, and worker
+                // stdout/stderr (crash tracebacks, handler logs) must be
+                // visible there — a swallowed child stderr turns a plain
+                // "No module named app" into an opaque "Broken pipe".
+                tracing::info!(
                     route = entry.route_key.as_deref().unwrap_or("-"),
                     "[{}] {}",
                     entry.level,
